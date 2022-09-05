@@ -1,9 +1,17 @@
+# Created by .ignore support plugin (hsz.mobi)
+### Go template
 # Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
 
 # Test binary, built with `go test -c`
 *.test
@@ -13,3 +21,26 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+.vscode/
+.glide/
+.idea/
+build/
+log/
+dist/
+HELP.md
+/target/*
+
+.DS_Store
+*.nohup.out
+vendor/
+docker/data
+app
+console.log
+*.log
+
+*.pb.gz
+*.scannerwork/
+
+# local test, forbbiden put codes include read local file here!!!
+test/
+*.pprof
