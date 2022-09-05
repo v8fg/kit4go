@@ -4,4 +4,5 @@ common tools for go
 
 ## support list
 
-- [x] json & `json-iterator`
+- [x] datetime
+- [x] json & **json-iterator**
