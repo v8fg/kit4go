@@ -1,7 +1,5 @@
-/*Package datetime constants, layout format with ISO8601:2004
-more info ref: src/time/format.go
-*/
-
+/*Package datetime constants, layout format with ISO8601:2004, more info ref: src/time/format.go.
+ */
 package datetime
 
 // layout format without zone

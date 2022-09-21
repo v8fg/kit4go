@@ -10,10 +10,6 @@ import (
 	"github.com/v8fg/kit4go/ip"
 )
 
-const (
-	maxIPv6StrDecimal = "340282366920938463463374607431768211455"
-)
-
 // ipv6Max, _ := big.NewInt(0).SetString("340282366920938463463374607431768211455", 10)
 var ipv6MaxBytes = bytes.Repeat([]byte{0xff}, 16)
 

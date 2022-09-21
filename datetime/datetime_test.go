@@ -1,12 +1,25 @@
 package datetime_test
 
 import (
+	"os"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/v8fg/kit4go/datetime"
 )
+
+func TestMain(m *testing.M) {
+	// set the local to UTC, avoid the invalid parse.
+	oldLocal := time.Local
+	time.Local = time.UTC
+	m.Run()
+
+	defer func() {
+		time.Local = oldLocal
+		os.Exit(0)
+	}()
+}
 
 func TestAddDate(t *testing.T) {
 	type args struct {
@@ -21,12 +34,12 @@ func TestAddDate(t *testing.T) {
 		want time.Time
 	}{
 		{
-			name: "", args: args{years: 0, months: 0, days: 1, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(time.Hour * 24),
+			name: "", args: args{years: 0, months: 0, days: 1, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(time.Hour * 24),
 		},
 		{
-			name: "", args: args{years: 0, months: 0, days: -1, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(-time.Hour * 24),
+			name: "", args: args{years: 0, months: 0, days: -1, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(-time.Hour * 24),
 		},
 	}
 
@@ -50,12 +63,12 @@ func TestAddDays(t *testing.T) {
 		want time.Time
 	}{
 		{
-			name: "", args: args{days: 1, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(time.Hour * 24),
+			name: "", args: args{days: 1, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(time.Hour * 24),
 		},
 		{
-			name: "", args: args{days: -1, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(-time.Hour * 24),
+			name: "", args: args{days: -1, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(-time.Hour * 24),
 		},
 	}
 	for _, tt := range tests {
@@ -78,12 +91,12 @@ func TestAddDuration(t *testing.T) {
 		want time.Time
 	}{
 		{
-			name: "", args: args{d: time.Hour * 24, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(time.Hour * 24),
+			name: "", args: args{d: time.Hour * 24, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(time.Hour * 24),
 		},
 		{
-			name: "", args: args{d: -time.Hour * 24, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(-time.Hour * 24),
+			name: "", args: args{d: -time.Hour * 24, t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(-time.Hour * 24),
 		},
 	}
 	for _, tt := range tests {
@@ -106,20 +119,20 @@ func TestAddDurationStr(t *testing.T) {
 		want time.Time
 	}{
 		{
-			name: "", args: args{duration: "48h", t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(time.Hour * 48),
+			name: "", args: args{duration: "48h", t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(time.Hour * 48),
 		},
 		{
-			name: "", args: args{duration: "24h", t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(time.Hour * 24),
+			name: "", args: args{duration: "24h", t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(time.Hour * 24),
 		},
 		{
-			name: "", args: args{duration: "-24h", t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(-time.Hour * 24),
+			name: "", args: args{duration: "-24h", t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(-time.Hour * 24),
 		},
 		{
-			name: "", args: args{duration: "-96h", t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local).Add(-time.Hour * 96),
+			name: "", args: args{duration: "-96h", t: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC).Add(-time.Hour * 96),
 		},
 	}
 	for _, tt := range tests {
@@ -143,21 +156,21 @@ func TestDeltaDateDay(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local),
-				end:   time.Date(2022, 2, 28, 1, 0, 0, 0, time.Local),
+				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 2, 28, 1, 0, 0, 0, time.UTC),
 			}, want: 1,
 		},
 		{
 			name: "", args: args{
-				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local),
-				end:   time.Date(2022, 3, 1, 23, 59, 59, 999999999, time.Local),
+				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 3, 1, 23, 59, 59, 999999999, time.UTC),
 			}, want: 2,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.DeltaDateDay(tt.args.start, tt.args.end); got != tt.want {
-				t.Errorf("DeltaDateDay() = %v, want %v", got, tt.want)
+			if got := datetime.DeltaDateDays(tt.args.start, tt.args.end); got != tt.want {
+				t.Errorf("DeltaDateDays() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -175,14 +188,14 @@ func TestDeltaDays(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local),
-				end:   time.Date(2022, 2, 28, 12, 0, 0, 0, time.Local),
+				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 2, 28, 12, 0, 0, 0, time.UTC),
 			}, want: 0.5,
 		},
 		{
 			name: "", args: args{
-				start: time.Date(2022, 2, 28, 23, 0, 0, 0, time.Local),
-				end:   time.Date(2022, 3, 1, 5, 0, 0, 0, time.Local),
+				start: time.Date(2022, 2, 28, 23, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 3, 1, 5, 0, 0, 0, time.UTC),
 			}, want: 0.25,
 		},
 	}
@@ -207,14 +220,14 @@ func TestDeltaHours(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local),
-				end:   time.Date(2022, 2, 28, 12, 0, 0, 0, time.Local),
+				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 2, 28, 12, 0, 0, 0, time.UTC),
 			}, want: 12,
 		},
 		{
 			name: "", args: args{
-				start: time.Date(2022, 2, 28, 23, 0, 0, 0, time.Local),
-				end:   time.Date(2022, 3, 1, 5, 0, 0, 0, time.Local),
+				start: time.Date(2022, 2, 28, 23, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 3, 1, 5, 0, 0, 0, time.UTC),
 			}, want: 6,
 		},
 	}
@@ -239,14 +252,14 @@ func TestDeltaMinutes(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local),
-				end:   time.Date(2022, 2, 28, 0, 12, 0, 0, time.Local),
+				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 2, 28, 0, 12, 0, 0, time.UTC),
 			}, want: 12,
 		},
 		{
 			name: "", args: args{
-				start: time.Date(2022, 3, 1, 0, 33, 0, 0, time.Local),
-				end:   time.Date(2022, 3, 1, 1, 9, 0, 0, time.Local),
+				start: time.Date(2022, 3, 1, 0, 33, 0, 0, time.UTC),
+				end:   time.Date(2022, 3, 1, 1, 9, 0, 0, time.UTC),
 			}, want: 36,
 		},
 	}
@@ -271,14 +284,14 @@ func TestDeltaSeconds(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				start: time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local),
-				end:   time.Date(2022, 2, 28, 0, 1, 55, 0, time.Local),
+				start: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC),
+				end:   time.Date(2022, 2, 28, 0, 1, 55, 0, time.UTC),
 			}, want: 110,
 		},
 		{
 			name: "", args: args{
-				start: time.Date(2022, 3, 1, 0, 3, 0, 0, time.Local),
-				end:   time.Date(2022, 3, 1, 1, 3, 36, 0, time.Local),
+				start: time.Date(2022, 3, 1, 0, 3, 0, 0, time.UTC),
+				end:   time.Date(2022, 3, 1, 1, 3, 36, 0, time.UTC),
 			}, want: 3636,
 		},
 	}
@@ -302,13 +315,13 @@ func TestEndTime(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 23, 59, 59, 999999999, time.Local),
+				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 23, 59, 59, 999999999, time.UTC),
 		},
 		{
 			name: "", args: args{
-				t: time.Date(2022, 3, 1, 23, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 3, 1, 23, 59, 59, 999999999, time.Local),
+				t: time.Date(2022, 3, 1, 23, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 3, 1, 23, 59, 59, 999999999, time.UTC),
 		},
 	}
 	for _, tt := range tests {
@@ -332,25 +345,25 @@ func TestEndTimeStr(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local),
+				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC),
 				layout: ""},
 			want: "2022-02-28 23:59:59",
 		},
 		{
 			name: "", args: args{
-				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local),
+				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC),
 				layout: datetime.DefaultLayoutDateTime},
 			want: "2022-02-28 23:59:59",
 		},
 		{
 			name: "", args: args{
-				t:      time.Date(2022, 3, 1, 23, 0, 5, 0, time.Local),
+				t:      time.Date(2022, 3, 1, 23, 0, 5, 0, time.UTC),
 				layout: datetime.DefaultLayoutDateTime},
 			want: "2022-03-01 23:59:59",
 		},
 		{
 			name: "", args: args{
-				t:      time.Date(2022, 3, 1, 23, 0, 5, 0, time.Local),
+				t:      time.Date(2022, 3, 1, 23, 0, 5, 0, time.UTC),
 				layout: datetime.DefaultLayoutDate},
 			want: "2022-03-01",
 		},
@@ -375,8 +388,8 @@ func TestFirstDateTimeOfMonth(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 2, 1, 0, 0, 0, 0, time.Local),
+				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 2, 1, 0, 0, 0, 0, time.UTC),
 		},
 	}
 
@@ -402,19 +415,19 @@ func TestFirstDateTimeStrOfMonth(t *testing.T) {
 		{
 			name: "", args: args{
 				layout: "",
-				t:      time.Date(2022, 2, 1, 0, 0, 5, 0, time.Local)},
+				t:      time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-02-01",
 		},
 		{
 			name: "", args: args{
 				layout: datetime.DefaultLayoutDate,
-				t:      time.Date(2022, 2, 1, 0, 0, 5, 0, time.Local)},
+				t:      time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-02-01",
 		},
 		{
 			name: "", args: args{
 				layout: datetime.DefaultLayoutDate,
-				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local)},
+				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
 			want: "2022-02-01",
 		},
 	}
@@ -439,18 +452,18 @@ func TestFirstDateTimeOfWeek(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2021, 12, 27, 0, 0, 0, 0, time.Local),
+				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2021, 12, 27, 0, 0, 0, 0, time.UTC),
 		},
 		{
 			name: "", args: args{
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 1, 31, 0, 0, 0, 0, time.Local),
+				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 1, 31, 0, 0, 0, 0, time.UTC),
 		},
 		{
 			name: "", args: args{
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local),
+				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
 		},
 	}
 	for _, tt := range tests {
@@ -474,22 +487,22 @@ func TestFirstDateTimeStrOfWeek(t *testing.T) {
 	}{
 		{
 			name: "", args: args{layout: "",
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2021-12-27",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2021-12-27",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDateTime,
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-01-31 00:00:00",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
 			want: "2022-02-28",
 		},
 	}
@@ -513,18 +526,18 @@ func TestLastDateTimeOfMonth(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2020, 2, 29, 23, 59, 59, 999999999, time.Local),
+				t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2020, 2, 29, 23, 59, 59, 999999999, time.UTC),
 		},
 		{
 			name: "", args: args{
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 23, 59, 59, 999999999, time.Local),
+				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 23, 59, 59, 999999999, time.UTC),
 		},
 		{
 			name: "", args: args{
-				t: time.Date(2022, 6, 1, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 6, 30, 23, 59, 59, 999999999, time.Local),
+				t: time.Date(2022, 6, 1, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 6, 30, 23, 59, 59, 999999999, time.UTC),
 		},
 	}
 	for _, tt := range tests {
@@ -548,27 +561,27 @@ func TestLastDateTimeStrOfMonth(t *testing.T) {
 	}{
 		{
 			name: "", args: args{layout: "",
-				t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2020-02-29",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2020-02-29",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-01-31",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-02-28",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 6, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 6, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-06-30",
 		},
 	}
@@ -592,18 +605,18 @@ func TestLastDateTimeOfWeek(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 1, 2, 23, 59, 59, 999999999, time.Local),
+				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 1, 2, 23, 59, 59, 999999999, time.UTC),
 		},
 		{
 			name: "", args: args{
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 2, 6, 23, 59, 59, 999999999, time.Local),
+				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 2, 6, 23, 59, 59, 999999999, time.UTC),
 		},
 		{
 			name: "", args: args{
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 3, 6, 23, 59, 59, 999999999, time.Local),
+				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 3, 6, 23, 59, 59, 999999999, time.UTC),
 		},
 	}
 	for _, tt := range tests {
@@ -627,22 +640,22 @@ func TestLastDateTimeStrOfWeek(t *testing.T) {
 	}{
 		{
 			name: "", args: args{layout: "",
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-01-02",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-01-02",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDateTime,
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
 			want: "2022-02-06 23:59:59",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDateTime,
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local)},
+				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
 			want: "2022-03-06 23:59:59",
 		},
 	}
@@ -770,29 +783,29 @@ func TestRangeDateStr(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				start:  time.Date(2022, 2, 25, 0, 0, 0, 0, time.Local),
-				end:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
+				start:  time.Date(2022, 2, 25, 0, 0, 0, 0, time.UTC),
+				end:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
 				layout: ""},
 			want: []string{"2022-02-25", "2022-02-26", "2022-02-27", "2022-02-28", "2022-03-01"},
 		},
 		{
 			name: "", args: args{
-				start:  time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
-				end:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
+				start:  time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
+				end:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
 				layout: ""},
 			want: []string{"2022-03-01"},
 		},
 		{
 			name: "", args: args{
-				start:  time.Date(2022, 2, 25, 0, 0, 0, 0, time.Local),
-				end:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
+				start:  time.Date(2022, 2, 25, 0, 0, 0, 0, time.UTC),
+				end:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
 				layout: datetime.LayoutDateISO8601},
 			want: []string{"2022-02-25", "2022-02-26", "2022-02-27", "2022-02-28", "2022-03-01"},
 		},
 		{
 			name: "", args: args{
-				start:  time.Date(2022, 3, 5, 12, 0, 0, 0, time.Local),
-				end:    time.Date(2022, 3, 1, 23, 0, 0, 0, time.Local),
+				start:  time.Date(2022, 3, 5, 12, 0, 0, 0, time.UTC),
+				end:    time.Date(2022, 3, 1, 23, 0, 0, 0, time.UTC),
 				layout: datetime.LayoutDateISO8601},
 			want: []string{"2022-03-01", "2022-03-02", "2022-03-03", "2022-03-04", "2022-03-05"},
 		},
@@ -819,56 +832,56 @@ func TestRangeTime(t *testing.T) {
 	}{
 		{
 			name: "minute", args: args{
-				end:      time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
-				start:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
+				end:      time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
+				start:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
 				interval: time.Minute},
 			want: []time.Time{
-				time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
+				time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
 			}},
 		{
 			name: "minute", args: args{
-				end:      time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
-				start:    time.Date(2022, 3, 1, 0, 4, 0, 0, time.Local),
+				end:      time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
+				start:    time.Date(2022, 3, 1, 0, 4, 0, 0, time.UTC),
 				interval: time.Minute},
 			want: []time.Time{
-				time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 0, 1, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 0, 2, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 0, 3, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 0, 4, 0, 0, time.Local),
+				time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 0, 1, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 0, 2, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 0, 3, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 0, 4, 0, 0, time.UTC),
 			}},
 		{
 			name: "minute", args: args{
-				start:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
-				end:      time.Date(2022, 3, 1, 0, 4, 0, 0, time.Local),
+				start:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
+				end:      time.Date(2022, 3, 1, 0, 4, 0, 0, time.UTC),
 				interval: time.Minute},
 			want: []time.Time{
-				time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 0, 1, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 0, 2, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 0, 3, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 0, 4, 0, 0, time.Local),
+				time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 0, 1, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 0, 2, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 0, 3, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 0, 4, 0, 0, time.UTC),
 			}},
 		{
 			name: "hour", args: args{
-				start:    time.Date(2022, 3, 1, 2, 0, 0, 0, time.Local),
-				end:      time.Date(2022, 3, 1, 5, 0, 0, 0, time.Local),
+				start:    time.Date(2022, 3, 1, 2, 0, 0, 0, time.UTC),
+				end:      time.Date(2022, 3, 1, 5, 0, 0, 0, time.UTC),
 				interval: time.Hour},
 			want: []time.Time{
-				time.Date(2022, 3, 1, 2, 0, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 3, 0, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 4, 0, 0, 0, time.Local),
-				time.Date(2022, 3, 1, 5, 0, 0, 0, time.Local),
+				time.Date(2022, 3, 1, 2, 0, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 3, 0, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 4, 0, 0, 0, time.UTC),
+				time.Date(2022, 3, 1, 5, 0, 0, 0, time.UTC),
 			}},
 		{
 			name: "day", args: args{
-				start:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
-				end:      time.Date(2022, 3, 3, 0, 0, 0, 0, time.Local),
+				start:    time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
+				end:      time.Date(2022, 3, 3, 0, 0, 0, 0, time.UTC),
 				interval: time.Hour * 24},
 			want: []time.Time{
-				time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
-				time.Date(2022, 3, 2, 0, 0, 0, 0, time.Local),
-				time.Date(2022, 3, 3, 0, 0, 0, 0, time.Local),
+				time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
+				time.Date(2022, 3, 2, 0, 0, 0, 0, time.UTC),
+				time.Date(2022, 3, 3, 0, 0, 0, 0, time.UTC),
 			}},
 	}
 	for _, tt := range tests {
@@ -893,13 +906,13 @@ func TestStartEndTimeStr(t *testing.T) {
 	}{
 		{
 			name: "", args: args{layout: "",
-				t: time.Date(2022, 1, 1, 0, 0, 0, 0, time.Local)},
+				t: time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)},
 			wantStart: "2022-01-01 00:00:00",
 			wantEnd:   "2022-01-01 23:59:59",
 		},
 		{
 			name: "", args: args{layout: datetime.DefaultLayoutDateTime,
-				t: time.Date(2022, 1, 1, 0, 0, 0, 0, time.Local)},
+				t: time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)},
 			wantStart: "2022-01-01 00:00:00",
 			wantEnd:   "2022-01-01 23:59:59",
 		},
@@ -928,13 +941,13 @@ func TestStartTime(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.Local),
+				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
 		},
 		{
 			name: "", args: args{
-				t: time.Date(2022, 3, 1, 23, 0, 5, 0, time.Local)},
-			want: time.Date(2022, 3, 1, 0, 0, 0, 0, time.Local),
+				t: time.Date(2022, 3, 1, 23, 0, 5, 0, time.UTC)},
+			want: time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC),
 		},
 	}
 	for _, tt := range tests {
@@ -958,25 +971,25 @@ func TestStartTimeStr(t *testing.T) {
 	}{
 		{
 			name: "", args: args{
-				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local),
+				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC),
 				layout: ""},
 			want: "2022-02-28 00:00:00",
 		},
 		{
 			name: "", args: args{
-				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.Local),
+				t:      time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC),
 				layout: datetime.DefaultLayoutDateTime},
 			want: "2022-02-28 00:00:00",
 		},
 		{
 			name: "", args: args{
-				t:      time.Date(2022, 3, 1, 23, 0, 5, 0, time.Local),
+				t:      time.Date(2022, 3, 1, 23, 0, 5, 0, time.UTC),
 				layout: datetime.DefaultLayoutDateTime},
 			want: "2022-03-01 00:00:00",
 		},
 		{
 			name: "", args: args{
-				t:      time.Date(2022, 3, 1, 23, 0, 5, 0, time.Local),
+				t:      time.Date(2022, 3, 1, 23, 0, 5, 0, time.UTC),
 				layout: datetime.DefaultLayoutDate},
 			want: "2022-03-01",
 		},
@@ -991,7 +1004,7 @@ func TestStartTimeStr(t *testing.T) {
 }
 
 func TestTimeStr2Unix(t *testing.T) {
-	loc := time.Local
+	loc := time.UTC
 
 	type args struct {
 		layout string
@@ -1006,7 +1019,7 @@ func TestTimeStr2Unix(t *testing.T) {
 		{name: "", args: args{
 			layout: datetime.DefaultLayoutDateTime,
 			value:  "2022-01-01 00:00:00", loc: loc},
-			want: 1640966400,
+			want: 1640995200,
 		},
 	}
 	for _, tt := range tests {
@@ -1019,7 +1032,7 @@ func TestTimeStr2Unix(t *testing.T) {
 }
 
 func TestTimeStr2UnixMilli(t *testing.T) {
-	loc := time.Local
+	loc := time.UTC
 
 	type args struct {
 		layout string
@@ -1033,15 +1046,15 @@ func TestTimeStr2UnixMilli(t *testing.T) {
 	}{
 		{name: "", args: args{layout: datetime.DefaultLayoutDateTime,
 			value: "2022-01-01 00:00:00", loc: loc},
-			want: 1640966400000,
+			want: 1640995200000,
 		},
 		{name: "", args: args{layout: datetime.DefaultLayoutDateTime,
 			value: "2022-01-01 00:00:00.555", loc: loc},
-			want: 1640966400555,
+			want: 1640995200555,
 		},
 		{name: "", args: args{layout: datetime.DefaultLayoutDateTimeMsec,
 			value: "2022-01-01 00:00:00.555", loc: loc},
-			want: 1640966400555,
+			want: 1640995200555,
 		},
 	}
 	for _, tt := range tests {
@@ -1066,12 +1079,12 @@ func TestUnix2TimeStr(t *testing.T) {
 		{
 			name: "", args: args{
 				sec: 1640966400, layout: datetime.DefaultLayoutDateTime},
-			want: "2022-01-01 00:00:00",
+			want: "2021-12-31 16:00:00",
 		},
 		{
 			name: "", args: args{
 				sec: 1640966400, layout: datetime.DefaultLayoutDate},
-			want: "2022-01-01",
+			want: "2021-12-31",
 		},
 	}
 	for _, tt := range tests {
@@ -1096,19 +1109,20 @@ func TestUnixMilli2TimeStr(t *testing.T) {
 		{
 			name: "", args: args{
 				msec: 1640966400000, layout: datetime.DefaultLayoutDateTime},
-			want: "2022-01-01 00:00:00",
+			want: "2021-12-31 16:00:00",
 		},
 		{
 			name: "", args: args{
 				msec: 1640966400000, layout: datetime.DefaultLayoutDate},
-			want: "2022-01-01",
+			want: "2021-12-31",
 		},
 		{
 			name: "", args: args{
 				msec: 1640966400555, layout: datetime.DefaultLayoutDateTimeMsec},
-			want: "2022-01-01 00:00:00.555",
+			want: "2021-12-31 16:00:00.555",
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := datetime.UnixMilli2TimeStr(tt.args.msec, tt.args.layout); got != tt.want {

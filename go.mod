@@ -1,6 +1,6 @@
 module github.com/v8fg/kit4go
 
-go 1.18
+go 1.19
 
 require (
 	github.com/agiledragon/gomonkey v2.0.2+incompatible
