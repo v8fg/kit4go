@@ -1,11 +1,10 @@
-name: tests
+name: CI
 
 on:
   push:
     tags:
       - v*
     branches:
-      - release
       - dev
   pull_request:
     branches:
