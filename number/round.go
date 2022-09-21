@@ -9,13 +9,17 @@ import (
 	"strings"
 )
 
+// Int marks the integer type or underlying integer type.
 type Int interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64
 }
 
+// Uint marks the un signed integer type or underlying un signed integer type.
 type Uint interface {
 	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
 }
+
+// Float marks the float type or underlying float type.
 type Float interface {
 	~float32 | ~float64
 }
@@ -29,6 +33,10 @@ func init() {
 	regForNumber = regForNumber6
 }
 
+// SetRegForNumber sets which the regex string will use for parse the string number.
+//
+//	true: regForNumber7
+//	false: regForNumber6
 func SetRegForNumber(useRegForNumber7 bool) {
 	if useRegForNumber7 {
 		// subMatch size shall 7
@@ -66,9 +74,10 @@ func RoundCeil[T Float](f T, precision uint) float64 {
 
 // RoundTrunc returns the truncate float64 with the given input and precision,
 // type can:
-// 	~int | ~int8 | ~int16 | ~int32 | ~int64
-// 	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
-// 	~float32 | ~float64
+//
+//	~int | ~int8 | ~int16 | ~int32 | ~int64
+//	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+//	~float32 | ~float64
 //
 // support exponential.
 //
@@ -114,10 +123,10 @@ func RoundTrunc[T Int | Uint | Float](f T, precision int) T {
 
 // RoundTruncStr returns the truncate string with the given input and precision,
 // type can:
-// 	~int | ~int8 | ~int16 | ~int32 | ~int64
-// 	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
-// 	~float32 | ~float64
 //
+//	~int | ~int8 | ~int16 | ~int32 | ~int64
+//	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+//	~float32 | ~float64
 func RoundTruncStr[T Int | Uint | Float](f T, precision int) string {
 	s := RestoreToRealNumberStr(f)
 
@@ -168,23 +177,22 @@ func regSplitNormalNumber(s string) (sig, integer, fractional string) {
 	return
 }
 
-// RestoreToRealNumberStr
+// RestoreToRealNumberStr converts the numeric input to the corresponding string, as the storage mechanism, some pos maybe override.
 // type can:
-// 	~int | ~int8 | ~int16 | ~int32 | ~int64
-// 	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
-// 	~float32 | ~float64
+//
+//	~int | ~int8 | ~int16 | ~int32 | ~int64
+//	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
+//	~float32 | ~float64
 //
 // regexp matches: 0=match string, 1(+/-)=number sig, 2(int)=integer, 3(.)=dot, 4=(int)fractional or decimal,
 // 5(+/-)=exponential sig, 6((int))=exponential value
 //
 // use: regexp.MustCompile(`([+\-])?(?:(0|[1-9]\d*)?(\.?)(\d*)?|\.\d+)(?:[eE]([+\-])?(\d+))?`)
 //
-//
 // regexp matches: 0=match string, 1(+/-)=number sig, 2(int)=integer, 3=(int)fractional or decimal,
 // 4(+/-)=exponential sig, 5((int))=exponential value
 //
 // use: regexp.MustCompile(`([+\-])?(?:(0|[1-9]\d*)?(?:\.?)(\d*)?|\.\d+)(?:[eE]([+\-])?(\d+))?`)
-//
 func RestoreToRealNumberStr[T Int | Uint | Float](f T) string {
 	s := fmt.Sprint(f)
 	if s == "NaN" || s == "+Inf" || s == "-Inf" {

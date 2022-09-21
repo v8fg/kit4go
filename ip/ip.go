@@ -10,6 +10,7 @@ import (
 // Flag IP Version flag, mark the ip version or invalid.
 type Flag int
 
+// FLag mark the ipv4, ipv6, invalid or no specified.
 const (
 	FlagVInValid = 0 // invalid ip
 	FlagV4       = 4
@@ -29,15 +30,19 @@ func (f *Flag) String() string {
 	return ""
 }
 
+// Valid checks the flag is in v4, v6 or others.
+//
+//	v4: return true
+//	v6: return true
 func (f *Flag) Valid() bool {
 	return *f == FlagV4 || *f == FlagV6
 }
 
 // BytesIPToIPv4Number first converts the ip net.IP to the ipv4, then returns the numeric format.
 //
-// Invalid ip: not 4bytes or 16bytes, will output 0.
+//	Invalid ip: not 4bytes or 16bytes, will output 0.
 //
-// Rule: [4]byte for ipv4, [12:]byte for ipv6, then to number.
+//	Rule: [4]byte for ipv4, [12:]byte for ipv6, then to number.
 func BytesIPToIPv4Number(ip net.IP) *big.Int {
 	l := len(ip)
 	if l != net.IPv4len && l != net.IPv6len {
@@ -66,9 +71,10 @@ func BytesIPToNumber(ip net.IP) *big.Int {
 // BytesIPToStr converts the ip net.IP to the corresponding ip string with the given flag.
 //
 // Flag range and deals:
-//  flag=4 to ipv4 string, invalid return ""
-//  flag=6 to ipv6 string, invalid return ""
-//  others to the real IP.String(), invalid may output "" or "?" + hexString(ip)
+//
+//	flag=4 to ipv4 string, invalid return ""
+//	flag=6 to ipv6 string, invalid return ""
+//	others to the real IP.String(), invalid may output "" or "?" + hexString(ip)
 func BytesIPToStr(ip net.IP, flag Flag) string {
 	return toIPString(ip, flag)
 }
@@ -117,9 +123,10 @@ func IsV6ByBytesIP(ip net.IP) bool {
 
 // VersionFlag gets the ip version Flag from the ip string and returns a flag within the given range.
 //
-//  0=FlagVInValid, mark invalid ip
-//  4=FlagV4, mark valid ipv4
-//  6=FlagV6, mark valid ipv6
+//	0=FlagVInValid, mark invalid ip
+//	4=FlagV4, mark valid ipv4
+//	6=FlagV6, mark valid ipv6
+//
 // Warning: if the ip is ipv6 format, but represents the ipv4 will treat as ipv4.
 func VersionFlag(ip string) Flag {
 	ib := net.ParseIP(ip)
@@ -133,9 +140,9 @@ func VersionFlag(ip string) Flag {
 
 // VersionFlagByBytes gets the ip version Flag from the ip net.IP and returns a flag within the given range.
 //
-//  0=FlagVInValid, mark invalid ip
-//  4=FlagV4, mark valid ipv4
-//  6=FlagV6, mark valid ipv6
+//	0=FlagVInValid, mark invalid ip
+//	4=FlagV4, mark valid ipv4
+//	6=FlagV6, mark valid ipv6
 //
 // Warning: if the ip is ipv6 format, but represents the ipv4 will treat as ipv4.
 func VersionFlagByBytes(ip net.IP) Flag {
@@ -150,9 +157,9 @@ func VersionFlagByBytes(ip net.IP) Flag {
 // VersionFlagByContains gets the ip version Flag from the ip string, using the strings.Contains,
 // which returns a flag in the given range.
 //
-//  0=FlagVInValid, mark invalid ip
-//  4=FlagV4, mark valid ipv4
-//  6=FlagV6, mark valid ipv6
+//	0=FlagVInValid, mark invalid ip
+//	4=FlagV4, mark valid ipv4
+//	6=FlagV6, mark valid ipv6
 //
 // Warning: if the ip is ipv6 format, but represents the ipv4 will treat as ipv4.
 func VersionFlagByContains(ip string) Flag {
@@ -183,14 +190,16 @@ func NumberIPv4ToStr(ip uint32) string {
 // If the numeric ip`s bytes size over the limit return nil.
 //
 // Limits: ip`s bytes size
-//  flag=4, <=16, ipv4 maybe represents with ipv6 format.
-//  flag=6, <=16
-//  others, <=16
+//
+//	flag=4, <=16, ipv4 maybe represents with ipv6 format.
+//	flag=6, <=16
+//	others, <=16
 //
 // Flag to deal:
-//  flag=4 to [4]byte
-//  flag=6 to [16]byte
-//  others to the nearest bytes size format.
+//
+//	flag=4 to [4]byte
+//	flag=6 to [16]byte
+//	others to the nearest bytes size format.
 func NumberToIP(ip *big.Int, flag Flag) net.IP {
 	ib := ip.Bytes()
 	l := len(ib)
@@ -244,8 +253,10 @@ func TextNumberToIPStr(num string, base int) string {
 // ToIP converts the ip string, to net.IP.
 //
 // If the ip is valid, the corresponding net.IP is returned:
-//  ipv4: [16]byte, fill the prefix: v4InV6Prefix = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
-//  ipv6: [16]byte
+//
+//	ipv4: [16]byte, fill the prefix: v4InV6Prefix = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
+//	ipv6: [16]byte
+//
 // else return nil.
 //
 // Tips: as ipv4 and ipv6 both to [16]byte, the real ipv4 bytes shall bytes[12:].
@@ -256,7 +267,6 @@ func ToIP(ip string) net.IP {
 // ToIPReal converts the ip string to the real net.IP, ipv4 to [4]byte and ipv6 to [16]byte
 //
 // If the ip is valid, the corresponding net.IP is returned, else return nil.
-//
 func ToIPReal(ip string) (ret net.IP) {
 	ib := net.ParseIP(ip)
 
@@ -275,9 +285,10 @@ func ToIPReal(ip string) (ret net.IP) {
 // ToNumber converts the ip string to the numeric format.
 //
 // If the ip is valid, the corresponding number is returned, else return 0.
-//  ipv4 to the corresponding ipv4 numeric format
-//  ipv6 to the corresponding ipv6 numeric format
-//  others to 0
+//
+//	ipv4 to the corresponding ipv4 numeric format
+//	ipv6 to the corresponding ipv6 numeric format
+//	others to 0
 //
 // Tips: ipv6 may overflow uint64, so return big.Int.
 func ToNumber(ip string) *big.Int {
@@ -291,9 +302,9 @@ func ToNumber(ip string) *big.Int {
 // ToIPv4Number coverts the ip string to the corresponding ipv4 numeric format.
 //
 // If the ip is valid, the corresponding number is returned, else return 0.
-//  ipv4 to the corresponding ipv4 numeric format
-//  ipv6, if presents the ipv4 to the corresponding ipv4 numeric format
 //
+//	ipv4 to the corresponding ipv4 numeric format
+//	ipv6, if presents the ipv4 to the corresponding ipv4 numeric format
 func ToIPv4Number(ip string) uint32 {
 	ib := ToIPReal(ip)
 	if len(ib) == 0 {
@@ -309,9 +320,10 @@ func ToIPv4Number(ip string) uint32 {
 // ToNumberIPv4 coverts the ip string to the numeric format.
 //
 // If the ip is valid, the corresponding number is returned, else return 0.
-//  ipv4 to the corresponding ipv4 numeric format
-//  ipv6 remain the last 4bytes, namely deal [12:], then convert to the corresponding numeric format
-//  others to 0
+//
+//	ipv4 to the corresponding ipv4 numeric format
+//	ipv6 remain the last 4bytes, namely deal [12:], then convert to the corresponding numeric format
+//	others to 0
 //
 // Warning: if the ip is valid ipv6 string, will miss the overflow parts.
 func ToNumberIPv4(ip string) uint32 {
@@ -329,16 +341,17 @@ func ToNumberIPv4(ip string) uint32 {
 // ToCIDRStr converts the fuzzyIPV4 to cidr format.
 //
 // The support fuzzy formats like, need least one separate character ".\d{1,3}|.*":
-//  	192.168.1.1         -> 192.168.1.1/32
-//  	192.168.1.*			-> 192.168.1.0/24
-//  	192.168.*.*			-> 192.168.0.0/16
-//  	192.*.*.*			-> 192.0.0.0/8
-// 		192.*.*				-> 192.0.0.0/8
-// 		192.*				-> 192.0.0.0/8
-// 		*.*					-> 0.0.0.0/0
-// 		*.*.*				-> 0.0.0.0/0
-// 		*.*.*.*				-> 0.0.0.0/0
-//  We set the first character '*' index as the ip number`s mask bits and replace all the "*" to "0".
+//
+//	 	192.168.1.1         -> 192.168.1.1/32
+//	 	192.168.1.*			-> 192.168.1.0/24
+//	 	192.168.*.*			-> 192.168.0.0/16
+//	 	192.*.*.*			-> 192.0.0.0/8
+//			192.*.*				-> 192.0.0.0/8
+//			192.*				-> 192.0.0.0/8
+//			*.*					-> 0.0.0.0/0
+//			*.*.*				-> 0.0.0.0/0
+//			*.*.*.*				-> 0.0.0.0/0
+//	 We set the first character '*' index as the ip number`s mask bits and replace all the "*" to "0".
 func ToCIDRStr(fuzzyIPV4 string) string {
 	if len(fuzzyIPV4) == 0 {
 		return ""
@@ -356,10 +369,10 @@ func ToCIDRStr(fuzzyIPV4 string) string {
 
 	// check valid
 	fIps = strings.Split(fuzzyIPV4, ".")
-	for index, fIp := range fIps {
-		if fIp != "*" {
+	for index, fIP := range fIps {
+		if fIP != "*" {
 			ones = (index + 1) * 8
-			parseInt, err := strconv.ParseUint(fIp, 10, 32)
+			parseInt, err := strconv.ParseUint(fIP, 10, 32)
 			if err != nil || parseInt > 255 {
 				return ""
 			}
@@ -380,9 +393,10 @@ func ToCIDRStr(fuzzyIPV4 string) string {
 // ToStrIP converts the ip string to the corresponding ip string with the given flag.
 //
 // Flag range and deals:
-//  flag=4 to ipv4 string
-//  flag=6 to ipv6 string
-//  others to the real IP.String()
+//
+//	flag=4 to ipv4 string
+//	flag=6 to ipv6 string
+//	others to the real IP.String()
 func ToStrIP(ip string, flag Flag) string {
 	ib := net.ParseIP(ip)
 	return toIPString(ib, flag)
@@ -391,9 +405,9 @@ func ToStrIP(ip string, flag Flag) string {
 // ToStrIPv4 converts the ip string to the corresponding ipv4 string.
 //
 // output:
-//  empty string: invalid ipv4 or ipv6 input, the valid ipv6 not represents the ipv4.
-//   ipv4 string: ipv4 or ipv6 str represents the ipv4.
 //
+//	empty string: invalid ipv4 or ipv6 input, the valid ipv6 not represents the ipv4.
+//	 ipv4 string: ipv4 or ipv6 str represents the ipv4.
 func ToStrIPv4(ip string) string {
 	return ToStrIP(ip, FlagV4)
 }
@@ -401,9 +415,9 @@ func ToStrIPv4(ip string) string {
 // ToStrIPv6 converts the ip string to the corresponding ipv6 string.
 //
 // output:
-//  empty string: invalid ipv4 or ipv6 input.
-//   ipv6 string: ipv6, ipv4 or ipv6 string represents the ipv4.
 //
+//	empty string: invalid ipv4 or ipv6 input.
+//	 ipv6 string: ipv6, ipv4 or ipv6 string represents the ipv4.
 func ToStrIPv6(ip string) string {
 	return ToStrIP(ip, FlagV6)
 }

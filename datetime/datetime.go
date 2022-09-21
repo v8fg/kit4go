@@ -4,13 +4,15 @@ import (
 	"time"
 )
 
+// NowTime returns now time.
 func NowTime() time.Time {
 	return time.Now()
 }
 
-// NowTimeInLocation get now time use the given location
-// time format: ISO8601:2004 2004-05-03T17:30:08+08:00
-// go format: 2006-01-02T15:04:05+00:00
+// NowTimeInLocation returns now time with the given location.
+//
+//	time format: ISO8601:2004 2004-05-03T17:30:08+08:00
+//	go   format: 2006-01-02T15:04:05+00:00
 func NowTimeInLocation(loc *time.Location) time.Time {
 	if loc == nil {
 		loc = time.Local
@@ -18,43 +20,51 @@ func NowTimeInLocation(loc *time.Location) time.Time {
 	return time.Now().In(loc)
 }
 
-// NowUnix return unix second
+// NowUnix returns now as a Unix time, the number of seconds elapsed since January 1, 1970 UTC.
 func NowUnix() int64 {
 	return time.Now().Unix()
 }
 
+// NowUnixMilli returns now as a Unix time, the number of milliseconds elapsed since January 1, 1970 UTC.
 func NowUnixMilli() int64 {
 	return time.Now().UnixMilli()
 }
 
+// NowUnixNano returns now as a Unix time, the number of nanoseconds elapsed since January 1, 1970 UTC.
 func NowUnixNano() int64 {
 	return time.Now().UnixNano()
 }
 
+// TimeStr2Unix parses the string time with the given layout and location, and returns the corresponding Unix time,
+// the number of seconds elapsed since January 1, 1970 UTC.
 func TimeStr2Unix(layout, value string, loc *time.Location) int64 {
 	parseTime, _ := ParseInLocation(layout, value, loc)
 	return parseTime.Unix()
 }
 
+// TimeStr2UnixMilli parses the string time with the given layout and location, and returns the corresponding Unix time,
+// the number of milliseconds elapsed since January 1, 1970 UTC.
 func TimeStr2UnixMilli(layout, value string, loc *time.Location) int64 {
 	parseTime, _ := ParseInLocation(layout, value, loc)
 	return parseTime.UnixMilli()
 }
 
+// Unix2TimeStr converts the Unix time, the number of seconds elapsed since January 1, 1970 UTC, to the string with the given layout.
 func Unix2TimeStr(sec int64, layout string) string {
 	return time.Unix(sec, 0).Format(layout)
 }
 
+// UnixMilli2TimeStr converts the Unix time, the number of milliseconds elapsed since January 1, 1970 UTC, to the string with the given layout.
 func UnixMilli2TimeStr(msec int64, layout string) string {
 	return time.UnixMilli(msec).Format(layout)
 }
 
-// StartTime get the start time for the special day, ex: 2006-06-01T00:00:00.999+08:00
+// StartTime returns the start time for the special day, ex: 2006-06-01T00:00:00.999+08:00.
 func StartTime(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
-// StartTimeStr get start time str for the special time
+// StartTimeStr returns start time str for the special time.
 func StartTimeStr(layout string, t time.Time) string {
 	if len(layout) == 0 {
 		layout = LayoutDateTime
@@ -62,12 +72,12 @@ func StartTimeStr(layout string, t time.Time) string {
 	return StartTime(t).Format(layout)
 }
 
-// EndTime get the end time for the special day, ex: 2019-06-01T23:59:59.999+08:00
+// EndTime returns the end time with the given time, ex: 2019-06-01T23:59:59.999+08:00.
 func EndTime(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 1e9-1, t.Location())
 }
 
-// EndTimeStr get end time str for the special time
+// EndTimeStr returns end time str for the special time.
 func EndTimeStr(layout string, t time.Time) string {
 	if len(layout) == 0 {
 		layout = LayoutDateTime
@@ -75,7 +85,7 @@ func EndTimeStr(layout string, t time.Time) string {
 	return EndTime(t).Format(layout)
 }
 
-// StartEndTimeStr get start and end time str for the special day
+// StartEndTimeStr returns the start and end time str with the given time.
 func StartEndTimeStr(layout string, t time.Time) (start, end string) {
 	if len(layout) == 0 {
 		layout = LayoutDateTime
@@ -85,11 +95,13 @@ func StartEndTimeStr(layout string, t time.Time) (start, end string) {
 	return
 }
 
+// FirstDateTimeOfMonth returns the start time of the first day in the same month as the given time.
 func FirstDateTimeOfMonth(t time.Time) time.Time {
 	t = t.AddDate(0, 0, -t.Day()+1)
 	return StartTime(t)
 }
 
+// FirstDateTimeStrOfMonth returns the start time string for a given layout on the first day of the same month as the given time.
 func FirstDateTimeStrOfMonth(layout string, t time.Time) string {
 	if len(layout) == 0 {
 		layout = DefaultLayoutDate
@@ -97,11 +109,13 @@ func FirstDateTimeStrOfMonth(layout string, t time.Time) string {
 	return FirstDateTimeOfMonth(t).Format(layout)
 }
 
+// LastDateTimeOfMonth returns the end time of the last day in the same month as the given time.
 func LastDateTimeOfMonth(t time.Time) time.Time {
 	t = t.AddDate(0, 0, -t.Day()+1)
 	return EndTime(t).AddDate(0, 1, -1)
 }
 
+// LastDateTimeStrOfMonth returns the end time string for a given layout on the last day of the same month as the given time.
 func LastDateTimeStrOfMonth(layout string, t time.Time) string {
 	if len(layout) == 0 {
 		layout = DefaultLayoutDate
@@ -109,11 +123,13 @@ func LastDateTimeStrOfMonth(layout string, t time.Time) string {
 	return LastDateTimeOfMonth(t).Format(layout)
 }
 
+// FirstDateTimeOfWeek returns the start time of the first day in the same week as the given time, first day shall Monday.
 func FirstDateTimeOfWeek(t time.Time) time.Time {
 	// firstDay Monday
 	return StartTime(t.AddDate(0, 0, int(-t.Weekday())+1))
 }
 
+// FirstDateTimeStrOfWeek returns the start time string for a given layout on the first day of the same week as the given time, first day shall Monday.
 func FirstDateTimeStrOfWeek(layout string, t time.Time) string {
 	if len(layout) == 0 {
 		layout = DefaultLayoutDate
@@ -121,11 +137,13 @@ func FirstDateTimeStrOfWeek(layout string, t time.Time) string {
 	return FirstDateTimeOfWeek(t).Format(layout)
 }
 
+// LastDateTimeOfWeek returns the end time of the last day in the same week as the given time, first day shall Monday.
 func LastDateTimeOfWeek(t time.Time) time.Time {
 	// firstDay Monday
 	return EndTime(t.AddDate(0, 0, int(time.Saturday+1-t.Weekday())%7))
 }
 
+// LastDateTimeStrOfWeek returns the end time string for a given layout on the last day of the same week as the given time, first day shall Monday.
 func LastDateTimeStrOfWeek(layout string, t time.Time) string {
 	if len(layout) == 0 {
 		layout = DefaultLayoutDate
@@ -133,55 +151,59 @@ func LastDateTimeStrOfWeek(layout string, t time.Time) string {
 	return LastDateTimeOfWeek(t).Format(layout)
 }
 
-// DeltaDateDay return the real days between the end and start.
+// DeltaDateDays returns the real integer days between the end and start.
 //
-// start: 2022-02-28 10:00:00, end: 2020-03-01 09:00:00, delta date day: 2
-func DeltaDateDay(start, end time.Time) int {
+//	start: 2022-02-28 10:00:00
+//	end: 2020-03-01 09:00:00
+//	delta date day: 2
+func DeltaDateDays(start, end time.Time) int {
 	return int(EndTime(end).Sub(StartTime(start)).Hours()/24.0) + 1
 }
 
-// DeltaDays return the days for end - start
+// DeltaDays returns the days between the end and start.
 func DeltaDays(start, end time.Time) float64 {
 	return end.Sub(start).Hours() / 24.0
 }
 
-// DeltaHours return the hours for end - start
+// DeltaHours returns the hours between the end and start.
 func DeltaHours(start, end time.Time) float64 {
 	return end.Sub(start).Hours()
 }
 
-// DeltaMinutes return the minutes for end - start
+// DeltaMinutes returns the minutes between the end and start.
 func DeltaMinutes(start, end time.Time) float64 {
 	return end.Sub(start).Minutes()
 }
 
-// DeltaSeconds return the seconds for end - start
+// DeltaSeconds returns the seconds between the end and start.
 func DeltaSeconds(start, end time.Time) float64 {
 	return end.Sub(start).Seconds()
 }
 
-// AddDuration add duration for the special time
+// AddDuration returns the time t+d.
 func AddDuration(d time.Duration, t time.Time) time.Time {
 	return t.Add(d)
 }
 
-// AddDurationStr add duration str for the special time
-// Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".
+// AddDurationStr returns the time t+d, d shall the valid duration string format.
+//
+//	Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".
 func AddDurationStr(duration string, t time.Time) time.Time {
 	d, _ := time.ParseDuration(duration)
 	return t.Add(d)
 }
 
-// AddDays add days for the special time
+// AddDays returns the time corresponding to adding the given number of days to t.
 func AddDays(days int, t time.Time) time.Time {
 	return t.AddDate(0, 0, days)
 }
 
-// AddDate add date for the special time
+// AddDate returns the time corresponding to adding the given number of years, months, and days to t.
 func AddDate(years, months, days int, t time.Time) time.Time {
 	return t.AddDate(years, months, days)
 }
 
+// RangeTime returns the range time, between the start and end, with the given interval duration.
 func RangeTime(start, end time.Time, interval time.Duration) []time.Time {
 	if start.After(end) {
 		start, end = end, start
@@ -199,6 +221,7 @@ func RangeTime(start, end time.Time, interval time.Duration) []time.Time {
 	return ret
 }
 
+// RangeDateStr returns the range time string, between the start and end, with the given layout.
 func RangeDateStr(start, end time.Time, layout string) []string {
 	if start.After(end) {
 		start, end = end, start

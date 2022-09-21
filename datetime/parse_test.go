@@ -8,8 +8,6 @@ import (
 	"github.com/v8fg/kit4go/datetime"
 )
 
-var local = time.Local
-
 func TestParseTime(t *testing.T) {
 	type args struct {
 		layout string
@@ -22,19 +20,19 @@ func TestParseTime(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "", args: args{layout: "2006-01-02 15:04:05", value: "2022-01-01 21:00:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{layout: "2006-01-02 15:04:05", value: "2022-01-01 21:00:00.000"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{layout: "2006-01-02 15:04:05", value: "2022-01-01 21:00:00.004"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, int(time.Millisecond*4), local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, int(time.Millisecond*4), time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{layout: "2006-01-02 15:04", value: "2022-01-01 21:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 	}
@@ -68,19 +66,19 @@ func TestParseTimeMostOne(t *testing.T) {
 		{name: "", args: args{
 			layouts: []string{"2006-01-02", "15:04:05", "2006-01-02 15:04:05", "2006-01-02 15:04:05.000"},
 			value:   "2022-01-01 21:00:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{
 			layouts: []string{"2006-01-02", "15:04:05", "2006-01-02 15", "2006-01-02 15:04:05"},
 			value:   "2022-01-01 21:00:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{
 			layouts: []string{"2006-01-02", "15:04:05", "2006-01-02 15", "2006-01-02 15:04:05"},
 			value:   "2022-01-01 21:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: true,
 		},
 	}
@@ -117,19 +115,19 @@ func TestParseTimeMostOneWithLocation(t *testing.T) {
 		{name: "", args: args{
 			layouts: []string{"2006-01-02", "15:04:05", "2006-01-02 15:04:05", "2006-01-02 15:04:05.000"},
 			value:   "2022-01-01 21:00:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{
 			layouts: []string{"2006-01-02", "15:04:05", "2006-01-02 15", "2006-01-02 15:04:05"},
 			value:   "2022-01-01 21:00:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{
 			layouts: []string{"2006-01-02", "15:04:05", "2006-01-02 15", "2006-01-02 15:04:05"},
 			value:   "2022-01-01 21:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: true,
 		},
 	}
@@ -151,7 +149,7 @@ func TestParseTimeMostOneWithLocation(t *testing.T) {
 	}
 }
 
-func TestParseTimeWithLocation(t *testing.T) {
+func TestParseInLocation(t *testing.T) {
 	type args struct {
 		layout string
 		value  string
@@ -164,19 +162,19 @@ func TestParseTimeWithLocation(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "", args: args{layout: "2006-01-02 15:04:05", value: "2022-01-01 21:00:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{layout: "2006-01-02 15:04:05", value: "2022-01-01 21:00:00.000"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{layout: "2006-01-02 15:04:05", value: "2022-01-01 21:00:00.004"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, int(time.Millisecond*4), local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, int(time.Millisecond*4), time.UTC),
 			wantErr: false,
 		},
 		{name: "", args: args{layout: "2006-01-02 15:04", value: "2022-01-01 21:00"},
-			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, local),
+			want:    time.Date(2022, 1, 1, 21, 0, 0, 0, time.UTC),
 			wantErr: false,
 		},
 	}

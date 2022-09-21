@@ -18,10 +18,10 @@ func TestFormat(t *testing.T) {
 		want string
 	}{
 		{name: "", args: args{layout: "",
-			t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.Local),
+			t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.UTC),
 		}, want: "2020-02-01 00:00:05"},
 		{name: "", args: args{layout: datetime.DefaultLayoutDate,
-			t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.Local),
+			t: time.Date(2020, 2, 1, 0, 0, 5, 0, time.UTC),
 		}, want: "2020-02-01"},
 	}
 	for _, tt := range tests {

@@ -14,7 +14,7 @@ func Parse(layout, value string) (time.Time, error) {
 func ParseMostOne(layouts []string, value string) (time.Time, error) {
 	for _, layout := range layouts {
 		if t, err := ParseInLocation(layout, value, time.Local); err == nil {
-			return t, err
+			return t, nil
 		}
 	}
 	return time.Time{}, errors.New("parse time failed for all layouts")
@@ -32,7 +32,7 @@ func ParseInLocation(layout, value string, loc *time.Location) (time.Time, error
 func ParseMostOneInLocation(layouts []string, value string, loc *time.Location) (time.Time, error) {
 	for _, layout := range layouts {
 		if t, err := ParseInLocation(layout, value, loc); err == nil {
-			return t, err
+			return t, nil
 		}
 	}
 	return time.Time{}, errors.New("parse time with location failed for all layouts")

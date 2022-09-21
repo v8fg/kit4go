@@ -79,7 +79,7 @@ func InCIDRsOrIPs(cidrOrIPs []string, ip net.IP) (int, bool) {
 			}
 		} else {
 			if sp := ToIP(cidrOrIP); sp != nil {
-				if bytes.Compare(sp, ip) == 0 {
+				if net.IP.Equal(sp, ip) {
 					return index, true
 				}
 			}
@@ -96,27 +96,29 @@ func InCIDRsOrIPs(cidrOrIPs []string, ip net.IP) (int, bool) {
 // CIDR IP(IPNet) adds one byte to the low address or high byte (big-endian mode) to identify the network number bits.
 //
 // Require for your params:
-// 	The ip net.IP only support the following ip formats:
-//		ipv4:  4bytes
-//		ipv6: 16bytes, it must only represent the ipv6
 //
-// 	The mixedIPsOrCIDRs only support the following formats:
-//  	ipv4:      4bytes
-//  	ipv4 CIDR: 5bytes, with extra bytes to represents network number bits.
-//  	ipv6:      16bytes
-//  	ipv6 CIDR: 17bytes, with extra bytes to represents network number bits.
+//		The ip net.IP only support the following ip formats:
+//			ipv4:  4bytes
+//			ipv6: 16bytes, it must only represent the ipv6
 //
-//	Warning: all the above ipv6 or ipv6 CIDR, must only represent the ipv6, not for the ipv4 or ipv4 CIDR.
+//		The mixedIPsOrCIDRs only support the following formats:
+//	 	ipv4:      4bytes
+//	 	ipv4 CIDR: 5bytes, with extra bytes to represents network number bits.
+//	 	ipv6:      16bytes
+//	 	ipv6 CIDR: 17bytes, with extra bytes to represents network number bits.
+//
+//		Warning: all the above ipv6 or ipv6 CIDR, must only represent the ipv6, not for the ipv4 or ipv4 CIDR.
 //
 // The deals for the mapping mixedIPOrCIDR and ip:
-//  diff size 0:
-//      ipv4 to ipv4, bytes.Compare
-//      ipv6 to ipv6, bytes.Compare
-//  diff size others:
-//      ipv4 CIDR to ipv4: net ip match
-//      ipv6 CIDR to ipv6: net ip match
-//      ipv6 CIDR to ipv4: false
-//      ipv4 CIDR to ipv6: false
+//
+//	diff size 0:
+//	    ipv4 to ipv4, bytes.Equal
+//	    ipv6 to ipv6, bytes.Equal
+//	diff size others:
+//	    ipv4 CIDR to ipv4: net ip match
+//	    ipv6 CIDR to ipv6: net ip match
+//	    ipv6 CIDR to ipv4: false
+//	    ipv4 CIDR to ipv6: false
 //
 // If you use protobuf, [][]byte == repeated bytes.
 func FastInRangeMixedIPsOrCIDRs(mixedIPsOrCIDRs [][]byte, ip net.IP) (int, bool) {
@@ -130,7 +132,7 @@ func FastInRangeMixedIPsOrCIDRs(mixedIPsOrCIDRs [][]byte, ip net.IP) (int, bool)
 		diffSize := lm - ipLen
 
 		if diffSize == 0 {
-			if bytes.Compare(mixedIPOrCIDR, ip) == 0 {
+			if bytes.Equal(mixedIPOrCIDR, ip) {
 				return index, true
 			}
 			continue
@@ -171,13 +173,14 @@ func FastInRangeMixedIPsOrCIDRs(mixedIPsOrCIDRs [][]byte, ip net.IP) (int, bool)
 // CIDRContains checks the ip whether in the given network with prefix length.
 //
 //  1. checks the ip in the given   IP: shall set ones = len(ipNet)
+//
 //  2. checks the ip in the given CIDR: shall set ones = the real mask value
 //
-//  Default the ip shall simply format, to improve performance, formats like:
-// 		ipv4: good
-// 		ipv6: good
-//  	ipv6: but represents the ipv4, bad
-//  To avoid unexpected result, if you can't assure the ip format, always enable formatIPToV4 = true, will work well.
+//     Default the ip shall simply format, to improve performance, formats like:
+//     ipv4: good
+//     ipv6: good
+//     ipv6: but represents the ipv4, bad
+//     To avoid unexpected result, if you can't assure the ip format, always enable formatIPToV4 = true, will work well.
 func CIDRContains(ones int, ipNet, ip net.IP, formatIPToV4 bool) bool {
 	maskBytesLen := len(ipNet)
 	if ones > 8*maskBytesLen || ones < 0 {
@@ -207,7 +210,7 @@ func CIDRContains(ones int, ipNet, ip net.IP, formatIPToV4 bool) bool {
 
 	// quick compare IP format without mask or len(mask) = len(ipNet)
 	if ones == 8*maskBytesLen && ipLen == ipNetLen {
-		return bytes.Compare(ipNet, ip) == 0
+		return net.IP.Equal(ipNet, ip)
 	}
 
 	m := net.CIDRMask(ones, 8*maskBytesLen) // mask aligns with the ipNet
@@ -235,36 +238,37 @@ func CIDRContains(ones int, ipNet, ip net.IP, formatIPToV4 bool) bool {
 // CIDR IP(IPNet) adds one byte to the low address or high byte (big-endian mode) to identify the network number bits.
 //
 // The ip net.IP only support the following ip formats:
+//
 //	ipv4: 4bytes
 //	ipv6: 16bytes, no matter if it represents the ipv4
 //
 // The mixedIPsOrCIDRs only support the following formats:
-//  ipv4:      4bytes or 16bytes(ipv6 format storage)
-//  ipv4 CIDR: 5bytes or 17bytes(ipv6 format storage), with extra bytes to represents network number bits.
-//  ipv6:      16bytes
-//  ipv6 CIDR: 17bytes, with extra bytes to represents network number bits.
+//
+//	ipv4:      4bytes or 16bytes(ipv6 format storage)
+//	ipv4 CIDR: 5bytes or 17bytes(ipv6 format storage), with extra bytes to represents network number bits.
+//	ipv6:      16bytes
+//	ipv6 CIDR: 17bytes, with extra bytes to represents network number bits.
 //
 // Notes:
-//  If you have converted ipv4 to ipv6, namely all mixedIPsOrCIDRs storage base ipv6 format,
-//  shall make sure the incoming ip net.IP is also the ipv6 format.
+//
+//	If you have converted ipv4 to ipv6, namely all mixedIPsOrCIDRs storage base ipv6 format,
+//	shall make sure the incoming ip net.IP is also the ipv6 format.
 //
 // Use protobuf, [][]byte == repeated bytes.
 func InRangeMixedIPsOrCIDRs(mixedIPsOrCIDRs [][]byte, ip net.IP) (int, bool) {
-	ipLen := len(ip)
-	if ipLen != net.IPv4len && ipLen != net.IPv6len {
+	if len(ip) != net.IPv4len && len(ip) != net.IPv6len {
 		return -1, false
 	}
 
 	// converts the input ip to real formats and length
 	if p4 := ip.To4(); len(p4) == net.IPv4len {
 		ip = p4
-		ipLen = net.IPv4len
 	}
 
 	for index, mixedIPOrCIDR := range mixedIPsOrCIDRs {
 		lm := len(mixedIPOrCIDR)
 
-		// contains mask byte, if ones = bits = max ipv4/ipv6 bits, bytes.Compare
+		// contains mask byte, if ones = bits = max ipv4/ipv6 bits, bytes.Equal
 		if lm == net.IPv4len+1 || lm == net.IPv6len+1 {
 			if CIDRContains(int(mixedIPOrCIDR[0]), mixedIPOrCIDR[1:], ip, false) {
 				return index, true

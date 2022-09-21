@@ -71,10 +71,9 @@ func appendHex(dst []byte, i uint32) []byte {
 
 // toIPString converts the ip net.IP to the according ip string with the given Flag.
 //
-// format:
-//  flag=4 to ipv4 string
-//  flag=6 to ipv6 string
-//  others to the real IP.String()
+//	flag=4 to ipv4 string
+//	flag=6 to ipv6 string
+//	others to the real IP.String()
 func toIPString(ip net.IP, flag Flag) string {
 	p := ip
 
