@@ -34,7 +34,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest, macos-latest ]
         go: [ 1.19 ]
-        test-tags: [ '', '-tags jsoniter' ]
+        test-tags: ['', '-tags jsoniter', '-tags go_json', '-tags "sonic avx"']
         include:
           - os: ubuntu-latest
             go-build: ~/.cache/go-build

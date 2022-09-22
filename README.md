@@ -18,7 +18,7 @@
 
 ## Support list
 
-- [x] [datetime](./datetime)
-- [x] [json](./json) **standard json** & [**json-iterator**](https://github.com/json-iterator/go.git)
-- [x] [number](./number)
-- [x] [ip](./ip)
+- [x] [datetime](./datetime) parse, format, others.
+- [x] [json](./json) support multi json packages.
+- [x] [number](./number) round.
+- [x] [ip](./ip) parse, match, convert, info.

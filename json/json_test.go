@@ -1,75 +1,27 @@
-package json
+package json_test
 
 import (
 	"testing"
+
+	"github.com/smartystreets/goconvey/convey"
+
+	"github.com/v8fg/kit4go/json"
 )
 
-type user struct {
-	Blog string `json:"blog"`
-	Name string `json:"name"`
-}
-
-func TestMarshal(t *testing.T) {
-	u := user{"xwi88", "https://github.com/xwi88"}
-	t.Logf("pkg name: %v", PKG)
-
-	b, err := Marshal(u)
-	if err != nil {
-		t.Error(err)
-	} else {
-		t.Logf("\ndata: %#v, \nMarshal: %v", u, string(b))
-	}
-
-	var uu user
-	if err := Unmarshal(b, &uu); err != nil {
-		t.Error(err)
-	} else {
-		t.Logf("\ndata: %#v, \nUnmarshal: %#v", u, uu)
-	}
-}
-
-func TestMarshalIndent(t *testing.T) {
-	u := user{"xwi88", "https://github.com/xwi88"}
-	t.Logf("pkg name: %v", PKG)
-
-	b, err := MarshalIndent(u, "", "  ")
-	if err != nil {
-		t.Error(err)
-	} else {
-		t.Logf("\ndata: %#v, \nMarshalIndent: %v", u, string(b))
-	}
-
-	var uu user
-	if err := Unmarshal(b, &uu); err != nil {
-		t.Error(err)
-	} else {
-		t.Logf("\ndata: %#v, \nUnmarshal: %#v", u, uu)
-	}
-}
-
 func TestValid(t *testing.T) {
-	u := user{"xwi88", "https://github.com/xwi88"}
-	t.Logf("pkg name: %v", PKG)
+	convey.Convey("TestValid", t, func() {
+		t.Logf("pkg:%v", json.PKG)
 
-	b, err := Marshal(u)
-	if err != nil {
-		t.Error(err)
-	} else {
-		t.Logf("\ndata: %#v, \nMarshal: %v", u, string(b))
-	}
+		valid := json.Valid([]byte("xwi88"))
+		convey.So(valid, convey.ShouldBeFalse)
 
-	if Valid(b) {
-		t.Logf("\ndata: %v, is valid json", string(b))
-	} else {
-		t.Errorf("\ndata: %v, is not valid json", string(b))
-	}
+		valid = json.Valid([]byte(`"xwi88"`))
+		convey.So(valid, convey.ShouldBeTrue)
 
-	bb := append([]byte{96}, b...)
-	bb = append(bb, 96)
+		valid = json.Valid([]byte(`[1, 2, 3]`))
+		convey.So(valid, convey.ShouldBeTrue)
 
-	if Valid(bb) {
-		t.Errorf("\ndata: %v, is not valid json", string(bb))
-	} else {
-		t.Logf("\ndata: %v, is not valid json", string(bb))
-	}
+		valid = json.Valid([]byte(`""`))
+		convey.So(valid, convey.ShouldBeTrue)
+	})
 }

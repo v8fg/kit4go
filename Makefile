@@ -1,13 +1,3 @@
-SHELL := /bin/sh
-
-existBash = $(shell cat /etc/shells|grep -w /bin/bash|grep -v grep)
-ifneq (, $(strip ${existBash}))
-	SHELL = /bin/bash
-endif
-
-_default_project_root=$(realpath $(dir $(realpath $(lastword $(MAKEFILE_LIST))))../..)
-
-PROJECT_ROOT ?= ${_default_project_root}
 GO ?= go
 GOFMT ?= gofmt "-s"
 GO_VERSION=$(shell $(GO) version | cut -c 14- | cut -d' ' -f1 | cut -d'.' -f2)
@@ -15,14 +5,14 @@ PACKAGES ?= $(shell $(GO) list ./...)
 VETPACKAGES ?= $(shell $(GO) list ./...)
 GOFILES := $(shell find . -name "*.go" -type f -not -path "./vendor/*")
 TESTFOLDER := $(shell $(GO) list ./...)
-TESTTAGS ?= ""
+TESTTAGS ?=
 
 
 .PHONY: test
 test:
 	echo "mode: count" > coverage.out
 	for d in $(TESTFOLDER); do \
-		$(GO) test $$TESTTAGS -v -covermode=count -coverprofile=profile.out $$d > tmp.out; \
+		$(GO) test $(TESTTAGS) -v -covermode=count -coverprofile=profile.out $$d > tmp.out; \
 		cat tmp.out; \
 		if grep -q "^--- FAIL" tmp.out; then \
 			rm tmp.out; \
@@ -39,6 +29,10 @@ test:
 			rm profile.out; \
 		fi; \
 	done
+
+.PHONY: cover
+cover:
+	@$(GO) test -cover ./...
 
 .PHONY: fmt
 fmt:
@@ -93,3 +87,7 @@ golangci:
 		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.49.0; \
 	fi
 	@for FILE in $(GOFILES); do golangci-lint run -set_exit_status $$FILE || exit 1; done;
+
+.PHONY: mod
+mod:
+	@go mod tidy
