@@ -1131,3 +1131,110 @@ func TestUnixMilli2TimeStr(t *testing.T) {
 		})
 	}
 }
+
+func TestUnixToDuration(t *testing.T) {
+	type args struct {
+		sec int64
+	}
+	tests := []struct {
+		name string
+		args args
+		want time.Duration
+	}{
+		{name: "864000s", args: args{864000 * int64(time.Second)}, want: 240 * time.Hour},
+		{name: "36000s", args: args{36000 * int64(time.Second)}, want: 10 * time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := datetime.UnixToDuration(tt.args.sec); got != tt.want {
+				t.Errorf("UnixToDuration() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnixMilliToDuration(t *testing.T) {
+	type args struct {
+		msec int64
+	}
+	tests := []struct {
+		name string
+		args args
+		want time.Duration
+	}{
+		{name: "86400000ms", args: args{86400000 * int64(time.Millisecond)}, want: 24 * time.Hour},
+		{name: "3600000ms", args: args{3600000 * int64(time.Millisecond)}, want: time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := datetime.UnixMilliToDuration(tt.args.msec); got != tt.want {
+				t.Errorf("UnixMilliToDuration() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDurationStrToDuration(t *testing.T) {
+	type args struct {
+		duration string
+	}
+	tests := []struct {
+		name string
+		args args
+		want time.Duration
+	}{
+		{name: "1d", args: args{"1d"}, want: 0},
+		{name: "1h", args: args{"1h"}, want: time.Hour},
+		{name: "1h", args: args{"24h"}, want: 24 * time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := datetime.DurationStrToDuration(tt.args.duration); got != tt.want {
+				t.Errorf("DurationStrToDuration() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDurationStrToUnix(t *testing.T) {
+	type args struct {
+		duration string
+	}
+	tests := []struct {
+		name string
+		args args
+		want float64
+	}{
+		{name: "1d", args: args{"1d"}, want: 0},
+		{name: "1h", args: args{"1h"}, want: 3600},
+		{name: "1h", args: args{"24h"}, want: 86400},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := datetime.DurationStrToUnix(tt.args.duration); got != tt.want {
+				t.Errorf("DurationStrToUnix() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDurationToUnix(t *testing.T) {
+	type args struct {
+		d time.Duration
+	}
+	tests := []struct {
+		name string
+		args args
+		want float64
+	}{
+		{name: "1h", args: args{time.Hour}, want: 3600},
+		{name: "1h", args: args{24 * time.Hour}, want: 86400},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := datetime.DurationToUnix(tt.args.d); got != tt.want {
+				t.Errorf("DurationToUnix() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

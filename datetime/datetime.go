@@ -49,6 +49,39 @@ func TimeStr2UnixMilli(layout, value string, loc *time.Location) int64 {
 	return parseTime.UnixMilli()
 }
 
+// UnixToDuration converts the seconds to the corresponding duration time.Duration.
+func UnixToDuration(sec int64) time.Duration {
+	return time.Duration(sec)
+}
+
+// UnixMilliToDuration converts the milliseconds to the corresponding duration time.Duration.
+func UnixMilliToDuration(msec int64) time.Duration {
+	return time.Duration(msec)
+}
+
+// DurationStrToDuration converts the duration string to the corresponding duration time.Duration.
+func DurationStrToDuration(duration string) time.Duration {
+	d, err := time.ParseDuration(duration)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+// DurationStrToUnix converts the duration string to the corresponding seconds.
+func DurationStrToUnix(duration string) float64 {
+	d, err := time.ParseDuration(duration)
+	if err != nil {
+		return 0
+	}
+	return d.Seconds()
+}
+
+// DurationToUnix converts the duration to the corresponding seconds.
+func DurationToUnix(d time.Duration) float64 {
+	return d.Seconds()
+}
+
 // Unix2TimeStr converts the Unix time, the number of seconds elapsed since January 1, 1970 UTC, to the string with the given layout.
 func Unix2TimeStr(sec int64, layout string) string {
 	return time.Unix(sec, 0).Format(layout)
