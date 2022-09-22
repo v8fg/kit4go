@@ -1,5 +1,7 @@
-//go:build !jsoniter
+//go:build !jsoniter && !go_json && !(sonic && avx && (linux || windows || darwin) && amd64)
 // +build !jsoniter
+// +build !go_json
+// +build !sonic !avx !linux,!windows,!darwin !amd64
 
 package json
 
