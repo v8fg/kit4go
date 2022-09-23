@@ -6,7 +6,7 @@ package json
 import json "github.com/goccy/go-json"
 
 // PKG package name imported
-const PKG = "go-json"
+const PKG = "go_json"
 
 var (
 	// Marshal is exported by gin/json package.
