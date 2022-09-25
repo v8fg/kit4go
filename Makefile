@@ -81,12 +81,19 @@ tools:
 		$(GO) install github.com/client9/misspell/cmd/misspell; \
 	fi
 
+.PHONY: golangci-lint
+golangci-lint:
+	@hash golangci-lint > /dev/null 2>&1; if [ $$? -ne 0 ]; then \
+		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.49.0; \
+	fi
+	@for FILE in $(GOFILES); do golangci-lint run -set_exit_status $$FILE || exit 1; done;
+
 .PHONY: golangci
 golangci:
 	@hash golangci-lint > /dev/null 2>&1; if [ $$? -ne 0 ]; then \
 		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.49.0; \
 	fi
-	@for FILE in $(GOFILES); do golangci-lint run -set_exit_status $$FILE || exit 1; done;
+	@golangci-lint run ./... || exit 0;
 
 .PHONY: mod
 mod:

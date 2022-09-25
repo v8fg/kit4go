@@ -12,12 +12,16 @@ type Flag int
 
 // FLag mark the ipv4, ipv6, invalid or no specified.
 const (
-	FlagVInValid = 0 // invalid ip
+	FlagVInValid = 0 // invalid ip, only use to check the ip is v4, v6
+	FlagVAll     = 1
 	FlagV4       = 4
 	FlagV6       = 6
 )
 
 func (f *Flag) String() string {
+	if *f == FlagVAll {
+		return "ipv4_v6"
+	}
 	if *f == FlagV4 {
 		return "ipv4"
 	}

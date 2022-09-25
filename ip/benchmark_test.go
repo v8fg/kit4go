@@ -148,7 +148,7 @@ func BenchmarkInIPNetRange(b *testing.B) {
 	}
 }
 
-func BenchmarkInIPRange(b *testing.B) {
+func BenchmarkInRangeIP(b *testing.B) {
 	ipSet := []net.IP{
 		net.IPv4(0, 0, 0, 0),
 		net.IPv4(10, 1, 0, 0),
@@ -166,6 +166,28 @@ func BenchmarkInIPRange(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for index := range ipSet {
 			_ = ip.InRangeIP(start, end, ipSet[index])
+		}
+	}
+}
+
+func BenchmarkInRangeIPv6(b *testing.B) {
+	ipSet := []net.IP{
+		net.IPv4(0, 0, 0, 0),
+		net.IPv4(10, 1, 0, 0),
+		net.IPv4(192, 168, 2, 1),
+		[]byte{},
+		bytes.Repeat([]byte{255}, 16),
+		bytes.Repeat([]byte{255}, 18),
+	}
+	start := net.IPv4(192, 168, 0, 1)
+	end := net.IPv4(192, 168, 192, 0)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		for index := range ipSet {
+			_ = ip.InRangeIPv6(start, end, ipSet[index])
 		}
 	}
 }

@@ -43,13 +43,32 @@ func InRangeCIDRStr(cidr, ip string) bool {
 
 // InRangeIP checks whether the ip net.IP is between the start and end ip, the ip shall valid.
 //
-// Recommend
+// All the ip shall the simplest format, with the least bytes.
+//
+// Recommend.
 func InRangeIP(start, end, ip net.IP) bool {
 	if len(ip) == 0 {
 		return false
 	}
 
 	if bytes.Compare(ip, start) >= 0 && bytes.Compare(ip, end) <= 0 {
+		return true
+	}
+	return false
+}
+
+// InRangeIPv6 checks whether the ip net.IP is between the start and end ip, the ip shall valid.
+//
+// First convert all ip to ipv6 format, then compare.
+func InRangeIPv6(start, end, ip net.IP) bool {
+	if len(ip) == 0 {
+		return false
+	}
+
+	start16 := start.To16()
+	end16 := end.To16()
+	ip16 := ip.To16()
+	if bytes.Compare(ip16, start16) >= 0 && bytes.Compare(ip16, end16) <= 0 {
 		return true
 	}
 	return false

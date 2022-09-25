@@ -1,7 +1,13 @@
 package ip
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"strings"
 	"time"
 )
 
@@ -19,6 +25,37 @@ func init() {
 		LatestTime: time.Now(),
 		TTL:        time.Minute,
 	}
+}
+
+const (
+	TypeFlagIsUnspecified = 1 << iota
+	TypeFlagIPIsLoopback
+	TypeFlagIsPrivate
+	TypeFlagIsMulticast
+	TypeFlagIsInterfaceLocalMulticast
+	TypeFlagIsLinkLocalMulticast
+	TypeFlagIsLinkLocalUnicast
+	TypeFlagIsGlobalUnicast
+
+	TypeFlagLoopbackANdLinkLocalUnicast = TypeFlagIPIsLoopback | TypeFlagIsLinkLocalUnicast
+)
+
+const HeaderContentTypeApplicationJson = "application/json"
+const HeaderContentTypeTextPlain = "text/plain"
+const HeaderContentTypeTextHtml = "text/html"
+
+var APIListForPublicIP = []string{
+	"https://ipinfo.io/ip",
+	"https://ifconfig.me/ip",
+	"https://ifconfig.me",
+	"https://ipinfo.io", // application/json
+	"https://ifconfig.co",
+	"https://api.ipify.org",
+	"https://api.ipify.org?format=json",
+	"https://api64.ipify.org?format=json",
+	"https://icanhazip.com",
+	"https://ident.me",
+	"https://ipecho.net/plain",
 }
 
 func (cacheLocalIP *localIP) GetLocalIP() (localIP string) {
@@ -42,12 +79,24 @@ func (cacheLocalIP *localIP) UpdateCacheLocalIP() (localIP string) {
 }
 
 // GetIPAll returns all the local IP list with the given params.
-func GetIPAll(flag Flag, ignoreLinkLocalUnicast bool) (ips []string) {
+//
+// Tips:
+//  1. flag=4: return only the ipv4.
+//  2. flag=6: return only the ipv6.
+//  3. others: return the ipv4 or ipv6.
+func GetIPAll(flag Flag, ignoreTypeFlag int) (ips []string) {
 	if ifa, err := net.InterfaceAddrs(); err == nil {
 		for _, adr := range ifa {
 			inet, ok := adr.(*net.IPNet)
-			if ok && !inet.IP.IsLoopback() {
-				if ignoreLinkLocalUnicast && inet.IP.IsLinkLocalUnicast() {
+			if ok {
+				if inet.IP.IsUnspecified() && ignoreTypeFlag&TypeFlagIsUnspecified == TypeFlagIsUnspecified ||
+					inet.IP.IsLoopback() && ignoreTypeFlag&TypeFlagIPIsLoopback == TypeFlagIPIsLoopback ||
+					inet.IP.IsPrivate() && ignoreTypeFlag&TypeFlagIsPrivate == TypeFlagIsPrivate ||
+					inet.IP.IsMulticast() && ignoreTypeFlag&TypeFlagIsMulticast == TypeFlagIsMulticast ||
+					inet.IP.IsInterfaceLocalMulticast() && ignoreTypeFlag&TypeFlagIsInterfaceLocalMulticast == TypeFlagIsInterfaceLocalMulticast ||
+					inet.IP.IsInterfaceLocalMulticast() && ignoreTypeFlag&TypeFlagIsLinkLocalMulticast == TypeFlagIsLinkLocalMulticast ||
+					inet.IP.IsLinkLocalUnicast() && ignoreTypeFlag&TypeFlagIsLinkLocalUnicast == TypeFlagIsLinkLocalUnicast ||
+					inet.IP.IsGlobalUnicast() && ignoreTypeFlag&TypeFlagIsGlobalUnicast == TypeFlagIsGlobalUnicast {
 					continue
 				}
 
@@ -71,22 +120,22 @@ func GetIPAll(flag Flag, ignoreLinkLocalUnicast bool) (ips []string) {
 
 // GetIPSet returns all the local IP set, but ignore the Loopback and LinkLocalUnicast.
 func GetIPSet() (ips []string) {
-	return GetIPAll(FlagVInValid, true)
+	return GetIPAll(FlagVAll, TypeFlagLoopbackANdLinkLocalUnicast)
 }
 
 // GetIPSetWithLinkLocalUnicast returns all the local IP set, only ignore the Loopback.
 func GetIPSetWithLinkLocalUnicast() (ips []string) {
-	return GetIPAll(FlagVInValid, false)
+	return GetIPAll(FlagVAll, TypeFlagIPIsLoopback)
 }
 
 // GetIPv4Set returns all the local IPv4 set, but ignore the Loopback and LinkLocalUnicast.
 func GetIPv4Set() (ips []string) {
-	return GetIPAll(FlagV4, true)
+	return GetIPAll(FlagV4, TypeFlagLoopbackANdLinkLocalUnicast)
 }
 
 // GetIPv6Set returns all the local IPv6 set, but ignore the Loopback and LinkLocalUnicast.
 func GetIPv6Set() (ips []string) {
-	return GetIPAll(FlagV6, true)
+	return GetIPAll(FlagV6, TypeFlagLoopbackANdLinkLocalUnicast)
 }
 
 // GetLocalIPRealTime returns the local ipv4 string realtime, with no cache.
@@ -117,7 +166,7 @@ func getLocalIPBytes() (ipv4 net.IP) {
 	return
 }
 
-// GetPrivateIP returns the local ipv4 format private IP.
+// GetPrivateIP returns the first local ipv4 format private IP.
 func GetPrivateIP() (ipv4 string) {
 	if ifa, err := net.InterfaceAddrs(); err == nil {
 		for _, adr := range ifa {
@@ -126,6 +175,21 @@ func GetPrivateIP() (ipv4 string) {
 				if p4 := inet.IP.To4(); p4 != nil {
 					ipv4 = p4.String()
 					break
+				}
+			}
+		}
+	}
+	return
+}
+
+// GetPrivateIPAll returns all the local ipv4 format private IP.
+func GetPrivateIPAll() (ipv4s []string) {
+	if ifa, err := net.InterfaceAddrs(); err == nil {
+		for _, adr := range ifa {
+			inet, ok := adr.(*net.IPNet)
+			if ok && !inet.IP.IsLoopback() && inet.IP.IsPrivate() {
+				if p4 := inet.IP.To4(); p4 != nil {
+					ipv4s = append(ipv4s, p4.String())
 				}
 			}
 		}
@@ -145,4 +209,104 @@ func GetMacAddress() (macAddress []string) {
 		}
 	}
 	return macAddress
+}
+
+// IsPrivate checks whether the ip is private or not.
+func IsPrivate(ip net.IP) bool {
+	return ip.IsPrivate()
+}
+
+// IsPublic checks whether the ip is public or not.
+func IsPublic(ip net.IP) bool {
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+	return true
+}
+
+// GetPublicIPByHTTPGet returns the public ip by HTTP.Get().
+func GetPublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
+	var response *http.Response
+	if len(url) == 0 {
+		return
+	}
+
+	// #nosec
+	if response, err = http.Get(url); err == nil {
+		defer func(Body io.ReadCloser) {
+			_ = Body.Close()
+		}(response.Body)
+
+		if body, err := io.ReadAll(response.Body); err == nil {
+			contentType := response.Header.Get("Content-Type")
+			if strings.Contains(contentType, HeaderContentTypeTextPlain) {
+				ip = string(bytes.Trim(body, " "))
+				if printResult {
+					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, ip)
+				}
+			} else if strings.Contains(contentType, HeaderContentTypeApplicationJson) {
+				data := make(map[string]interface{})
+				err := json.Unmarshal(body, &data)
+				if err == nil {
+					ip, _ = data["ip"].(string)
+				}
+				if printResult {
+					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, data)
+				}
+			} else if strings.Contains(contentType, HeaderContentTypeTextHtml) {
+				ip = string(bytes.Trim(body, " "))
+				if printResult {
+					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, ip)
+				}
+			}
+		}
+	}
+	return ip, err
+}
+
+func getPublicIPByHTTPGet(ret chan string, url string) {
+	if ip, err := GetPublicIPByHTTPGet(url, false); err == nil {
+		ret <- ip
+	}
+}
+
+func getPublicIPMultiChannel(timeout time.Duration, urls []string) (ip string) {
+	if len(urls) == 0 {
+		return ""
+	}
+
+	ips := make(chan string, len(urls))
+	tm := time.NewTimer(timeout)
+	defer tm.Stop()
+
+	for _, url := range urls {
+		go func(url string) {
+			getPublicIPByHTTPGet(ips, url)
+		}(url)
+	}
+
+	select {
+	case _ip := <-ips:
+		if len(_ip) != 0 {
+			ip = _ip
+			break
+		}
+	case <-tm.C:
+		break
+	}
+	return
+}
+
+// GetPublicIP returns the public ip with your public ip API list.
+//
+// set the min and max timeout.
+// apiListForPublic can ref: APIListForPublicIP
+func GetPublicIP(timeout time.Duration, apiListForPublic ...string) (url string) {
+	if timeout <= time.Millisecond*100 {
+		timeout = time.Millisecond * 100
+	} else if timeout >= time.Second*5 {
+		timeout = time.Second * 5
+	}
+
+	return getPublicIPMultiChannel(timeout, apiListForPublic)
 }
