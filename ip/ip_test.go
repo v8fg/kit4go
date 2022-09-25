@@ -18,6 +18,7 @@ func TestFlagString(t *testing.T) {
 		{name: "", args: args{ip.Flag(-2)}, wantIpVFlagString: ""},
 		{name: "", args: args{ip.FlagVInValid}, wantIpVFlagString: "invalid"},
 		{name: "", args: args{ip.FlagV4}, wantIpVFlagString: "ipv4"},
+		{name: "", args: args{ip.FlagVAll}, wantIpVFlagString: "ipv4_v6"},
 		{name: "", args: args{ip.FlagV6}, wantIpVFlagString: "ipv6"},
 	}
 	for _, tt := range tests {

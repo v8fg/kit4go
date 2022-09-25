@@ -93,6 +93,33 @@ func TestInRangeIP(t *testing.T) {
 	}
 }
 
+func TestInRangeIPv6(t *testing.T) {
+	type args struct {
+		start net.IP
+		end   net.IP
+		ip    net.IP
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{name: "", args: args{nil, nil, nil}, want: false},
+		{name: "", args: args{nil, nil, []byte{192, 168, 1, 1}}, want: false},
+		{name: "", args: args{nil, []byte{192, 168, 192, 0}, []byte{192, 168, 1, 1}}, want: true},
+		{name: "", args: args{[]byte{192, 168, 1, 1}, []byte{192, 168, 192, 0}, []byte{192, 168, 1, 1}}, want: true},
+		{name: "", args: args{[]byte{192, 168, 1, 1}, []byte{192, 168, 192, 0}, []byte{192, 169, 1, 1}}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ip.InRangeIPv6(tt.args.start, tt.args.end, tt.args.ip); got != tt.want {
+				t.Errorf("InRangeIPv6() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestInRangeIPNet(t *testing.T) {
 	type args struct {
 		subNet *net.IPNet

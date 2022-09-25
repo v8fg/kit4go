@@ -122,7 +122,7 @@ func ExampleBytesIPToStr() {
 	}
 
 	flagSet := []ip.Flag{
-		ip.FlagVInValid, ip.FlagV4, ip.FlagV6,
+		ip.FlagVAll, ip.FlagV4, ip.FlagV6,
 	}
 	var ipRet string
 	for index := range ipSet {
@@ -134,49 +134,49 @@ func ExampleBytesIPToStr() {
 	}
 
 	// output:
-	// [BytesIPToStr] ip:             <nil>, result:                 , flag:0
+	// [BytesIPToStr] ip:             <nil>, result:                 , flag:1
 	// [BytesIPToStr] ip:             <nil>, result:                 , flag:4
 	// [BytesIPToStr] ip:             <nil>, result:                 , flag:6
-	// [BytesIPToStr] ip:             <nil>, result:                 , flag:0
+	// [BytesIPToStr] ip:             <nil>, result:                 , flag:1
 	// [BytesIPToStr] ip:             <nil>, result:                 , flag:4
 	// [BytesIPToStr] ip:             <nil>, result:                 , flag:6
-	// [BytesIPToStr] ip:               ?01, result:              ?01, flag:0
+	// [BytesIPToStr] ip:               ?01, result:              ?01, flag:1
 	// [BytesIPToStr] ip:               ?01, result:                 , flag:4
 	// [BytesIPToStr] ip:               ?01, result:                 , flag:6
-	// [BytesIPToStr] ip:           0.0.0.0, result:          0.0.0.0, flag:0
+	// [BytesIPToStr] ip:           0.0.0.0, result:          0.0.0.0, flag:1
 	// [BytesIPToStr] ip:           0.0.0.0, result:          0.0.0.0, flag:4
 	// [BytesIPToStr] ip:           0.0.0.0, result:                 , flag:6
-	// [BytesIPToStr] ip:           0.0.0.1, result:          0.0.0.1, flag:0
+	// [BytesIPToStr] ip:           0.0.0.1, result:          0.0.0.1, flag:1
 	// [BytesIPToStr] ip:           0.0.0.1, result:          0.0.0.1, flag:4
 	// [BytesIPToStr] ip:           0.0.0.1, result:                 , flag:6
-	// [BytesIPToStr] ip:        10.10.10.1, result:       10.10.10.1, flag:0
+	// [BytesIPToStr] ip:        10.10.10.1, result:       10.10.10.1, flag:1
 	// [BytesIPToStr] ip:        10.10.10.1, result:       10.10.10.1, flag:4
 	// [BytesIPToStr] ip:        10.10.10.1, result:                 , flag:6
-	// [BytesIPToStr] ip:   127.255.255.255, result:  127.255.255.255, flag:0
+	// [BytesIPToStr] ip:   127.255.255.255, result:  127.255.255.255, flag:1
 	// [BytesIPToStr] ip:   127.255.255.255, result:  127.255.255.255, flag:4
 	// [BytesIPToStr] ip:   127.255.255.255, result:                 , flag:6
-	// [BytesIPToStr] ip:   255.255.255.255, result:  255.255.255.255, flag:0
+	// [BytesIPToStr] ip:   255.255.255.255, result:  255.255.255.255, flag:1
 	// [BytesIPToStr] ip:   255.255.255.255, result:  255.255.255.255, flag:4
 	// [BytesIPToStr] ip:   255.255.255.255, result:                 , flag:6
-	// [BytesIPToStr] ip:   255.255.255.255, result:  255.255.255.255, flag:0
+	// [BytesIPToStr] ip:   255.255.255.255, result:  255.255.255.255, flag:1
 	// [BytesIPToStr] ip:   255.255.255.255, result:  255.255.255.255, flag:4
 	// [BytesIPToStr] ip:   255.255.255.255, result:                 , flag:6
-	// [BytesIPToStr] ip:           0.0.0.0, result:          0.0.0.0, flag:0
+	// [BytesIPToStr] ip:           0.0.0.0, result:          0.0.0.0, flag:1
 	// [BytesIPToStr] ip:           0.0.0.0, result:          0.0.0.0, flag:4
 	// [BytesIPToStr] ip:           0.0.0.0, result:       ::ffff:0:0, flag:6
-	// [BytesIPToStr] ip:           0.0.0.1, result:          0.0.0.1, flag:0
+	// [BytesIPToStr] ip:           0.0.0.1, result:          0.0.0.1, flag:1
 	// [BytesIPToStr] ip:           0.0.0.1, result:          0.0.0.1, flag:4
 	// [BytesIPToStr] ip:           0.0.0.1, result:       ::ffff:0:1, flag:6
-	// [BytesIPToStr] ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, result: ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, flag:0
+	// [BytesIPToStr] ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, result: ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, flag:1
 	// [BytesIPToStr] ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, result:                 , flag:4
 	// [BytesIPToStr] ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, result: ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, flag:6
-	// [BytesIPToStr] ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, result: ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, flag:0
+	// [BytesIPToStr] ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, result: ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, flag:1
 	// [BytesIPToStr] ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, result:                 , flag:4
 	// [BytesIPToStr] ip:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, result: ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff, flag:6
-	// [BytesIPToStr] ip:       ::ffff:ffff, result:      ::ffff:ffff, flag:0
+	// [BytesIPToStr] ip:       ::ffff:ffff, result:      ::ffff:ffff, flag:1
 	// [BytesIPToStr] ip:       ::ffff:ffff, result:                 , flag:4
 	// [BytesIPToStr] ip:       ::ffff:ffff, result:      ::ffff:ffff, flag:6
-	// [BytesIPToStr] ip:?ffffffffffffffffffffffffffffffffffff, result: ?ffffffffffffffffffffffffffffffffffff, flag:0
+	// [BytesIPToStr] ip:?ffffffffffffffffffffffffffffffffffff, result: ?ffffffffffffffffffffffffffffffffffff, flag:1
 	// [BytesIPToStr] ip:?ffffffffffffffffffffffffffffffffffff, result:                 , flag:4
 	// [BytesIPToStr] ip:?ffffffffffffffffffffffffffffffffffff, result:                 , flag:6
 
@@ -778,7 +778,7 @@ func ExampleNumberToIP() {
 	}
 
 	flagSet := []ip.Flag{
-		ip.FlagVInValid, ip.FlagV4, ip.FlagV6,
+		ip.FlagVAll, ip.FlagV4, ip.FlagV6,
 	}
 
 	var ipRet net.IP
@@ -791,31 +791,31 @@ func ExampleNumberToIP() {
 	}
 
 	// output:
-	// [NumberToIP] result:                          0.0.0.0, flag: 0, ip:                                                0
+	// [NumberToIP] result:                          0.0.0.0, flag: 1, ip:                                                0
 	// [NumberToIP] result:                          0.0.0.0, flag: 4, ip:                                                0
 	// [NumberToIP] result:                               ::, flag: 6, ip:                                                0
-	// [NumberToIP] result:                          0.0.0.1, flag: 0, ip:                                                1
+	// [NumberToIP] result:                          0.0.0.1, flag: 1, ip:                                                1
 	// [NumberToIP] result:                          0.0.0.1, flag: 4, ip:                                                1
 	// [NumberToIP] result:                              ::1, flag: 6, ip:                                                1
-	// [NumberToIP] result:                      0.0.255.255, flag: 0, ip:                                            65535
+	// [NumberToIP] result:                      0.0.255.255, flag: 1, ip:                                            65535
 	// [NumberToIP] result:                      0.0.255.255, flag: 4, ip:                                            65535
 	// [NumberToIP] result:                           ::ffff, flag: 6, ip:                                            65535
-	// [NumberToIP] result:                          0.1.0.0, flag: 0, ip:                                            65536
+	// [NumberToIP] result:                          0.1.0.0, flag: 1, ip:                                            65536
 	// [NumberToIP] result:                          0.1.0.0, flag: 4, ip:                                            65536
 	// [NumberToIP] result:                            ::1:0, flag: 6, ip:                                            65536
-	// [NumberToIP] result:                  127.255.255.255, flag: 0, ip:                                       2147483647
+	// [NumberToIP] result:                  127.255.255.255, flag: 1, ip:                                       2147483647
 	// [NumberToIP] result:                  127.255.255.255, flag: 4, ip:                                       2147483647
 	// [NumberToIP] result:                      ::7fff:ffff, flag: 6, ip:                                       2147483647
-	// [NumberToIP] result:                        128.0.0.0, flag: 0, ip:                                       2147483648
+	// [NumberToIP] result:                        128.0.0.0, flag: 1, ip:                                       2147483648
 	// [NumberToIP] result:                        128.0.0.0, flag: 4, ip:                                       2147483648
 	// [NumberToIP] result:                         ::8000:0, flag: 6, ip:                                       2147483648
-	// [NumberToIP] result:                  255.255.255.255, flag: 0, ip:                                       4294967295
+	// [NumberToIP] result:                  255.255.255.255, flag: 1, ip:                                       4294967295
 	// [NumberToIP] result:                  255.255.255.255, flag: 4, ip:                                       4294967295
 	// [NumberToIP] result:                      ::ffff:ffff, flag: 6, ip:                                       4294967295
-	// [NumberToIP] result:  ::ffff:ffff:ffff:ffff:ffff:ffff, flag: 0, ip:                    79228162514264337593543950335
+	// [NumberToIP] result:  ::ffff:ffff:ffff:ffff:ffff:ffff, flag: 1, ip:                    79228162514264337593543950335
 	// [NumberToIP] result:                  255.255.255.255, flag: 4, ip:                    79228162514264337593543950335
 	// [NumberToIP] result:  ::ffff:ffff:ffff:ffff:ffff:ffff, flag: 6, ip:                    79228162514264337593543950335
-	// [NumberToIP] result:                            <nil>, flag: 0, ip:     22300745198530623141535718272648361505980415
+	// [NumberToIP] result:                            <nil>, flag: 1, ip:     22300745198530623141535718272648361505980415
 	// [NumberToIP] result:                            <nil>, flag: 4, ip:     22300745198530623141535718272648361505980415
 	// [NumberToIP] result:                            <nil>, flag: 6, ip:     22300745198530623141535718272648361505980415
 
@@ -1206,7 +1206,7 @@ func ExampleToStrIP() {
 	}
 
 	flagSet := []ip.Flag{
-		ip.FlagVInValid, ip.FlagV4, ip.FlagV6,
+		ip.FlagVAll, ip.FlagV4, ip.FlagV6,
 	}
 	var ipRet string
 	for index := range ipSet {
@@ -1218,31 +1218,31 @@ func ExampleToStrIP() {
 	}
 
 	// output:
-	// [ToStrIP] flag:0, ip:                     , result: []
+	// [ToStrIP] flag:1, ip:                     , result: []
 	// [ToStrIP] flag:4, ip:                     , result: []
 	// [ToStrIP] flag:6, ip:                     , result: []
-	// [ToStrIP] flag:0, ip:             -0.1.0.0, result: []
+	// [ToStrIP] flag:1, ip:             -0.1.0.0, result: []
 	// [ToStrIP] flag:4, ip:             -0.1.0.0, result: []
 	// [ToStrIP] flag:6, ip:             -0.1.0.0, result: []
-	// [ToStrIP] flag:0, ip:              0.0.0.0, result: [0.0.0.0]
+	// [ToStrIP] flag:1, ip:              0.0.0.0, result: [0.0.0.0]
 	// [ToStrIP] flag:4, ip:              0.0.0.0, result: [0.0.0.0]
 	// [ToStrIP] flag:6, ip:              0.0.0.0, result: [::ffff:0:0]
-	// [ToStrIP] flag:0, ip:             10.1.0.0, result: [10.1.0.0]
+	// [ToStrIP] flag:1, ip:             10.1.0.0, result: [10.1.0.0]
 	// [ToStrIP] flag:4, ip:             10.1.0.0, result: [10.1.0.0]
 	// [ToStrIP] flag:6, ip:             10.1.0.0, result: [::ffff:a01:0]
-	// [ToStrIP] flag:0, ip:          10.1.0.0/16, result: []
+	// [ToStrIP] flag:1, ip:          10.1.0.0/16, result: []
 	// [ToStrIP] flag:4, ip:          10.1.0.0/16, result: []
 	// [ToStrIP] flag:6, ip:          10.1.0.0/16, result: []
-	// [ToStrIP] flag:0, ip:         10.1.255.255, result: [10.1.255.255]
+	// [ToStrIP] flag:1, ip:         10.1.255.255, result: [10.1.255.255]
 	// [ToStrIP] flag:4, ip:         10.1.255.255, result: [10.1.255.255]
 	// [ToStrIP] flag:6, ip:         10.1.255.255, result: [::ffff:a01:ffff]
-	// [ToStrIP] flag:0, ip:  ::ffff:10.1.255.255, result: [10.1.255.255]
+	// [ToStrIP] flag:1, ip:  ::ffff:10.1.255.255, result: [10.1.255.255]
 	// [ToStrIP] flag:4, ip:  ::ffff:10.1.255.255, result: [10.1.255.255]
 	// [ToStrIP] flag:6, ip:  ::ffff:10.1.255.255, result: [::ffff:a01:ffff]
-	// [ToStrIP] flag:0, ip:           2048:db8::, result: [2048:db8::]
+	// [ToStrIP] flag:1, ip:           2048:db8::, result: [2048:db8::]
 	// [ToStrIP] flag:4, ip:           2048:db8::, result: []
 	// [ToStrIP] flag:6, ip:           2048:db8::, result: [2048:db8::]
-	// [ToStrIP] flag:0, ip:       2048:db8::ffff, result: [2048:db8::ffff]
+	// [ToStrIP] flag:1, ip:       2048:db8::ffff, result: [2048:db8::ffff]
 	// [ToStrIP] flag:4, ip:       2048:db8::ffff, result: []
 	// [ToStrIP] flag:6, ip:       2048:db8::ffff, result: [2048:db8::ffff]
 
