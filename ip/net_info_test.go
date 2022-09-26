@@ -152,8 +152,8 @@ func TestGetIPv6Set(t *testing.T) {
 
 }
 
-func TestGetLocalIP(t *testing.T) {
-	convey.Convey("GetLocalIP", t, func() {
+func TestLocalIP(t *testing.T) {
+	convey.Convey("TestLocalIP", t, func() {
 		outputs := []gomonkey.OutputCell{
 			{Values: gomonkey.Params{nil, errors.New("nil")}, Times: 1},
 			{Values: gomonkey.Params{[]net.Addr{
@@ -169,17 +169,17 @@ func TestGetLocalIP(t *testing.T) {
 		defer af.Reset()
 
 		// nil for mock net.InterfaceAddrs
-		convey.So(ip.GetLocalIP(), convey.ShouldEqual, "")
+		convey.So(ip.LocalIP(), convey.ShouldEqual, "")
 
 		// valid for mock net.InterfaceAddrs
-		convey.So(ip.GetLocalIP(), convey.ShouldEqual, "192.168.13.19")
-		convey.So(ip.GetLocalIP(), convey.ShouldEqual, "192.168.13.19")
+		convey.So(ip.LocalIP(), convey.ShouldEqual, "192.168.13.19")
+		convey.So(ip.LocalIP(), convey.ShouldEqual, "192.168.13.19")
 
 	})
 }
 
-func TestGetLocalIPRealTime(t *testing.T) {
-	convey.Convey("GetLocalIPRealTime", t, func() {
+func TestLocalIPRealTime(t *testing.T) {
+	convey.Convey("TestLocalIPRealTime", t, func() {
 		outputs := []gomonkey.OutputCell{
 			{Values: gomonkey.Params{nil, errors.New("nil")}, Times: 1},
 			{Values: gomonkey.Params{[]net.Addr{
@@ -195,15 +195,15 @@ func TestGetLocalIPRealTime(t *testing.T) {
 		defer af.Reset()
 
 		// nil for mock net.InterfaceAddrs
-		convey.So(ip.GetLocalIPRealTime(), convey.ShouldEqual, "")
+		convey.So(ip.LocalIPRealTime(), convey.ShouldEqual, "")
 
 		// valid for mock net.InterfaceAddrs
-		convey.So(ip.GetLocalIPRealTime(), convey.ShouldEqual, "192.168.13.19")
+		convey.So(ip.LocalIPRealTime(), convey.ShouldEqual, "192.168.13.19")
 	})
 }
 
-func TestGetPrivateIP(t *testing.T) {
-	convey.Convey("TestGetPrivateIP", t, func() {
+func TestPrivateIP(t *testing.T) {
+	convey.Convey("TestPrivateIP", t, func() {
 		outputs := []gomonkey.OutputCell{
 			{Values: gomonkey.Params{nil, errors.New("nil")}, Times: 1},
 			{Values: gomonkey.Params{[]net.Addr{
@@ -219,15 +219,15 @@ func TestGetPrivateIP(t *testing.T) {
 		defer af.Reset()
 
 		// nil for mock net.InterfaceAddrs
-		convey.So(ip.GetPrivateIP(), convey.ShouldEqual, "")
+		convey.So(ip.PrivateIP(), convey.ShouldEqual, "")
 
 		// valid for mock net.InterfaceAddrs
-		convey.So(ip.GetPrivateIP(), convey.ShouldEqual, "192.168.13.19")
+		convey.So(ip.PrivateIP(), convey.ShouldEqual, "192.168.13.19")
 	})
 }
 
-func TestGetPrivateIPAll(t *testing.T) {
-	convey.Convey("GetPrivateIPAll", t, func() {
+func TestPrivateIPAll(t *testing.T) {
+	convey.Convey("PrivateIPAll", t, func() {
 		outputs := []gomonkey.OutputCell{
 			{Values: gomonkey.Params{nil, errors.New("nil")}, Times: 1},
 			{Values: gomonkey.Params{[]net.Addr{
@@ -243,19 +243,19 @@ func TestGetPrivateIPAll(t *testing.T) {
 		defer af.Reset()
 
 		// nil for mock net.InterfaceAddrs
-		convey.So(ip.GetPrivateIPAll(), convey.ShouldBeNil)
+		convey.So(ip.PrivateIPAll(), convey.ShouldBeNil)
 
 		// valid for mock net.InterfaceAddrs
-		convey.So(ip.GetPrivateIPAll(), convey.ShouldResemble, []string{"192.168.13.19", "192.168.52.87"})
+		convey.So(ip.PrivateIPAll(), convey.ShouldResemble, []string{"192.168.13.19", "192.168.52.87"})
 	})
 }
 
-func TestGetMacAddress(t *testing.T) {
+func TestMacAddress(t *testing.T) {
 	localInterfacesJsonStr := `[{"Index":1,"MTU":16384,"Name":"lo0","HardwareAddr":null,"Flags":21},{"Index":2,"MTU":1280,"Name":"gif0","HardwareAddr":null,"Flags":24},{"Index":3,"MTU":1280,"Name":"stf0","HardwareAddr":null,"Flags":0},{"Index":4,"MTU":1500,"Name":"en5","HardwareAddr":"rN5IABEi","Flags":19},{"Index":5,"MTU":1500,"Name":"ap1","HardwareAddr":"8hiYT/yD","Flags":18},{"Index":6,"MTU":1500,"Name":"en0","HardwareAddr":"8BiYT/yD","Flags":19},{"Index":7,"MTU":1500,"Name":"awdl0","HardwareAddr":"YvfUz2Xt","Flags":19},{"Index":8,"MTU":1500,"Name":"llw0","HardwareAddr":"YvfUz2Xt","Flags":19},{"Index":9,"MTU":1500,"Name":"en3","HardwareAddr":"giHPC2QF","Flags":19},{"Index":10,"MTU":1500,"Name":"en4","HardwareAddr":"giHPC2QE","Flags":19},{"Index":11,"MTU":1500,"Name":"en1","HardwareAddr":"giHPC2QB","Flags":19},{"Index":12,"MTU":1500,"Name":"en2","HardwareAddr":"giHPC2QA","Flags":19},{"Index":13,"MTU":1500,"Name":"bridge0","HardwareAddr":"giHPC2QB","Flags":19}]`
 	var localInterface []net.Interface
 	_ = json.Unmarshal([]byte(localInterfacesJsonStr), &localInterface)
 
-	convey.Convey("TestGetMacAddress", t, func() {
+	convey.Convey("TestMacAddress", t, func() {
 		outputs := []gomonkey.OutputCell{
 			{Values: gomonkey.Params{nil, errors.New("nil")}, Times: 1},
 			{Values: gomonkey.Params{localInterface, nil}, Times: 1},
@@ -264,10 +264,10 @@ func TestGetMacAddress(t *testing.T) {
 		defer af.Reset()
 
 		// nil for mock net.Interfaces
-		convey.So(ip.GetMacAddress(), convey.ShouldBeNil)
+		convey.So(ip.MacAddress(), convey.ShouldBeNil)
 
 		// valid for mock net.Interfaces
-		convey.So(ip.GetMacAddress(), convey.ShouldResemble, []string{"ac:de:48:00:11:22", "f2:18:98:4f:fc:83", "f0:18:98:4f:fc:83", "62:f7:d4:cf:65:ed", "62:f7:d4:cf:65:ed", "82:21:cf:0b:64:05", "82:21:cf:0b:64:04", "82:21:cf:0b:64:01", "82:21:cf:0b:64:00", "82:21:cf:0b:64:01"})
+		convey.So(ip.MacAddress(), convey.ShouldResemble, []string{"ac:de:48:00:11:22", "f2:18:98:4f:fc:83", "f0:18:98:4f:fc:83", "62:f7:d4:cf:65:ed", "62:f7:d4:cf:65:ed", "82:21:cf:0b:64:05", "82:21:cf:0b:64:04", "82:21:cf:0b:64:01", "82:21:cf:0b:64:00", "82:21:cf:0b:64:01"})
 	})
 
 }
@@ -309,98 +309,140 @@ func mockServer(response []byte, contentType string, sleep time.Duration) *httpt
 	return httptest.NewServer(http.HandlerFunc(testHandler))
 }
 
-func TestGetPublicIPByHTTPGet(t *testing.T) {
+func TestPublicIPByHTTPGet(t *testing.T) {
 	// jsonRet := `{"city":"Beijing","country":"CN","hostname":"118.128.147.222.broad.bj.bj.dynamic.163data.com.cn","ip":"220.147.128.110","loc":"39.9075,116.3972","org":"AS4847 China Networks Inter-Exchange","region":"Beijing","timezone":"Asia/Shanghai"}`
 	jsonRet := map[string]string{"city": "Beijing", "country": "CN", "hostname": "118.128.147.222.broad.bj.bj.dynamic.163data.com.cn", "ip": "220.147.128.110", "loc": "39.9075,116.3972", "org": "AS4847 China Networks Inter-Exchange", "region": "Beijing", "timezone": "Asia/Shanghai"}
 	jsonResp, _ := json.Marshal(jsonRet)
 
-	convey.Convey("GetPublicIPByHTTPGet", t, func() {
+	convey.Convey("TestPublicIPByHTTPGet", t, func() {
 		var ipStr string
 		var err error
 
-		ts := mockServer(jsonResp, ip.HeaderContentTypeApplicationJson, 0)
+		ts := mockServer(jsonResp, ip.HeaderContentTypeApplicationJSON, 0)
 		defer ts.Close()
-		ipStr, err = ip.GetPublicIPByHTTPGet(ts.URL, true)
+		ipStr, err = ip.PublicIPByHTTPGet(ts.URL, true)
 		convey.So(ipStr, convey.ShouldEqual, "220.147.128.110")
 		convey.So(err, convey.ShouldBeNil)
 
 		jsonResp = []byte("49.55.188.188")
 		ts = mockServer(jsonResp, ip.HeaderContentTypeTextPlain, 0)
 		defer ts.Close()
-		ipStr, err = ip.GetPublicIPByHTTPGet(ts.URL, true)
+		ipStr, err = ip.PublicIPByHTTPGet(ts.URL, true)
 		convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
 		convey.So(err, convey.ShouldBeNil)
 
-		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHtml, 0)
+		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHTML, 0)
 		defer ts.Close()
-		ipStr, err = ip.GetPublicIPByHTTPGet(ts.URL, true)
+		ipStr, err = ip.PublicIPByHTTPGet(ts.URL, true)
 		convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
 		convey.So(err, convey.ShouldBeNil)
 
-		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHtml, 0)
+		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHTML, 0)
 		defer ts.Close()
-		ipStr, err = ip.GetPublicIPByHTTPGet("", true)
+		ipStr, err = ip.PublicIPByHTTPGet("", true)
 		convey.So(ipStr, convey.ShouldEqual, "")
 		convey.So(err, convey.ShouldBeNil)
 	})
 
 }
 
-func TestGetPublicIP(t *testing.T) {
+func TestPublicIP(t *testing.T) {
 	// jsonRet := `{"city":"Beijing","country":"CN","hostname":"118.128.147.222.broad.bj.bj.dynamic.163data.com.cn","ip":"220.147.128.110","loc":"39.9075,116.3972","org":"AS4847 China Networks Inter-Exchange","region":"Beijing","timezone":"Asia/Shanghai"}`
 	jsonRet := map[string]string{"city": "Beijing", "country": "CN", "hostname": "118.128.147.222.broad.bj.bj.dynamic.163data.com.cn", "ip": "220.147.128.110", "loc": "39.9075,116.3972", "org": "AS4847 China Networks Inter-Exchange", "region": "Beijing", "timezone": "Asia/Shanghai"}
 	jsonResp, _ := json.Marshal(jsonRet)
 
-	convey.Convey("GetPublicIP", t, func() {
+	convey.Convey("TestPublicIP", t, func() {
 		var ipStr string
 
-		ts := mockServer(jsonResp, ip.HeaderContentTypeApplicationJson, 0)
+		ts := mockServer(jsonResp, ip.HeaderContentTypeApplicationJSON, 0)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(0, ts.URL)
+		ipStr = ip.PublicIP(0, ts.URL)
 		convey.So(ipStr, convey.ShouldEqual, "220.147.128.110")
 
-		ts = mockServer(jsonResp, ip.HeaderContentTypeApplicationJson, 0)
+		ts = mockServer(jsonResp, ip.HeaderContentTypeApplicationJSON, 0)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(time.Millisecond*500, ts.URL)
+		ipStr = ip.PublicIP(time.Millisecond*500, ts.URL)
 		convey.So(ipStr, convey.ShouldEqual, "220.147.128.110")
 
 		jsonResp = []byte("49.55.188.188")
 		ts = mockServer(jsonResp, ip.HeaderContentTypeTextPlain, 0)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(0, ts.URL)
+		ipStr = ip.PublicIP(0, ts.URL)
 		convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
 
 		ts = mockServer(jsonResp, ip.HeaderContentTypeTextPlain, 0)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(time.Millisecond*500, ts.URL)
+		ipStr = ip.PublicIP(time.Millisecond*500, ts.URL)
 		convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
 
-		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHtml, 0)
+		ts = mockServer(jsonResp, ip.HeaderContentTypeTextPlain, 0)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(0, ts.URL)
+		ipStr = ip.PublicIP(0, ts.URL)
 		convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
 
-		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHtml, time.Millisecond*150)
+		ts = mockServer(jsonResp, ip.HeaderContentTypeTextPlain, time.Millisecond*200)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(time.Millisecond*100, ts.URL)
+		ipStr = ip.PublicIP(time.Millisecond*100, ts.URL)
 		convey.So(ipStr, convey.ShouldEqual, "")
 
-		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHtml, 0)
+		ts = mockServer(jsonResp, ip.HeaderContentTypeTextPlain, 0)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(time.Millisecond*500, ts.URL)
+		ipStr = ip.PublicIP(time.Millisecond*500, ts.URL)
 		convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
 
-		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHtml, 0)
+		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHTML, 0)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(time.Second*6, ts.URL)
+		ipStr = ip.PublicIP(time.Second*6, ts.URL)
 		convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
 
-		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHtml, 0)
+		ts = mockServer(jsonResp, ip.HeaderContentTypeTextHTML, 0)
 		defer ts.Close()
-		ipStr = ip.GetPublicIP(time.Second * 6)
+		ipStr = ip.PublicIP(time.Second * 6)
 		convey.So(ipStr, convey.ShouldEqual, "")
 	})
 
+}
+
+func generateHttpRequestData(xForwardedFor, xRealIP, remoteAddr string) *http.Request {
+	headers := http.Header{}
+	headers.Set("X-Forwarded-For", xForwardedFor)
+	headers.Set("X-Real-Ip", xRealIP)
+	return &http.Request{
+		Header:     headers,
+		RemoteAddr: remoteAddr,
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	convey.Convey("TestClientIP", t, func() {
+		convey.So(ip.ClientIP(nil), convey.ShouldEqual, "")
+		convey.So(ip.ClientIP(generateHttpRequestData("  20.20.20.20, 30.30.30.30", " 10.10.10.10  ", "  40.40.40.40:42123 ")), convey.ShouldEqual, "20.20.20.20")
+		convey.So(ip.ClientIP(generateHttpRequestData("  ", " 10.10.10.10  ", "  40.40.40.40:42123 ")), convey.ShouldEqual, "10.10.10.10")
+		convey.So(ip.ClientIP(generateHttpRequestData("", " 10.10.10.10  ", "  40.40.40.40:42123 ")), convey.ShouldEqual, "10.10.10.10")
+		convey.So(ip.ClientIP(generateHttpRequestData("30.30.30.30  ", " 10.10.10.10  ", "  40.40.40.40:42123 ")), convey.ShouldEqual, "30.30.30.30")
+		convey.So(ip.ClientIP(generateHttpRequestData("", "", "  40.40.40.40:42123 ")), convey.ShouldEqual, "40.40.40.40")
+		convey.So(ip.ClientIP(generateHttpRequestData("", "", "50.50.50.50:42123")), convey.ShouldEqual, "50.50.50.50")
+		convey.So(ip.ClientIP(generateHttpRequestData("", "", "50.50.50.50")), convey.ShouldEqual, "")
+	})
+
+}
+
+func TestClientPublicIP(t *testing.T) {
+	convey.Convey("TestClientPublicIP", t, func() {
+		convey.So(ip.ClientPublicIP(nil), convey.ShouldEqual, "")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("10.3.5.45, 21.45.9.1", " 10.10.10.10  ", "101.1.0.4:1010")), convey.ShouldEqual, "21.45.9.1")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("101.3.5.45, 21.45.9.1", " 10.10.10.10  ", "101.1.0.4:1010")), convey.ShouldEqual, "101.3.5.45")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("", " 10.10.10.10  ", "101.1.0.4:1010")), convey.ShouldEqual, "101.1.0.4")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("21.45.9.1", "", "101.1.0.4:1010")), convey.ShouldEqual, "21.45.9.1")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("21.45.9.1, ", "", "101.1.0.4:1010")), convey.ShouldEqual, "21.45.9.1")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("192.168.5.45, 210.45.9.1, 89.5.6.1", "", "101.1.0.4:1010")), convey.ShouldEqual, "210.45.9.1")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("192.168.5.45, 172.24.9.1, 89.5.6.1", "", "101.1.0.4:1010")), convey.ShouldEqual, "89.5.6.1")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("192.168.5.45, 172.24.9.1", "", "101.1.0.4:1010")), convey.ShouldEqual, "101.1.0.4")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("192.168.5.45, 172.24.9.1", "", "101.1.0.4:5670")), convey.ShouldEqual, "101.1.0.4")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData(" 172.17.40.152, 192.168.5.45", " 10.10.10.10  ", "  40.40.40.40:42123")), convey.ShouldEqual, "40.40.40.40")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData(" 172.17.40.152, 192.168.5.45", " 50.50.50.50  ", "  40.40.40.40:42123")), convey.ShouldEqual, "50.50.50.50")
+		convey.So(ip.ClientPublicIP(generateHttpRequestData("", "", "  127.0.0.1:42123 ")), convey.ShouldEqual, "")
+	})
 }
 
 func BenchmarkGetLocalIP(b *testing.B) {
@@ -408,7 +450,7 @@ func BenchmarkGetLocalIP(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_ = ip.GetLocalIP()
+		_ = ip.LocalIP()
 	}
 }
 
@@ -417,6 +459,6 @@ func BenchmarkGetLocalIPRealTime(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_ = ip.GetLocalIPRealTime()
+		_ = ip.LocalIPRealTime()
 	}
 }
