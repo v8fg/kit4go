@@ -27,6 +27,7 @@ func init() {
 	}
 }
 
+// TypeFlag for ip type
 const (
 	TypeFlagIsUnspecified = 1 << iota
 	TypeFlagIPIsLoopback
@@ -40,10 +41,14 @@ const (
 	TypeFlagLoopbackANdLinkLocalUnicast = TypeFlagIPIsLoopback | TypeFlagIsLinkLocalUnicast
 )
 
-const HeaderContentTypeApplicationJson = "application/json"
-const HeaderContentTypeTextPlain = "text/plain"
-const HeaderContentTypeTextHtml = "text/html"
+// HeaderContentType header contentType
+const (
+	HeaderContentTypeApplicationJSON = "application/json"
+	HeaderContentTypeTextPlain       = "text/plain"
+	HeaderContentTypeTextHTML        = "text/html"
+)
 
+// APIListForPublicIP api list for get the public ip.
 var APIListForPublicIP = []string{
 	"https://ipinfo.io/ip",
 	"https://ifconfig.me/ip",
@@ -58,7 +63,7 @@ var APIListForPublicIP = []string{
 	"https://ipecho.net/plain",
 }
 
-func (cacheLocalIP *localIP) GetLocalIP() (localIP string) {
+func (cacheLocalIP *localIP) LocalIP() (localIP string) {
 	if cacheLocalIP == nil || cacheLocalIP.IP == nil || time.Now().After(cacheLocalIP.LatestTime.Add(cacheLocalIP.TTL)) {
 		localIP = cacheLocalIP.UpdateCacheLocalIP()
 	}
@@ -138,17 +143,17 @@ func GetIPv6Set() (ips []string) {
 	return GetIPAll(FlagV6, TypeFlagLoopbackANdLinkLocalUnicast)
 }
 
-// GetLocalIPRealTime returns the local ipv4 string realtime, with no cache.
-func GetLocalIPRealTime() (ipv4 string) {
+// LocalIPRealTime returns the local ipv4 string realtime, with no cache.
+func LocalIPRealTime() (ipv4 string) {
 	if ip := getLocalIPBytes(); ip != nil {
 		ipv4 = ip.String()
 	}
 	return
 }
 
-// GetLocalIP returns the local ipv4 string with the local cache.
-func GetLocalIP() (ipv4 string) {
-	return cacheLocalIP.GetLocalIP()
+// LocalIP returns the local ipv4 string with the local cache.
+func LocalIP() (ipv4 string) {
+	return cacheLocalIP.LocalIP()
 }
 
 // getLocalIPBytes returns the local ipv4 format net.IP
@@ -166,8 +171,8 @@ func getLocalIPBytes() (ipv4 net.IP) {
 	return
 }
 
-// GetPrivateIP returns the first local ipv4 format private IP.
-func GetPrivateIP() (ipv4 string) {
+// PrivateIP returns the first local ipv4 format private IP.
+func PrivateIP() (ipv4 string) {
 	if ifa, err := net.InterfaceAddrs(); err == nil {
 		for _, adr := range ifa {
 			inet, ok := adr.(*net.IPNet)
@@ -182,8 +187,8 @@ func GetPrivateIP() (ipv4 string) {
 	return
 }
 
-// GetPrivateIPAll returns all the local ipv4 format private IP.
-func GetPrivateIPAll() (ipv4s []string) {
+// PrivateIPAll returns all the local ipv4 format private IP.
+func PrivateIPAll() (ipv4s []string) {
 	if ifa, err := net.InterfaceAddrs(); err == nil {
 		for _, adr := range ifa {
 			inet, ok := adr.(*net.IPNet)
@@ -197,8 +202,8 @@ func GetPrivateIPAll() (ipv4s []string) {
 	return
 }
 
-// GetMacAddress returns all the local mac address.
-func GetMacAddress() (macAddress []string) {
+// MacAddress returns all the local mac address.
+func MacAddress() (macAddress []string) {
 	if netInterfaces, err := net.Interfaces(); err == nil {
 		for _, netInterface := range netInterfaces {
 			macAddr := netInterface.HardwareAddr.String()
@@ -224,8 +229,8 @@ func IsPublic(ip net.IP) bool {
 	return true
 }
 
-// GetPublicIPByHTTPGet returns the public ip by HTTP.Get().
-func GetPublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
+// PublicIPByHTTPGet returns the public ip by HTTP.Get().
+func PublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 	var response *http.Response
 	if len(url) == 0 {
 		return
@@ -244,7 +249,7 @@ func GetPublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 				if printResult {
 					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, ip)
 				}
-			} else if strings.Contains(contentType, HeaderContentTypeApplicationJson) {
+			} else if strings.Contains(contentType, HeaderContentTypeApplicationJSON) {
 				data := make(map[string]interface{})
 				err := json.Unmarshal(body, &data)
 				if err == nil {
@@ -253,7 +258,7 @@ func GetPublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 				if printResult {
 					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, data)
 				}
-			} else if strings.Contains(contentType, HeaderContentTypeTextHtml) {
+			} else if strings.Contains(contentType, HeaderContentTypeTextHTML) {
 				ip = string(bytes.Trim(body, " "))
 				if printResult {
 					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, ip)
@@ -265,7 +270,7 @@ func GetPublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 }
 
 func getPublicIPByHTTPGet(ret chan string, url string) {
-	if ip, err := GetPublicIPByHTTPGet(url, false); err == nil {
+	if ip, err := PublicIPByHTTPGet(url, false); err == nil {
 		ret <- ip
 	}
 }
@@ -297,11 +302,11 @@ func getPublicIPMultiChannel(timeout time.Duration, urls []string) (ip string) {
 	return
 }
 
-// GetPublicIP returns the public ip with your public ip API list.
+// PublicIP returns the public ip with your public ip API list.
 //
 // set the min and max timeout.
 // apiListForPublic can ref: APIListForPublicIP
-func GetPublicIP(timeout time.Duration, apiListForPublic ...string) (url string) {
+func PublicIP(timeout time.Duration, apiListForPublic ...string) (url string) {
 	if timeout <= time.Millisecond*100 {
 		timeout = time.Millisecond * 100
 	} else if timeout >= time.Second*5 {
@@ -309,4 +314,64 @@ func GetPublicIP(timeout time.Duration, apiListForPublic ...string) (url string)
 	}
 
 	return getPublicIPMultiChannel(timeout, apiListForPublic)
+}
+
+// ClientIP implements one best effort algorithm to return the real client IP.
+// It trys to parse the headers defined in Request.Header (defaulting to [X-Forwarded-For, X-Real-Ip]).
+// If the headers are not syntactically valid, the remote IP (coming form Request.RemoteAddr) is returned.
+//
+// X-Forwarded-For, examples: <client>, <proxy1>, <proxy2>
+func ClientIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	xForwardedFor := r.Header.Get("X-Forwarded-For")
+	clientIP := strings.TrimSpace(strings.Split(xForwardedFor, ",")[0])
+	if ip := net.ParseIP(clientIP); ip != nil {
+		return ip.String()
+	}
+
+	clientIP = strings.TrimSpace(r.Header.Get("X-Real-Ip"))
+	if ip := net.ParseIP(clientIP); ip != nil {
+		return ip.String()
+	}
+
+	if clientIP, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
+		if ip := net.ParseIP(clientIP); ip != nil {
+			return ip.String()
+		}
+	}
+	return ""
+}
+
+// ClientPublicIP implements one best effort algorithm to return the real client public IP.
+// It trys to parse the headers defined in Request.Header (defaulting to [X-Forwarded-For, X-Real-Ip]).
+// If the headers are not syntactically valid, the remote IP (coming form Request.RemoteAddr) is returned.
+//
+// X-Forwarded-For, examples: <client>, <proxy1>, <proxy2>
+func ClientPublicIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	var clientIP string
+	for _, clientIP = range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
+		clientIP = strings.TrimSpace(clientIP)
+		if ip := net.ParseIP(clientIP); ip != nil && IsPublic(ip) {
+			return ip.String()
+		}
+	}
+
+	clientIP = strings.TrimSpace(r.Header.Get("X-Real-Ip"))
+	if ip := net.ParseIP(clientIP); ip != nil && IsPublic(ip) {
+		return ip.String()
+	}
+
+	if clientIP, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil {
+		if ip := net.ParseIP(clientIP); ip != nil && IsPublic(ip) {
+			return ip.String()
+		}
+	}
+	return ""
 }

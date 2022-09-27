@@ -7,6 +7,8 @@ GOFILES := $(shell find . -name "*.go" -type f -not -path "./vendor/*")
 TESTFOLDER := $(shell $(GO) list ./...)
 TESTTAGS ?=
 
+.PHONY: check
+check: fmt-check misspell-check golangci cover
 
 .PHONY: test
 test:
@@ -33,10 +35,12 @@ test:
 .PHONY: cover
 cover:
 	@$(GO) test -cover ./...
+	@echo "cover done"
 
 .PHONY: fmt
 fmt:
 	$(GOFMT) -w $(GOFILES)
+	@echo "fmt done"
 
 .PHONY: fmt-check
 fmt-check:
@@ -46,39 +50,46 @@ fmt-check:
 		echo "$${diff}"; \
 		exit 1; \
 	fi;
+	@echo "fmt-check done"
 
 vet:
 	$(GO) vet $(VETPACKAGES)
+	@echo "vet done"
 
 .PHONY: lint
 lint:
 	@hash golint > /dev/null 2>&1; if [ $$? -ne 0 ]; then \
-		$(GO) get -u golang.org/x/lint/golint; \
+		$(GO) install golang.org/x/lint/golint@latest; \
 	fi
 	for PKG in $(PACKAGES); do golint -set_exit_status $$PKG || exit 1; done;
+	@echo "lint done"
 
 .PHONY: misspell-check
 misspell-check:
 	@hash misspell > /dev/null 2>&1; if [ $$? -ne 0 ]; then \
-		$(GO) get -u github.com/client9/misspell/cmd/misspell; \
+		$(GO) install github.com/client9/misspell/cmd/misspell@latest; \
 	fi
-	misspell -error $(GOFILES)
+	@misspell -error $(GOFILES)
+	@echo "misspell-check done"
 
 .PHONY: misspell
 misspell:
 	@hash misspell > /dev/null 2>&1; if [ $$? -ne 0 ]; then \
-		$(GO) get -u github.com/client9/misspell/cmd/misspell; \
+		$(GO) install github.com/client9/misspell/cmd/misspell@latest; \
 	fi
-	misspell -w $(GOFILES)
+	@misspell -w $(GOFILES)
+	@echo "misspell done"
 
 .PHONY: tools
 tools:
 	@if [ $(GO_VERSION) -gt 15 ]; then \
 		$(GO) install golang.org/x/lint/golint@latest; \
 		$(GO) install github.com/client9/misspell/cmd/misspell@latest; \
+		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.49.0; \
 	elif [ $(GO_VERSION) -lt 16 ]; then \
 		$(GO) install golang.org/x/lint/golint; \
 		$(GO) install github.com/client9/misspell/cmd/misspell; \
+		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.49.0; \
 	fi
 
 .PHONY: golangci-lint
@@ -87,6 +98,7 @@ golangci-lint:
 		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.49.0; \
 	fi
 	@for FILE in $(GOFILES); do golangci-lint run -set_exit_status $$FILE || exit 1; done;
+	@echo "golangci-lint done"
 
 .PHONY: golangci
 golangci:
@@ -94,6 +106,7 @@ golangci:
 		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.49.0; \
 	fi
 	@golangci-lint run ./... || exit 0;
+	@echo "golangci done"
 
 .PHONY: mod
 mod:
