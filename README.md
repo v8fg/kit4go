@@ -18,7 +18,8 @@
 
 ## Support list
 
-- [x] [datetime](./datetime) parse, format, others.
-- [x] [json](./json) support multi json packages.
-- [x] [number](./number) round.
-- [x] [ip](./ip) parse, match, convert, info.
+- [x] [datetime](datetime) parse, format, others.
+- [x] [ip](ip) parse, match, convert, info.
+- [x] [json](json) support multi json packages.
+- [x] [number](number) round.
+- [x] [random](random) rand, random.
