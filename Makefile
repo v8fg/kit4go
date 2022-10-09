@@ -6,6 +6,7 @@ VETPACKAGES ?= $(shell $(GO) list ./...)
 GOFILES := $(shell find . -name "*.go" -type f -not -path "./vendor/*")
 TESTFOLDER := $(shell $(GO) list ./...)
 TESTTAGS ?=
+GCFLAGS ?= "-gcflags=all=-l"
 
 .PHONY: check
 check: fmt-check misspell-check golangci cover
@@ -14,7 +15,7 @@ check: fmt-check misspell-check golangci cover
 test:
 	echo "mode: count" > coverage.out
 	for d in $(TESTFOLDER); do \
-		$(GO) test $(TESTTAGS) -v -covermode=count -coverprofile=profile.out $$d > tmp.out; \
+		$(GO) test ${GCFLAGS} $(TESTTAGS) -v -covermode=count -coverprofile=profile.out $$d > tmp.out; \
 		cat tmp.out; \
 		if grep -q "^--- FAIL" tmp.out; then \
 			rm tmp.out; \
@@ -34,7 +35,7 @@ test:
 
 .PHONY: cover
 cover:
-	@$(GO) test -cover ./...
+	@$(GO) test ${GCFLAGS} -cover ./...
 	@echo "cover done"
 
 .PHONY: fmt

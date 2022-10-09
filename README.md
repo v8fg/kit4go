@@ -23,3 +23,12 @@
 - [x] [json](json) support multi json packages.
 - [x] [number](number) round, bytes convert.
 - [x] [random](random) rand, random.
+- [x] [uuid](uuid) requestID, go.uuid, ksuid, xid.
+
+## Install
+
+`go get -u github.com/v8fg/kit4go`
+
+## Notes
+
+>If test failed, maybe effected by the inline, you can try: `go test -v -gcflags=all=-l xxx_test.go`.
