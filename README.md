@@ -21,5 +21,5 @@
 - [x] [datetime](datetime) parse, format, others.
 - [x] [ip](ip) parse, match, convert, info.
 - [x] [json](json) support multi json packages.
-- [x] [number](number) round.
+- [x] [number](number) round, bytes convert.
 - [x] [random](random) rand, random.
