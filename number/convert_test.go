@@ -393,3 +393,13 @@ func TestBytesToDataLittleEndian(t *testing.T) {
 		convey.So(data, convey.ShouldResemble, []float64{0, 1})
 	})
 }
+
+func TestBytesToUint(t *testing.T) {
+	convey.Convey("TestBytesToUint", t, func() {
+		convey.So(number.BytesToUint([]byte{0}), convey.ShouldEqual, 0)
+		convey.So(number.BytesToUint([]byte{0, 1}), convey.ShouldEqual, 1)
+		convey.So(number.BytesToUint([]byte{0, 0, 255}), convey.ShouldEqual, 255)
+		convey.So(number.BytesToUint([]byte{0, 1, 0}), convey.ShouldEqual, 256)
+		convey.So(number.BytesToUint([]byte{0, 1, 1}), convey.ShouldEqual, 257)
+	})
+}

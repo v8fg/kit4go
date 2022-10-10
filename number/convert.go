@@ -81,3 +81,13 @@ func BytesToDataLittleEndian[T BinaryType](data []byte, kindAnyData T) (T, error
 	err := binary.Read(buf, binary.LittleEndian, &kindAnyData)
 	return kindAnyData, err
 }
+
+// BytesToUint converts the bytes to the uint number, accumulating byte to byte.
+func BytesToUint(b []byte) (result uint) {
+	n := len(b)
+	for i := 0; i < n; i++ {
+		result = result << 8
+		result += uint(b[i])
+	}
+	return result
+}

@@ -18,6 +18,7 @@
 
 ## Support list
 
+- [x] [bit](bit) hacks for bit.
 - [x] [datetime](datetime) parse, format, others.
 - [x] [ip](ip) parse, match, convert, info.
 - [x] [json](json) support multi json packages.
