@@ -1,7 +1,6 @@
 package random
 
 import (
-	"math"
 	"math/rand"
 	"strings"
 	"unsafe"
@@ -15,17 +14,14 @@ const (
 	letterIdxMax  = letterIdxMask / letterIdxBits // # of letter indices fitting in 63 bits
 )
 
-// maxBits returns the maximum number of bits can represent the number.
-func maxBits(n int) int {
-	if n <= 0 {
-		return 0
+// maxBits returns the maximum bits can represent the number, if the number is power of two, plus one.
+//
+// Like: 0->0, 1->1, 2->2, 3->2, 4->3, 5->3, 8->4
+func maxBits(num int) (bits int) {
+	for ; num >= 1; num >>= 1 {
+		bits++
 	}
-	ret := int(math.Ceil(math.Log2(float64(n))))
-	// the power of 2
-	if n&(n-1) == 0 {
-		ret++
-	}
-	return ret
+	return bits
 }
 
 // RandStringWithLetter only returns a random string(uppercase or lowercase) of length n, with no numbers.

@@ -8,7 +8,8 @@ const hexDigit = "0123456789abcdef"
 
 // bytesToUint32 with BigEndian
 func bytesToUint32(b []byte) (result uint32) {
-	for i := 0; i < len(b); i++ {
+	n := len(b)
+	for i := 0; i < n; i++ {
 		result = result << 8
 		result += uint32(b[i])
 	}
