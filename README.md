@@ -26,6 +26,7 @@
 - [x] [number](number) round, bytes convert.
 - [x] [random](random) rand, random.
 - [x] [uuid](uuid) requestID, go.uuid, ksuid, xid.
+- [x] [xlo](xlo) some utils ref *lo*, more pls use [lo](https://github.com/samber/lo) directly.
 
 ## Install
 
@@ -33,4 +34,14 @@
 
 ## Notes
 
->If test failed, maybe effected by the inline, you can try: `go test -v -gcflags=all=-l xxx_test.go`.
+> If test failed, maybe effected by the inline, you can try: `go test -v -gcflags=all=-l xxx_test.go`.
+
+## CMD
+
+- **release check**: `make`
+- **coverage**: `make cover`
+- **format check**: `make fmt-check`
+- **format fixed**: `make fmt`
+- **misspell check**: `make misspell-check`
+- **golang lint**: `make golangci`
+- **escape analysis**: `make escape` or `ESCAPE_PATH=ip make escape`
