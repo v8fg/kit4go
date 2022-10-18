@@ -51,16 +51,16 @@ const (
 // APIListForPublicIP api list for get the public ip.
 var APIListForPublicIP = []string{
 	"https://ipinfo.io/ip",
+	"https://ipinfo.io", // application/json
 	"https://ifconfig.me/ip",
 	"https://ifconfig.me",
-	"https://ipinfo.io", // application/json
-	"https://ifconfig.co",
 	"https://api.ipify.org",
 	"https://api.ipify.org?format=json",
 	"https://api64.ipify.org?format=json",
-	"https://icanhazip.com",
 	"https://ident.me",
 	"https://ipecho.net/plain",
+	"https://ifconfig.co",
+	// "https://icanhazip.com", // maybe ipv6 formatted, ignore now
 }
 
 func (cacheLocalIP *localIP) LocalIP() (localIP string) {
@@ -290,15 +290,19 @@ func getPublicIPMultiChannel(timeout time.Duration, urls []string) (ip string) {
 		}(url)
 	}
 
-	select {
-	case _ip := <-ips:
-		if len(_ip) != 0 {
-			ip = _ip
-			break
+Loop:
+	for {
+		select {
+		case _ip := <-ips:
+			if len(strings.TrimSpace(_ip)) != 0 {
+				ip = strings.TrimSpace(_ip)
+				break Loop
+			}
+		case <-tm.C:
+			break Loop
 		}
-	case <-tm.C:
-		break
 	}
+
 	return
 }
 
@@ -313,7 +317,12 @@ func PublicIP(timeout time.Duration, apiListForPublic ...string) (url string) {
 		timeout = time.Second * 5
 	}
 
-	return getPublicIPMultiChannel(timeout, apiListForPublic)
+	// most retries
+	for i := 0; i < 3 && len(url) == 0; i++ {
+		time.Sleep(time.Millisecond * 100)
+		url = getPublicIPMultiChannel(timeout, apiListForPublic)
+	}
+	return
 }
 
 // ClientIP implements one best effort algorithm to return the real client IP.

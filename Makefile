@@ -7,6 +7,8 @@ GOFILES := $(shell find . -name "*.go" -type f -not -path "./vendor/*")
 TESTFOLDER := $(shell $(GO) list ./...)
 TESTTAGS ?=
 GCFLAGS ?= "-gcflags=all=-l"
+GCFLAGS_ESCAPE ?= "-gcflags=-m -l"
+ESCAPE_PATH ?= ""
 
 .PHONY: check
 check: fmt-check misspell-check golangci cover
@@ -112,3 +114,8 @@ golangci:
 .PHONY: mod
 mod:
 	@go mod tidy
+
+.PHONY: escape
+escape:
+	@$(GO) test ${GCFLAGS_ESCAPE} -cover ./${ESCAPE_PATH}...
+	@echo "escape done"
