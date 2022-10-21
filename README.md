@@ -24,6 +24,7 @@
 - [x] [ip](ip) parse, match, convert, info.
 - [x] [json](json) support multi json packages.
 - [x] [number](number) round, bytes convert.
+- [x] [otp](otp) `TOTP`, `HOTP`.
 - [x] [random](random) rand, random.
 - [x] [uuid](uuid) requestID, go.uuid, ksuid, xid.
 - [x] [xlo](xlo) some utils ref *lo*, more pls use [lo](https://github.com/samber/lo) directly.
