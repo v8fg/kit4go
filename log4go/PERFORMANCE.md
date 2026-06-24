@@ -197,61 +197,63 @@ KafKaWriter 与 FileWriter **共享一份逻辑**（消除重复 ring，避免 N
 - **配置**：`OverflowPolicy` = drop/block/spill；spill 下 `SpillType` = ring/file/chain
   （默认 chain = ring→file），`SpillSize`/`SpillDir`/`SpillMaxBytes` 控制各级上限。
 
-## 11. 性能压测与调参建议（Go 1.26.2 / 本机 10 核 GOMAXPROCS=10）
+## 11. 性能压测与调参建议（Go 1.26.0 / Apple M5 10 核 GOMAXPROCS=10）
 
-> 压测环境：Go 1.26.2，darwin/arm64，NumCPU=10。ns/op 为每条日志耗时，B/op 为每条分配内存，QPS=1e9/ns。多核 ShardLogger 的 ns/op 为并行 wall/total（已含多核并行）。
+> 压测环境：Go 1.26.0，darwin/arm64（Apple M5），NumCPU=10，GOMAXPROCS=10。
+> ns/op 为每条日志耗时，B/op 为每条分配内存，QPS=1e9/ns。多核 ShardLogger 的 ns/op 为并行 wall/total（已含多核并行）。
+> 数据来源：`go test ./log4go/ -bench . -benchmem -run '^$' -benchtime=2s` + `Test_MemSustained_1M`。
 
 ### 单线程极限
 | 模式 | ns/op | ~QPS/核 | 内存 B/op | alloc | 说明 |
 |---|---|---|---|---|---|
-| caller（file:line）| 1047 | ~955K | 314 | 6 | 默认，保定位 |
-| no-caller（`WithCaller(false)`）| 1072 | ~933K | **17** | **1** | 极致（失 file:line）|
-| filtered | 13 | ~77M | 7 | 0 | 级别过滤近零成本 |
+| caller（file:line）| 1580 | ~633K | 336 | 7 | 默认，保定位 |
+| no-caller（`WithCaller(false)`）| 1017 | ~983K | **16** | **1** | 极致（失 file:line）|
+| filtered | 11.5 | ~87M | 8 | 0 | 级别过滤近零成本 |
 
-no-caller 多轮最佳曾达 981ns（~1.02M，破 1M）。caller 受限 runtime.Caller。
+caller 路径受 `runtime.Caller` 开销主导；no-caller 仅 1 次 alloc、~983K/核，逼近 1M/核物理极限。
 
 ### 多核 ShardLogger（10 核，并行 wall/total）
 | shard | ns/op | ~QPS | 内存 B/op | 备注 |
 |---|---|---|---|---|
-| 1 | 1587 | 631K | 289 | 退化单 logger |
-| 2 | 844 | 1.18M | 295 | |
-| **4** | **677** | **~1.48M** | 303 | **最佳（≈ 核数/2）** |
-| 8 | 1039 | 963K | 307 | |
-| 16 | 2012 | 497K | 311 | 超核数 1.6×，调度反噬 |
+| 1 | 1752 | 571K | 289 | 退化单 logger |
+| 2 | 1028 | 973K | 292 | |
+| **4** | **614** | **~1.63M** | 303 | **最佳（≈ 核数/2）** |
+| 8 | 714 | 1.40M | 306 | |
+| 16 | 1565 | 639K | 310 | 超核数 1.6×，调度反噬 |
 
-**shard ≈ 核数/2~核数最佳**；超过核数调度反噬。本机 10 核下 4 shard 达 ~1.48M。
+**shard ≈ 核数/2~核数最佳**；超过核数调度反噬。本机 10 核下 4 shard 达 ~1.63M，已稳定破 1M。
 
 ### Writer 吞吐
 | writer | ns/op | ~QPS | 内存 B/op |
 |---|---|---|---|
-| File（bufio）| 293 | ~3.41M | 144 |
-| Console（pipe→discard）| 1793 | ~558K | 160 |
+| File（bufio）| 291 | ~3.44M | 144 |
+| Console（pipe→discard）| 1838 | ~544K | 160 |
 
 File（bufio 缓冲）最快；Console 受 stdout I/O 限制，生产建议禁用。
 
-### 进程内存实测（1M 条日志，go1.26，10 核）
+### 进程内存实测（1M 条日志，MemSustained_1M，Go 1.26.0，10 核）
 | 指标 | 值 | 说明 |
 |---|---|---|
-| Sys | 15.2 MB | 进程系统内存（含 Go runtime/栈）|
+| Sys | 19.0 MB | 进程系统内存（含 Go runtime/栈）|
 | HeapAlloc | 0.8 MB | 1M 条日志堆分配（pool 复用，极低）|
-| HeapInuse | 1.5 MB | 堆使用 |
-| NumGC | 8 | 1M 条仅 8 次 GC（pool 复用减 GC）|
+| HeapInuse | 1.7 MB | 堆使用 |
+| NumGC | 6 | 1M 条仅 6 次 GC（pool 复用减 GC）|
 | Goroutines | 3 | bootstrap + writers，不随 QPS 增长 |
 
-高 QPS 下内存**不飙升**：records channel 有界 + Record/bufPool 复用 + spiller 有界。实测 1M 条仅 0.8MB 堆、8 次 GC。
+高 QPS 下内存**不飙升**：records channel 有界 + Record/bufPool 复用 + spiller 有界。实测 1M 条仅 0.8MB 堆、6 次 GC、3 个常驻 goroutine。
 
 ### 建议参数
 | 场景 | 配置 | 预期 |
 |---|---|---|
-| 生产（保定位）| 单 logger caller，`recordChannelSize` 8192，level INFO | ~851K/核 |
-| 极致（舍定位）| 单 logger `WithCaller(false)` | ~861K/核 |
-| 多核扩展 | `ShardLogger(GOMAXPROCS)` | 线性（8 核理论 ~6.9M，实际 1-3M）|
+| 生产（保定位）| 单 logger caller，`recordChannelSize` 8192，level INFO | ~633K/核 |
+| 极致（舍定位）| 单 logger `WithCaller(false)` | ~983K/核 |
+| 多核扩展 | `ShardLogger(≈GOMAXPROCS/2)` | 10 核 4 shard ~1.63M |
 
 ### 突破 1000K
-单线程物理极限 ~861K（no-caller）。**多核 `ShardLogger`（shard=核数）是唯一正路**，干净环境线性扩展可超 1M。防丢用 overflow `spill`（ring→file），防 OOM 用 buffer/spiller 有界。
+单线程物理极限 ~983K（no-caller）。**多核 `ShardLogger`（shard≈核数/2）是唯一正路**，干净环境线性扩展可超 1M。防丢用 overflow `spill`（ring→file），防 OOM 用 buffer/spiller 有界。
 
-> 注：上表为长会话/高负载保守值；CI/生产干净环境数值更高。完整压测见
-> `Benchmark_LoggerInfo` / `Benchmark_LoggerInfoNoCaller` / `Benchmark_ShardLoggerScale`。
+> 注：上表为本机（M5 / Go 1.26.0）实测值；CI/生产干净环境数值可能更高。完整压测见
+> `Benchmark_LoggerInfo` / `Benchmark_LoggerInfoNoCaller` / `Benchmark_ShardLoggerScale` / `Test_MemSustained_1M`。
 
 
 

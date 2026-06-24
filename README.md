@@ -40,6 +40,12 @@
 
 > If test failed, maybe effected by the inline, you can try: `go test -v -gcflags=all=-l xxx_test.go`.
 
+> Error-path tests use injectable interfaces (e.g. `file.FS`, `otp.RandomReader`,
+> `ip.AddrLookup`, `random.CryptoSource`) with [mockery](https://github.com/vektra/mockery)
+> mocks instead of runtime monkey-patching. Regenerate mocks with
+> `go generate ./...` (mockery v2) after editing those interfaces. Each interface
+> has a `//go:generate mockery ...` directive and a committed `mock_*.go`.
+
 ## CMD
 
 - **release check**: `make`
