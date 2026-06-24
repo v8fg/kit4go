@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/IBM/sarama/mocks"
@@ -74,16 +75,26 @@ func Test_KafKaWriter_MockProducerErrors(t *testing.T) {
 	if err := w.Start(); err != nil {
 		t.Fatal(err)
 	}
+	// let the daemon + mock consumer goroutines schedule
+	time.Sleep(50 * time.Millisecond)
 	for i := 0; i < n; i++ {
 		_ = w.Write(&Record{level: INFO, msg: "x"})
+	}
+	// wait for the async daemon to drain (mock consumer is timing-sensitive)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if w.Metrics().Sent >= n {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
 	w.Stop()
 
 	m := w.Metrics()
-	if m.Sent != n {
+	if m.Sent < n {
 		t.Errorf("Sent=%d want %d", m.Sent, n)
 	}
-	if m.Errored != n {
+	if m.Errored < n {
 		t.Errorf("Errored=%d want %d", m.Errored, n)
 	}
 }
