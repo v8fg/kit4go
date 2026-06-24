@@ -3,7 +3,6 @@
 package random
 
 import (
-	"crypto/rand"
 	"encoding/base64"
 	"math/big"
 )
@@ -11,23 +10,23 @@ import (
 // CryptoInt returns a uniform random value in [0, max). It panics if max <= 0.
 // secure random number generator.
 func CryptoInt(max int64) (n *big.Int, err error) {
-	return rand.Int(rand.Reader, big.NewInt(max))
+	return DefaultCryptoSource.Int(big.NewInt(max))
 }
 
 // CryptoPrime returns a number of the given bit length that is prime with high probability.
 // Prime will return error for any error returned by rand.Read or if bits < 2.
 func CryptoPrime(bits int) (n *big.Int, err error) {
-	return rand.Prime(rand.Reader, bits)
+	return DefaultCryptoSource.Prime(bits)
 }
 
 // CryptoRead is a helper function that calls Reader.Read using io.ReadFull.
 // On return, n == len(b) if and only if err == nil.
 func CryptoRead(b []byte) (n int, err error) {
-	return rand.Read(b)
+	return DefaultCryptoSource.Read(b)
 }
 
 // CryptoReadString returns the random string with the length == len(b).
 func CryptoReadString(b []byte) string {
-	_, _ = rand.Read(b)
+	_, _ = DefaultCryptoSource.Read(b)
 	return base64.StdEncoding.EncodeToString(b)
 }
