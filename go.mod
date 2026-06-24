@@ -1,10 +1,9 @@
 module github.com/v8fg/kit4go
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/IBM/sarama v1.50.3
-	github.com/agiledragon/gomonkey/v2 v2.14.0
 	github.com/bytedance/sonic v1.15.2
 	github.com/goccy/go-json v0.10.6
 	github.com/jackc/pgx/v5 v5.10.0
