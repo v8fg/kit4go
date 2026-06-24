@@ -12,7 +12,7 @@ import (
 
 func TestNewXID(t *testing.T) {
 	convey.Convey("TestNewXID", t, func() {
-		// error-path test removed (gomonkey dropped; Go 1.26 darwin SIGBUS)
+		// generator: invariant check (real generator; no error-path — gomonkey previously asserted a fixed value, now we assert the version/non-nil invariant)
 		newID := uuid.NewXID()
 		convey.So(newID.IsNil(), convey.ShouldBeFalse)
 		convey.So(newID.String(), convey.ShouldNotBeEmpty)
@@ -22,7 +22,7 @@ func TestNewXID(t *testing.T) {
 func TestNewXIDWithTime(t *testing.T) {
 	timePart := time.Unix(0, 1665381861000000000)
 	convey.Convey("TestNewXIDWithTime", t, func() {
-		// error-path test removed (gomonkey dropped; Go 1.26 darwin SIGBUS)
+		// generator: invariant check (real generator; no error-path — gomonkey previously asserted a fixed value, now we assert the version/non-nil invariant)
 		newID := uuid.NewXIDWithTime(timePart)
 		convey.So(newID.IsNil(), convey.ShouldBeFalse)
 		convey.So(newID.String(), convey.ShouldNotBeEmpty)
@@ -50,6 +50,11 @@ func TestXIDFromString(t *testing.T) {
 	convey.Convey("TestXIDFromString", t, func() {
 		outUUID, _ := uuid.XIDFromString(testXIDStr)
 		convey.So(outUUID.String(), convey.ShouldEqual, testXIDStr)
+
+		// error-path: malformed string returns an error.
+		outBad, err := uuid.XIDFromString("not-an-xid!")
+		convey.So(outBad.IsNil(), convey.ShouldBeTrue)
+		convey.So(err, convey.ShouldBeError)
 	})
 }
 
@@ -59,5 +64,10 @@ func TestXIDFromBytes(t *testing.T) {
 	convey.Convey("TestXIDFromBytes", t, func() {
 		outUUID, _ := uuid.XIDFromBytes(testXID.Bytes())
 		convey.So(outUUID.String(), convey.ShouldEqual, testXIDStr)
+
+		// error-path: wrong-length byte slice returns an error.
+		outBad, err := uuid.XIDFromBytes([]byte{1, 2, 3})
+		convey.So(outBad.IsNil(), convey.ShouldBeTrue)
+		convey.So(err, convey.ShouldBeError)
 	})
 }

@@ -11,7 +11,7 @@ import (
 
 func TestRequestID(t *testing.T) {
 	convey.Convey("TestRequestID", t, func() {
-		// error-path test removed (gomonkey dropped; Go 1.26 darwin SIGBUS)
+		// generator: invariant check (real generator; no error-path — gomonkey previously asserted a fixed value, now we assert the version/non-nil invariant)
 		// RequestID returns the hash-like (no dashes) v4 string.
 		ret := uuid.RequestID()
 		convey.So(ret, convey.ShouldNotBeEmpty)
@@ -22,7 +22,7 @@ func TestRequestID(t *testing.T) {
 
 func TestRequestIDCanonicalFormat(t *testing.T) {
 	convey.Convey("TestRequestIDCanonicalFormat", t, func() {
-		// error-path test removed (gomonkey dropped; Go 1.26 darwin SIGBUS)
+		// generator: invariant check (real generator; no error-path — gomonkey previously asserted a fixed value, now we assert the version/non-nil invariant)
 		// RequestIDCanonicalFormat returns the canonical dashed v4 string.
 		ret := uuid.RequestIDCanonicalFormat()
 		convey.So(ret, convey.ShouldNotBeEmpty)
