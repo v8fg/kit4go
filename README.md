@@ -23,8 +23,10 @@
 - [x] [file](file) base file ops.
 - [x] [ip](ip) parse, match, convert, info.
 - [x] [json](json) support multi json packages.
+- [x] [log4go](log4go) async logging: console/file/kafka writers, generic overflow (ring→file→drop), crash resume, metrics + webhook alerts, multi-core ShardLogger, ~1M qps/core (no-caller). See [log4go/PERFORMANCE.md](log4go/PERFORMANCE.md).
 - [x] [number](number) round, bytes convert.
 - [x] [otp](otp) `TOTP`, `HOTP`.
+- [x] [postgres](postgres) pgx pool wrapper (pure Go, cross-platform).
 - [x] [random](random) rand, random.
 - [x] [str](str) common string utils.
 - [x] [uuid](uuid) requestID, go.uuid, ksuid, xid.
