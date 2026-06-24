@@ -1,0 +1,494 @@
+package log4go
+
+import (
+	"bufio"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/IBM/sarama"
+)
+
+// OverflowPolicy controls what Write does when the async send channel is full.
+type OverflowPolicy int
+
+const (
+	OverflowDrop OverflowPolicy = iota
+	OverflowBlock
+	OverflowSpill
+)
+
+func (p OverflowPolicy) String() string {
+	switch p {
+	case OverflowBlock:
+		return "block"
+	case OverflowSpill:
+		return "spill"
+	default:
+		return "drop"
+	}
+}
+
+// ParseOverflowPolicy parses a policy name, defaulting to OverflowDrop.
+func ParseOverflowPolicy(s string) OverflowPolicy {
+	switch s {
+	case "block":
+		return OverflowBlock
+	case "spill":
+		return OverflowSpill
+	default:
+		return OverflowDrop
+	}
+}
+
+// OverflowStats reports overflow accounting (thread-safe) and emits throttled
+// alerts (standard log by default; optional AlertSink for webhook/OA push) on
+// the first event and every Nth event.
+type OverflowStats struct {
+	dropped    uint64
+	spilled    uint64
+	dropEvery  uint64 // log every N drops (0 = only first)
+	spillEvery uint64 // log every N spills
+	alertSink  AlertSink
+}
+
+// SetAlertEvery configures throttled overflow logging (every N events).
+func (s *OverflowStats) SetAlertEvery(dropEvery, spillEvery uint64) {
+	s.dropEvery = dropEvery
+	s.spillEvery = spillEvery
+}
+
+// SetAlertSink installs an alert sink (e.g. WebhookAlertSink for lark/dingtalk/
+// feishu). Nil disables push (standard log only).
+func (s *OverflowStats) SetAlertSink(sink AlertSink) {
+	s.alertSink = sink
+}
+
+// IncDropped increments the dropped counter and emits an alert on the first
+// drop and every dropEvery drops.
+func (s *OverflowStats) IncDropped() {
+	n := atomic.AddUint64(&s.dropped, 1)
+	s.alert("DROP", n, s.dropEvery, "queue full; record lost")
+}
+
+// IncSpilled increments the spilled counter and emits an alert on the first
+// spill and every spillEvery spills.
+func (s *OverflowStats) IncSpilled() {
+	n := atomic.AddUint64(&s.spilled, 1)
+	s.alert("SPILL", n, s.spillEvery, "overflow buffered to spill store")
+}
+
+func (s *OverflowStats) alert(kind string, n, every uint64, reason string) {
+	level := AlertWarn
+	if kind == "DROP" {
+		level = AlertError
+	}
+	fire := false
+	text := ""
+	switch {
+	case n == 1:
+		fire = true
+		text = "first event: " + reason
+	case every > 0 && n%every == 0:
+		fire = true
+		text = fmt.Sprintf("total=%d (logged every %d): %s", n, every, reason)
+	}
+	if !fire {
+		return
+	}
+	log.Printf("[log4go] overflow %s %s", kind, text)
+	if s.alertSink != nil {
+		s.alertSink.Send(level, kind, text)
+	}
+}
+
+func (s *OverflowStats) Dropped() uint64 { return atomic.LoadUint64(&s.dropped) }
+func (s *OverflowStats) Spilled() uint64 { return atomic.LoadUint64(&s.spilled) }
+
+// Spiller[T] is a bounded fallback store for type T. Always size-limited so it
+// cannot cause OOM. Records are recovered via Drain.
+type Spiller[T any] interface {
+	Push(msg T) bool // false = at capacity (caller may drop)
+	Drain() []T      // recover and remove stored records
+	Len() int
+	Close() error
+}
+
+// SpillerRecoverable is implemented by spillers with a persistent backend
+// (e.g. FileSpiller); used to detect resumable spill on startup.
+type SpillerRecoverable interface {
+	HasPersistent() bool
+}
+
+// SpillCodec[T] serializes T to/from bytes for FileSpiller persistence.
+type SpillCodec[T any] interface {
+	Encode(msg T) ([]byte, error)
+	Decode(b []byte) (T, error)
+}
+
+// RingSpiller[T] is a fixed-capacity in-memory ring; overwrites oldest when full.
+type RingSpiller[T any] struct {
+	mu   sync.Mutex
+	buf  []T
+	head int
+	size int
+	capv int
+}
+
+// NewRingSpiller creates a ring with the given capacity (min 1).
+func NewRingSpiller[T any](capacity int) *RingSpiller[T] {
+	if capacity < 1 {
+		capacity = 1024
+	}
+	return &RingSpiller[T]{buf: make([]T, capacity), capv: capacity}
+}
+
+func (r *RingSpiller[T]) Push(msg T) bool {
+	r.mu.Lock()
+	r.buf[r.head] = msg
+	r.head = (r.head + 1) % r.capv
+	if r.size < r.capv {
+		r.size++
+	}
+	r.mu.Unlock()
+	return true
+}
+
+func (r *RingSpiller[T]) Drain() []T {
+	r.mu.Lock()
+	if r.size == 0 {
+		r.mu.Unlock()
+		return nil
+	}
+	out := make([]T, 0, r.size)
+	start := (r.head - r.size + r.capv) % r.capv
+	var zero T
+	for i := 0; i < r.size; i++ {
+		idx := (start + i) % r.capv
+		out = append(out, r.buf[idx])
+		r.buf[idx] = zero
+	}
+	r.size = 0
+	r.head = 0
+	r.mu.Unlock()
+	return out
+}
+
+func (r *RingSpiller[T]) Len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.size
+}
+
+// PushNoOverwrite pushes without overwriting; returns false if the ring is full.
+// Used by ChainedSpiller so a full ring overflows to the next level instead of
+// silently dropping the oldest record.
+func (r *RingSpiller[T]) PushNoOverwrite(msg T) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.size >= r.capv {
+		return false
+	}
+	r.buf[r.head] = msg
+	r.head = (r.head + 1) % r.capv
+	r.size++
+	return true
+}
+
+func (r *RingSpiller[T]) Close() error { return nil }
+
+// FileSpiller[T] persists overflowed records to disk (length-prefixed framing),
+// bounded by MaxBytes. Recover via Drain. Survives process memory pressure.
+type FileSpiller[T any] struct {
+	mu       sync.Mutex
+	dir      string
+	maxBytes int64
+	codec    SpillCodec[T]
+	w        *bufio.Writer
+	f        *os.File
+	written  int64
+	count    int64
+}
+
+// NewFileSpiller creates a disk spiller in dir bounded by maxBytes (<=0 -> 64MB).
+func NewFileSpiller[T any](dir string, maxBytes int64, codec SpillCodec[T]) (*FileSpiller[T], error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if maxBytes <= 0 {
+		maxBytes = 64 << 20
+	}
+	sp := &FileSpiller[T]{dir: dir, maxBytes: maxBytes, codec: codec}
+	if err := sp.open(); err != nil {
+		return nil, err
+	}
+	return sp, nil
+}
+
+func (f *FileSpiller[T]) open() error {
+	p := filepath.Join(f.dir, "spill.log")
+	fh, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // internal spill file
+	if err != nil {
+		return err
+	}
+	if fi, _ := fh.Stat(); fi != nil {
+		f.written = fi.Size()
+	}
+	f.f = fh
+	f.w = bufio.NewWriter(fh)
+	return nil
+}
+
+func (f *FileSpiller[T]) Push(msg T) bool {
+	b, err := f.codec.Encode(msg)
+	if err != nil {
+		return false
+	}
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(b)))
+	recLen := int64(4 + len(b))
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.written+recLen > f.maxBytes {
+		return false
+	}
+	if _, err := f.w.Write(hdr[:]); err != nil {
+		return false
+	}
+	if _, err := f.w.Write(b); err != nil {
+		return false
+	}
+	f.written += recLen
+	f.count++
+	return true
+}
+
+func (f *FileSpiller[T]) Drain() []T {
+	f.mu.Lock()
+	if f.w != nil {
+		_ = f.w.Flush()
+	}
+	if f.f != nil {
+		_ = f.f.Close()
+	}
+	readPath := filepath.Join(f.dir, "spill.log.read")
+	writePath := filepath.Join(f.dir, "spill.log")
+	if err := os.Rename(writePath, readPath); err != nil {
+		_ = f.open()
+		f.mu.Unlock()
+		return nil
+	}
+	_ = f.open()
+	f.count = 0
+	codec := f.codec
+	f.mu.Unlock()
+
+	out := decodeSpillFile[T](readPath, codec)
+	_ = os.Remove(readPath)
+	return out
+}
+
+func decodeSpillFile[T any](path string, codec SpillCodec[T]) []T {
+	fh, err := os.Open(path) //nolint:gosec // internal spill file
+	if err != nil {
+		return nil
+	}
+	defer fh.Close()
+	r := bufio.NewReader(fh)
+	var out []T
+	for {
+		var hdr [4]byte
+		if _, err := io.ReadFull(r, hdr[:]); err != nil {
+			break
+		}
+		l := binary.BigEndian.Uint32(hdr[:])
+		buf := make([]byte, l)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			break
+		}
+		v, err := codec.Decode(buf)
+		if err != nil {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func (f *FileSpiller[T]) Len() int { return int(atomic.LoadInt64(&f.count)) }
+
+func (f *FileSpiller[T]) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.w != nil {
+		_ = f.w.Flush()
+	}
+	if f.f != nil {
+		return f.f.Close()
+	}
+	return nil
+}
+
+// HasPersistent marks FileSpiller as resumable on startup.
+func (f *FileSpiller[T]) HasPersistent() bool { return true }
+
+// Dir returns the spill directory (for startup-recovery detection).
+func (f *FileSpiller[T]) Dir() string { return f.dir }
+
+// ChainedSpiller[T] is multi-level overflow: ring (hot, in-memory) -> file
+// (cold, persistent) -> drop. Total space is bounded: ring cap + file MaxBytes.
+type ChainedSpiller[T any] struct {
+	ring *RingSpiller[T]
+	file *FileSpiller[T]
+}
+
+// NewChainedSpiller composes a ring (hot) and an optional file (cold) spiller.
+func NewChainedSpiller[T any](ring *RingSpiller[T], file *FileSpiller[T]) *ChainedSpiller[T] {
+	return &ChainedSpiller[T]{ring: ring, file: file}
+}
+
+func (c *ChainedSpiller[T]) Push(msg T) bool {
+	if c.ring != nil && c.ring.PushNoOverwrite(msg) {
+		return true
+	}
+	if c.file != nil && c.file.Push(msg) {
+		return true
+	}
+	return false
+}
+
+func (c *ChainedSpiller[T]) Drain() []T {
+	var out []T
+	if c.ring != nil {
+		out = append(out, c.ring.Drain()...)
+	}
+	if c.file != nil {
+		out = append(out, c.file.Drain()...)
+	}
+	return out
+}
+
+func (c *ChainedSpiller[T]) Len() int {
+	n := 0
+	if c.ring != nil {
+		n += c.ring.Len()
+	}
+	if c.file != nil {
+		n += c.file.Len()
+	}
+	return n
+}
+
+func (c *ChainedSpiller[T]) Close() error {
+	if c.ring != nil {
+		_ = c.ring.Close()
+	}
+	if c.file != nil {
+		return c.file.Close()
+	}
+	return nil
+}
+
+// HasPersistent reports whether a file backend is present (resumable).
+func (c *ChainedSpiller[T]) HasPersistent() bool { return c.file != nil }
+
+// File returns the file backend (may be nil), for startup recovery.
+func (c *ChainedSpiller[T]) File() *FileSpiller[T] { return c.file }
+
+// ---- shared codecs ----
+
+type spillRecord struct {
+	Topic     string `json:"topic"`
+	Key       []byte `json:"key,omitempty"`
+	Value     []byte `json:"value,omitempty"`
+	Timestamp int64  `json:"ts,omitempty"`
+}
+
+type producerMsgCodec struct{}
+
+func (producerMsgCodec) Encode(msg *sarama.ProducerMessage) ([]byte, error) {
+	rec := spillRecord{Topic: msg.Topic}
+	if msg.Key != nil {
+		if b, e := msg.Key.Encode(); e == nil {
+			rec.Key = b
+		}
+	}
+	if msg.Value != nil {
+		if b, e := msg.Value.Encode(); e == nil {
+			rec.Value = b
+		}
+	}
+	if !msg.Timestamp.IsZero() {
+		rec.Timestamp = msg.Timestamp.UnixNano()
+	}
+	return json.Marshal(rec)
+}
+
+func (producerMsgCodec) Decode(b []byte) (*sarama.ProducerMessage, error) {
+	var rec spillRecord
+	if err := json.Unmarshal(b, &rec); err != nil {
+		return nil, err
+	}
+	msg := &sarama.ProducerMessage{Topic: rec.Topic}
+	if len(rec.Key) > 0 {
+		msg.Key = sarama.ByteEncoder(rec.Key)
+	}
+	if len(rec.Value) > 0 {
+		msg.Value = sarama.ByteEncoder(rec.Value)
+	}
+	if rec.Timestamp != 0 {
+		msg.Timestamp = time.Unix(0, rec.Timestamp)
+	}
+	return msg, nil
+}
+
+// ProducerMsgCodec is the shared codec for *sarama.ProducerMessage spill.
+var ProducerMsgCodec SpillCodec[*sarama.ProducerMessage] = producerMsgCodec{}
+
+type spillRecordData struct {
+	Level int    `json:"level"`
+	Time  string `json:"time"`
+	File  string `json:"file"`
+	Msg   string `json:"msg"`
+}
+
+type recordCodec struct{}
+
+func (recordCodec) Encode(r *Record) ([]byte, error) {
+	return json.Marshal(spillRecordData{Level: r.level, Time: r.time, File: r.file, Msg: r.msg})
+}
+
+func (recordCodec) Decode(b []byte) (*Record, error) {
+	var d spillRecordData
+	if err := json.Unmarshal(b, &d); err != nil {
+		return nil, err
+	}
+	return &Record{level: d.Level, time: d.Time, file: d.File, msg: d.Msg}, nil
+}
+
+// RecordCodec is the shared codec for *Record spill (FileWriter).
+var RecordCodec SpillCodec[*Record] = recordCodec{}
+
+// DrainFileRecover reads any persisted spill.log in dir without holding an
+// open spiller — used at startup to resume from an interrupted process.
+func DrainFileRecover[T any](dir string, codec SpillCodec[T]) []T {
+	readPath := filepath.Join(dir, "spill.log")
+	if _, err := os.Stat(readPath); err != nil {
+		return nil
+	}
+	// move aside so a concurrently-opening spiller won't fight us
+	tmp := filepath.Join(dir, "spill.log.recover")
+	if err := os.Rename(readPath, tmp); err != nil {
+		return nil
+	}
+	out := decodeSpillFile[T](tmp, codec)
+	_ = os.Remove(tmp)
+	return out
+}
