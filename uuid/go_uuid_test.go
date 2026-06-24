@@ -3,7 +3,7 @@ package uuid_test
 import (
 	"testing"
 
-	"github.com/agiledragon/gomonkey"
+	"github.com/agiledragon/gomonkey/v2"
 	uid "github.com/satori/go.uuid"
 	"github.com/smartystreets/goconvey/convey"
 

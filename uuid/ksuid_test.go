@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agiledragon/gomonkey"
+	"github.com/agiledragon/gomonkey/v2"
 	"github.com/segmentio/ksuid"
 	"github.com/smartystreets/goconvey/convey"
 
