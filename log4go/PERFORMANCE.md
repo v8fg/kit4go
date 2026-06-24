@@ -229,6 +229,17 @@ no-caller 多轮最佳曾达 981ns（~1.02M，破 1M）。caller 受限 runtime.
 
 File（bufio 缓冲）最快；Console 受 stdout I/O 限制，生产建议禁用。
 
+### 进程内存实测（1M 条日志，go1.26，10 核）
+| 指标 | 值 | 说明 |
+|---|---|---|
+| Sys | 15.2 MB | 进程系统内存（含 Go runtime/栈）|
+| HeapAlloc | 0.8 MB | 1M 条日志堆分配（pool 复用，极低）|
+| HeapInuse | 1.5 MB | 堆使用 |
+| NumGC | 8 | 1M 条仅 8 次 GC（pool 复用减 GC）|
+| Goroutines | 3 | bootstrap + writers，不随 QPS 增长 |
+
+高 QPS 下内存**不飙升**：records channel 有界 + Record/bufPool 复用 + spiller 有界。实测 1M 条仅 0.8MB 堆、8 次 GC。
+
 ### 建议参数
 | 场景 | 配置 | 预期 |
 |---|---|---|
