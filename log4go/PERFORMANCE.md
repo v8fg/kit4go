@@ -197,33 +197,37 @@ KafKaWriter 与 FileWriter **共享一份逻辑**（消除重复 ring，避免 N
 - **配置**：`OverflowPolicy` = drop/block/spill；spill 下 `SpillType` = ring/file/chain
   （默认 chain = ring→file），`SpillSize`/`SpillDir`/`SpillMaxBytes` 控制各级上限。
 
-## 11. 性能压测与调参建议（Go 1.26，本机；长会话高负载下的保守值）
+## 11. 性能压测与调参建议（Go 1.26.2 / 本机 10 核 GOMAXPROCS=10）
 
-### 单线程极限（-count=3 多轮，Go 1.25）
-| 模式 | 最佳 ns/op | ~QPS/核 | alloc | 说明 |
+> 压测环境：Go 1.26.2，darwin/arm64，NumCPU=10。ns/op 为每条日志耗时，B/op 为每条分配内存，QPS=1e9/ns。多核 ShardLogger 的 ns/op 为并行 wall/total（已含多核并行）。
+
+### 单线程极限
+| 模式 | ns/op | ~QPS/核 | 内存 B/op | alloc | 说明 |
+|---|---|---|---|---|---|
+| caller（file:line）| 1047 | ~955K | 314 | 6 | 默认，保定位 |
+| no-caller（`WithCaller(false)`）| 1072 | ~933K | **17** | **1** | 极致（失 file:line）|
+| filtered | 13 | ~77M | 7 | 0 | 级别过滤近零成本 |
+
+no-caller 多轮最佳曾达 981ns（~1.02M，破 1M）。caller 受限 runtime.Caller。
+
+### 多核 ShardLogger（10 核，并行 wall/total）
+| shard | ns/op | ~QPS | 内存 B/op | 备注 |
 |---|---|---|---|---|
-| caller（file:line）| ~1099 | ~888K | 6 | 默认，保定位 |
-| no-caller（`WithCaller(false)`）| **~981** | **~1.02M** | 1 | **破 1M** |
-| filtered | ~11.3 | ~85M | 0 | 级别过滤近零成本 |
+| 1 | 1587 | 631K | 289 | 退化单 logger |
+| 2 | 844 | 1.18M | 295 | |
+| **4** | **677** | **~1.48M** | 303 | **最佳（≈ 核数/2）** |
+| 8 | 1039 | 963K | 307 | |
+| 16 | 2012 | 497K | 311 | 超核数 1.6×，调度反噬 |
 
-no-caller 单线程实测突破 1M（981ns）。caller 受限 runtime.Caller（必要，保 file:line）。
-
-### 多核 ShardLogger（并行 wall/total）
-| shard | ns/op | ~QPS | 备注 |
-|---|---|---|---|
-| 1 | 1574 | 635K | 退化单 logger |
-| 2 | 948 | 1.05M | |
-| **4** | **667.9** | **~1.50M** | **最佳（≈ 核数/2）** |
-| 8 | 928 | 1.08M | |
-| 16 | 6669 | — | 过多 shard 调度反噬 |
-
-**shard ≈ 核数/2~核数最佳**；超过 2× 核数调度反噬。4 shard 实测 ~1.5M。
+**shard ≈ 核数/2~核数最佳**；超过核数调度反噬。本机 10 核下 4 shard 达 ~1.48M。
 
 ### Writer 吞吐
-| writer | ns/op | ~QPS |
-|---|---|---|
-| File（bufio）| ~750 | ~1.33M |
-| Console（pipe→discard）| ~1733 | ~577K（真实终端更慢，生产建议禁用）|
+| writer | ns/op | ~QPS | 内存 B/op |
+|---|---|---|---|
+| File（bufio）| 293 | ~3.41M | 144 |
+| Console（pipe→discard）| 1793 | ~558K | 160 |
+
+File（bufio 缓冲）最快；Console 受 stdout I/O 限制，生产建议禁用。
 
 ### 建议参数
 | 场景 | 配置 | 预期 |
