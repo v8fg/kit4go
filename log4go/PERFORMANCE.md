@@ -199,24 +199,31 @@ KafKaWriter 与 FileWriter **共享一份逻辑**（消除重复 ring，避免 N
 
 ## 11. 性能压测与调参建议（Go 1.26，本机；长会话高负载下的保守值）
 
-### 单线程极限（-count=3 多轮）
+### 单线程极限（-count=3 多轮，Go 1.25）
 | 模式 | 最佳 ns/op | ~QPS/核 | alloc | 说明 |
 |---|---|---|---|---|
-| caller（file:line）| ~1175 | ~851K | 6 | 默认，保定位 |
-| no-caller（`WithCaller(false)`）| ~1161 | ~861K | 1 | 物理极限 |
+| caller（file:line）| ~1099 | ~888K | 6 | 默认，保定位 |
+| no-caller（`WithCaller(false)`）| **~981** | **~1.02M** | 1 | **破 1M** |
+| filtered | ~11.3 | ~85M | 0 | 级别过滤近零成本 |
 
-单线程 ~861K 是物理下限（format + channel send + 1 alloc 不可消除）。
+no-caller 单线程实测突破 1M（981ns）。caller 受限 runtime.Caller（必要，保 file:line）。
 
 ### 多核 ShardLogger（并行 wall/total）
 | shard | ns/op | ~QPS | 备注 |
 |---|---|---|---|
-| 1 | 1496 | 668K | 退化单 logger |
-| 2 | 1426 | 701K | |
-| 4 | 1945 | 514K | 波动 |
-| **8（≈核数）** | **1136** | **880K** | **最佳** |
-| 16 | 5617 | — | 过多 shard 调度反噬 |
+| 1 | 1574 | 635K | 退化单 logger |
+| 2 | 948 | 1.05M | |
+| **4** | **667.9** | **~1.50M** | **最佳（≈ 核数/2）** |
+| 8 | 928 | 1.08M | |
+| 16 | 6669 | — | 过多 shard 调度反噬 |
 
-**shard = 核数最佳**；超过 2× 核数调度开销反噬。
+**shard ≈ 核数/2~核数最佳**；超过 2× 核数调度反噬。4 shard 实测 ~1.5M。
+
+### Writer 吞吐
+| writer | ns/op | ~QPS |
+|---|---|---|
+| File（bufio）| ~750 | ~1.33M |
+| Console（pipe→discard）| ~1733 | ~577K（真实终端更慢，生产建议禁用）|
 
 ### 建议参数
 | 场景 | 配置 | 预期 |
