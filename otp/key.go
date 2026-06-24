@@ -55,7 +55,7 @@ type KeyOpts struct {
 // if rand.Read failed returns empty string.
 func RandomSecret(length int) (secret string) {
 	secretB := make([]byte, length)
-	gen, err := rand.Read(secretB)
+	gen, err := DefaultRandomReader.Read(secretB)
 	if err != nil || gen != length {
 		return secret
 	}
