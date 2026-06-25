@@ -2,7 +2,12 @@ package log4go
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -55,4 +60,122 @@ func Test_ShardLogger_Distributes(t *testing.T) {
 	s.Warn("w %d", 3)
 	s.Error("e %d", 4)
 	_ = runtime.NumGoroutine
+}
+
+// Test_ShardLogger_RegisterFileWriterPanics verifies the Bug 1 guard: handing a
+// single *FileWriter to ShardLogger.Register is rejected loudly (it would race
+// the same bufio/file/daemon across shards and corrupt output).
+func Test_ShardLogger_RegisterFileWriterPanics(t *testing.T) {
+	s := NewShardLogger(2)
+	defer s.Close()
+	fw := NewFileWriterWithOptions(FileWriterOptions{
+		Enable: true, Level: LevelFlagDebug,
+		Filename: filepath.Join(t.TempDir(), "shared-%Y%M%D.log"),
+		Rotate:   true, Daily: true, Async: true,
+	})
+	defer func() {
+		if rec := recover(); rec == nil {
+			t.Fatal("expected Register(*FileWriter) to panic, it did not")
+		}
+	}()
+	s.Register(fw) // must panic
+}
+
+// Test_ShardLogger_RegisterFunc_IndependentFileWriters is the Bug 1 regression:
+// each shard gets its OWN async FileWriter (independent bufio/file/daemon) via a
+// factory, so concurrent writes across shards never race a shared writer.
+// Verifies (a) no data race under -race, (b) every shard's file is created and
+// non-empty, (c) every written line is well-formed (no interleaved corruption).
+func Test_ShardLogger_RegisterFunc_IndependentFileWriters(t *testing.T) {
+	dir := t.TempDir()
+	const shards = 4
+	s := NewShardLogger(shards)
+
+	// Factory: each shard gets a DISTINCT file and its own FileWriter instance
+	// with its own daemon + bufio + *os.File. This is the only correct way to
+	// fan disk writes across shards.
+	var shardIdx int32
+	s.RegisterFunc(func() Writer {
+		id := atomic.AddInt32(&shardIdx, 1)
+		return NewFileWriterWithOptions(FileWriterOptions{
+			Enable:   true,
+			Level:    LevelFlagInfo,
+			Filename: filepath.Join(dir, fmt.Sprintf("shard%d-%%Y%%M%%D.log", id)),
+			Rotate:   true,
+			Daily:    true,
+			Async:    true,
+			// reasonably sized buffer so the daemon keeps up under the burst
+			AsyncBufferSize: 1 << 13,
+			BufferSize:      1 << 13,
+			OverflowPolicy:  "drop",
+		})
+	})
+
+	var closeOnce sync.Once
+	defer func() { closeOnce.Do(func() { s.Close() }) }()
+
+	// Count how many writers actually got created (one per shard).
+	var writerCount int32
+	for _, l := range s.loggers {
+		writerCount += int32(len(l.snapshotWriters()))
+	}
+	if writerCount != int32(shards) {
+		t.Fatalf("expected %d independent writers (one per shard), got %d", shards, writerCount)
+	}
+
+	// Concurrent producers across shards.
+	const perWorker = 4000
+	const workers = 4
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < perWorker; i++ {
+				s.Info("worker=%d i=%d", id, i)
+			}
+		}(w)
+	}
+	wg.Wait()
+	// Close flushes each shard's FileWriter daemon to disk. Must run before the
+	// file assertions so buffered data is on disk.
+	closeOnce.Do(func() { s.Close() })
+
+	// Every shard's file exists and is non-empty; every line is well-formed.
+	matches, err := filepath.Glob(filepath.Join(dir, "shard*-*.log"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(matches) != shards {
+		t.Fatalf("expected %d shard log files, got %d (%v)", shards, len(matches), matches)
+	}
+	var totalLines int
+	for _, m := range matches {
+		info, err := os.Stat(m)
+		if err != nil {
+			t.Fatalf("stat %s: %v", m, err)
+		}
+		if info.Size() == 0 {
+			t.Fatalf("shard log %s is empty (writer did not flush)", m)
+		}
+		data, err := os.ReadFile(m)
+		if err != nil {
+			t.Fatalf("read %s: %v", m, err)
+		}
+		lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+		for _, ln := range lines {
+			if ln == "" {
+				continue
+			}
+			// Each line must contain the canonical level marker; a corrupted
+			// interleave would fragment it.
+			if !strings.Contains(ln, "[INFO]") || !strings.Contains(ln, "worker=") {
+				t.Fatalf("corrupted log line in %s: %q", m, ln)
+			}
+			totalLines++
+		}
+	}
+	if totalLines == 0 {
+		t.Fatal("no well-formed log lines written across shards")
+	}
 }
