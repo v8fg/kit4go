@@ -338,6 +338,13 @@ type Logger struct {
 	withFuncName   atomic.Bool        // show caller func name
 	hasCaller      atomic.Bool        // capture caller (file:line); disable for max throughput
 
+	// baseFields are global static fields registered once via SetBaseField(s)
+	// and carried by EVERY record. Unlike With() (per-sub-logger), these are
+	// the "environment" fields: hostname, server_ip, app_name, env, version.
+	// Set once at startup, read on every deliverRecordToWriter (immutable
+	// after set, stored in atomic.Pointer for lock-free hot-path read).
+	baseFields atomic.Pointer[[]field]
+
 	// fields carries structured key/value pairs attached via With/WithField/
 	// WithFields. A child Logger always gets its OWN copy (see clone), so a
 	// parent's slice is never mutated and is safe to read concurrently from the
@@ -452,12 +459,45 @@ func (l *Logger) Close() {
 // SetLayout set the logger time layout
 func (l *Logger) SetLayout(layout string) {
 	v := layout
-	// Detect sub-second directives: if present, bypass the time cache so every
-	// record gets a fresh Format() (otherwise same-second records share a stale
-	// sub-second value). Check for ".0", ".9", ".000", ".999" patterns.
 	l.hasSubSecond.Store(strings.Contains(layout, ".0") || strings.Contains(layout, ".9"))
 	l.layout.Store(&v)
 }
+
+// SetBaseField registers a global static field that EVERY subsequent log
+// record will carry (merged into Record.fields). Unlike With (which returns
+// a child Logger), base fields affect the singleton and all child Loggers.
+// Use at startup for environment fields: hostname, server_ip, app_name, env.
+func (l *Logger) SetBaseField(key string, val interface{}) {
+	cur := l.baseFields.Load()
+	var next []field
+	if cur != nil {
+		next = make([]field, len(*cur)+1)
+		copy(next, *cur)
+	} else {
+		next = make([]field, 1)
+	}
+	next[len(next)-1] = field{key: key, val: val}
+	l.baseFields.Store(&next)
+}
+
+// SetBaseFields is a batch version of SetBaseField.
+func (l *Logger) SetBaseFields(m map[string]interface{}) {
+	cur := l.baseFields.Load()
+	next := make([]field, 0, len(m)+func() int { if cur != nil { return len(*cur) }; return 0 }())
+	if cur != nil {
+		next = append(next, *cur...)
+	}
+	for k, v := range m {
+		next = append(next, field{key: k, val: v})
+	}
+	l.baseFields.Store(&next)
+}
+
+// SetBaseField registers a global static field on the default logger.
+func SetBaseField(key string, val interface{}) { defaultLogger().SetBaseField(key, val) }
+
+// SetBaseFields registers global static fields on the default logger.
+func SetBaseFields(m map[string]interface{}) { defaultLogger().SetBaseFields(m) }
 
 // SetLevel set the logger level
 func (l *Logger) SetLevel(lvl int) {
@@ -812,11 +852,21 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	r.level = level
 	r.unixNano = now.UnixNano()
 	r.seq = atomic.AddUint64(&globalSeq, 1)
-	// Attach this logger's structured fields. l.fields is immutable after the
-	// With call that produced it, so sharing the backing slice across records is
-	// safe; bootstrapLogWriter resets r.fields=nil before returning the record to
-	// the pool so the reference doesn't outlive the record.
-	r.fields = l.fields
+	// Merge base fields (global static, e.g. hostname/server_ip) + logger fields
+	// (from With/WithField/WithFields) + context fields. Priority: context >
+	// logger > base (more specific wins). We append base fields first if present.
+	if bf := l.baseFields.Load(); bf != nil && len(*bf) > 0 {
+		if len(l.fields) > 0 {
+			merged := make([]field, 0, len(*bf)+len(l.fields))
+			merged = append(merged, *bf...)    // base first (lowest priority)
+			merged = append(merged, l.fields...) // logger fields override base
+			r.fields = merged
+		} else {
+			r.fields = *bf
+		}
+	} else {
+		r.fields = l.fields
+	}
 
 	// Pre-serialize once for FormatJSON so every registered writer emits the
 	// same bytes without re-marshaling. For FormatText r.jsonBytes stays nil and
