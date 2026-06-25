@@ -67,17 +67,17 @@ type KafKaWriter struct {
 	messages chan *sarama.ProducerMessage
 	options  KafKaWriterOptions
 
-	policy        OverflowPolicy
-	spiller       Spiller[*sarama.ProducerMessage]
-	stats         OverflowStats
-	sent          uint64
-	errored       uint64
+	policy  OverflowPolicy
+	spiller Spiller[*sarama.ProducerMessage]
+	stats   OverflowStats
+	sent    uint64
+	errored uint64
 	// onEvent is an optional real-time metric hook (reserved for monitoring
 	// integration). Nil disables it. Must be non-blocking.
 	onEvent         func(name string, delta int64)
 	producerFactory func(brokers []string, cfg *sarama.Config) (sarama.AsyncProducer, error)
-	drainInterval time.Duration
-	wg            sync.WaitGroup
+	drainInterval   time.Duration
+	wg              sync.WaitGroup
 
 	run  atomic.Bool // set true once the daemon starts
 	quit chan struct{}

@@ -114,7 +114,7 @@ type extractorSnapshot struct {
 }
 
 var (
-	extractorMu       sync.RWMutex
+	extractorMu          sync.RWMutex
 	extractorSnapshotRef atomic.Pointer[extractorSnapshot]
 )
 

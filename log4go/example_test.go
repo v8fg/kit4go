@@ -135,8 +135,8 @@ func Example_structuredFields() {
 // hoisted into a \"fields\" object (omitted when empty).
 func Example_jsonFormat() {
 	_ = log4go.SetupLog(log4go.LogConfig{
-		Level:  log4go.LevelFlagInfo,
-		Format: "json", // FormatJSON
+		Level:         log4go.LevelFlagInfo,
+		Format:        "json", // FormatJSON
 		ConsoleWriter: log4go.ConsoleWriterOptions{Enable: true, Level: log4go.LevelFlagInfo},
 	})
 	defer log4go.Close()

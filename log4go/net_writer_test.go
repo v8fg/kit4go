@@ -178,8 +178,8 @@ func Test_NetWriter_LazyReconnect(t *testing.T) {
 // channel is full and counts the drop.
 func Test_NetWriter_DropOnFull(t *testing.T) {
 	w := &NetWriter{
-		level:   DEBUG,
-		policy:  OverflowDrop,
+		level:    DEBUG,
+		policy:   OverflowDrop,
 		messages: make(chan *Record, 1),
 	}
 	w.messages <- &Record{level: INFO, msg: "fill"} // full

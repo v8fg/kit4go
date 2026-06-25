@@ -28,8 +28,8 @@ func Test_RecordString_FormatEquivalence(t *testing.T) {
 		{"every level", Record{level: EMERGENCY, time: "t", file: "f:0", msg: "m"}},
 	}
 	for _, c := range cases {
-		got := c.r.String()                       // production path (Builder)
-		want := recordStringSprintf(&c.r)         // original path (Sprintf)
+		got := c.r.String()               // production path (Builder)
+		want := recordStringSprintf(&c.r) // original path (Sprintf)
 		if got != want {
 			t.Fatalf("%s: mismatch\n got=%q\nwant=%q", c.name, got, want)
 		}

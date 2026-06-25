@@ -311,11 +311,11 @@ type Logger struct {
 
 	layout         atomic.Pointer[string]
 	level          atomic.Int32
-	format         atomic.Int32 // LogFormat (FormatText/FormatJSON); atomic for lock-free hot-path read
+	format         atomic.Int32       // LogFormat (FormatText/FormatJSON); atomic for lock-free hot-path read
 	recordsByLevel *[DEBUG + 1]uint64 // per-level record counters (monitoring); pointer so child Loggers share the root's counters
-	fullPath       atomic.Bool       // show full path, default only show file:line_number
-	withFuncName   atomic.Bool       // show caller func name
-	hasCaller      atomic.Bool       // capture caller (file:line); disable for max throughput
+	fullPath       atomic.Bool        // show full path, default only show file:line_number
+	withFuncName   atomic.Bool        // show caller func name
+	hasCaller      atomic.Bool        // capture caller (file:line); disable for max throughput
 
 	// fields carries structured key/value pairs attached via With/WithField/
 	// WithFields. A child Logger always gets its OWN copy (see clone), so a

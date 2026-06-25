@@ -24,8 +24,8 @@ func Test_KafKaWriter_SendDrop(t *testing.T) {
 // ring store and Drain recovers it.
 func Test_KafKaWriter_SendSpillRing(t *testing.T) {
 	w := &KafKaWriter{
-		policy:  OverflowSpill,
-		spiller: NewRingSpiller[*sarama.ProducerMessage](8),
+		policy:   OverflowSpill,
+		spiller:  NewRingSpiller[*sarama.ProducerMessage](8),
 		messages: make(chan *sarama.ProducerMessage, 1),
 	}
 	w.messages <- spillerMsg("t", "1") // full
@@ -116,7 +116,7 @@ func Test_KafKaWriter_BuildPayload(t *testing.T) {
 func Benchmark_KafKaWriter_buildPayload(b *testing.B) {
 	w := &KafKaWriter{options: KafKaWriterOptions{
 		ProducerTopic: "t",
-		MSG: KafKaMSGFields{ServerIP: "1.2.3.4", ExtraFields: map[string]interface{}{"rid": "x"}},
+		MSG:           KafKaMSGFields{ServerIP: "1.2.3.4", ExtraFields: map[string]interface{}{"rid": "x"}},
 	}}
 	r := &Record{level: INFO, msg: "benchmark message payload", file: "f.go:1"}
 	b.ReportAllocs()

@@ -302,11 +302,11 @@ func (n *NetWriter) Flush() error { return nil }
 // NetWriterMetrics is a point-in-time snapshot of NetWriter operational
 // counters for monitoring.
 type NetWriterMetrics struct {
-	Sent    uint64 // records successfully written to the conn
-	Errored uint64 // write/dial errors
-	Dropped uint64 // records dropped on write error (after dequeue)
-	Queued  int    // records currently buffered in the channel
-	SpillLen int   // records currently held in the spill store
+	Sent            uint64 // records successfully written to the conn
+	Errored         uint64 // write/dial errors
+	Dropped         uint64 // records dropped on write error (after dequeue)
+	Queued          int    // records currently buffered in the channel
+	SpillLen        int    // records currently held in the spill store
 	OverflowDropped uint64 // dropped on full channel (overflow policy)
 	OverflowSpilled uint64 // moved to the spill store (spill policy)
 }

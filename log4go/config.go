@@ -18,9 +18,9 @@ const (
 
 // LogConfig log config
 type LogConfig struct {
-	Level         string               `json:"level" mapstructure:"level"`
-	Debug         bool                 `json:"debug" mapstructure:"debug"` // output log info or not for log4go
-	FullPath      bool                 `json:"full_path" mapstructure:"full_path"`
+	Level    string `json:"level" mapstructure:"level"`
+	Debug    bool   `json:"debug" mapstructure:"debug"` // output log info or not for log4go
+	FullPath bool   `json:"full_path" mapstructure:"full_path"`
 	// Format selects the record serialization: "text" (default, human-readable
 	// line) or "json" (one JSON object per record, machine-readable). Unknown
 	// values fall back to text. See LogFormat / SetFormat.
