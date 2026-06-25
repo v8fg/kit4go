@@ -2,6 +2,7 @@ package log4go
 
 import (
 	"log"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -107,36 +108,93 @@ func (k *KafKaWriter) Init() error {
 	return k.Start()
 }
 
-// buildPayload serializes the record to a JSON payload once (no double marshal).
+// kafkaPayload is a struct with custom MarshalJSON to avoid map alloc + reflection.
+type kafkaPayload struct {
+	ESIndex   string                 `json:"es_index"`
+	Level     string                 `json:"level"`
+	File      string                 `json:"file"`
+	Message   string                 `json:"message"`
+	ServerIP  string                 `json:"server_ip"`
+	Timestamp string                 `json:"timestamp"`
+	Now       int64                  `json:"now"`
+	Fields    map[string]interface{} `json:"-"` // merged into top-level via MarshalJSON
+}
+
+// MarshalJSON: fast path (no fields) = struct direct marshal; slow path (fields) = map merge.
+// Custom MarshalJSON avoids goccy's reflection on the Fields map type.
+func (p kafkaPayload) MarshalJSON() ([]byte, error) {
+	if len(p.Fields) == 0 {
+		// fast path: no map alloc, direct struct serialization
+		buf := make([]byte, 0, 256)
+		buf = append(buf, '{')
+		buf = appendJSONString(buf, "es_index", p.ESIndex, true)
+		buf = appendJSONString(buf, "level", p.Level, true)
+		buf = appendJSONString(buf, "file", p.File, true)
+		buf = appendJSONString(buf, "message", p.Message, true)
+		buf = appendJSONString(buf, "server_ip", p.ServerIP, true)
+		buf = appendJSONString(buf, "timestamp", p.Timestamp, true)
+		buf = append(buf, `"now":`...)
+		buf = strconv.AppendInt(buf, p.Now, 10)
+		buf = append(buf, '}')
+		return buf, nil
+	}
+	// slow path: with fields, build map
+	m := make(map[string]interface{}, 8+len(p.Fields))
+	m["es_index"] = p.ESIndex
+	m["level"] = p.Level
+	m["file"] = p.File
+	m["message"] = p.Message
+	m["server_ip"] = p.ServerIP
+	m["timestamp"] = p.Timestamp
+	m["now"] = p.Now
+	for k, v := range p.Fields {
+		if _, ok := m[k]; !ok {
+			m[k] = v
+		}
+	}
+	return goccyjson.Marshal(m)
+}
+
+// appendJSONString appends "key":"val" to buf, with comma prefix if needed.
+func appendJSONString(buf []byte, key, val string, needComma bool) []byte {
+	if needComma {
+		buf = append(buf, ',')
+	}
+	buf = append(buf, '"')
+	buf = append(buf, key...)
+	buf = append(buf, '"', ':', '"')
+	buf = append(buf, val...)
+	buf = append(buf, '"')
+	return buf
+}
+
+// buildPayload serializes the record to a JSON payload once (struct path = zero map alloc).
 func (k *KafKaWriter) buildPayload(r *Record) []byte {
 	now := time.Now()
-	m := map[string]interface{}{
-		"es_index":  k.options.MSG.ESIndex,
-		"level":     LevelFlags[r.level],
-		"file":      r.file,
-		"message":   r.msg,
-		"server_ip": k.options.MSG.ServerIP,
-		"timestamp": now.Format(timestampLayout),
-		"now":       now.Unix(),
+	p := kafkaPayload{
+		ESIndex:   k.options.MSG.ESIndex,
+		Level:     LevelFlags[r.level],
+		File:      r.file,
+		Message:   r.msg,
+		ServerIP:  k.options.MSG.ServerIP,
+		Timestamp: now.Format(timestampLayout),
+		Now:       now.Unix(),
 	}
-	// hoist the record's structured fields (from Logger.With/WithField/WithFields)
-	// to the top level, never overriding built-in fields. This is the JSON
-	// equivalent of Record.String()'s trailing JSON object: trace_id, user_id,
-	// etc. attached via With show up as first-class JSON keys here.
-	for _, f := range r.fields {
-		if _, ok := m[f.key]; !ok {
-			m[f.key] = f.val
+	// only allocate Fields map if there are structured fields or ExtraFields
+	if len(r.fields) > 0 || len(k.options.MSG.ExtraFields) > 0 {
+		p.Fields = make(map[string]interface{}, len(r.fields)+len(k.options.MSG.ExtraFields))
+		for _, f := range r.fields {
+			if _, ok := p.Fields[f.key]; !ok {
+				p.Fields[f.key] = f.val
+			}
+		}
+		for fk, fv := range k.options.MSG.ExtraFields {
+			if _, ok := p.Fields[fk]; !ok {
+				p.Fields[fk] = fv
+			}
 		}
 	}
-	// hoist ExtraFields to the top level, never overriding built-in fields or
-	// record fields (record fields win over ExtraFields on key collision since
-	// they are more specific to this log line).
-	for fk, fv := range k.options.MSG.ExtraFields {
-		if _, ok := m[fk]; !ok {
-			m[fk] = fv
-		}
-	}
-	b, err := goccyjson.Marshal(m)
+	b, err := goccyjson.Marshal(p)
 	if err != nil {
 		log.Printf("[log4go] kafka writer json marshal err: %v", err.Error())
 		return nil

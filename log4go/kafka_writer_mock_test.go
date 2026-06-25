@@ -38,10 +38,19 @@ func Test_KafKaWriter_EndToEndMockProducer(t *testing.T) {
 	if err := w.Start(); err != nil {
 		t.Fatal(err)
 	}
+	time.Sleep(50 * time.Millisecond) // let daemon + mock consumer schedule
 	for i := 0; i < n; i++ {
 		if err := w.Write(&Record{level: INFO, msg: "x"}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// wait for the async daemon to drain
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if w.Metrics().Sent >= n {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
 	w.Stop() // closes producer -> mock asserts all ExpectInput satisfied
 
