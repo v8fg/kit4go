@@ -18,6 +18,26 @@ import (
 
 var pathVariableTable map[byte]func(*time.Time) int
 
+const (
+	// defaultBufferSize is the bufio.Writer size used when BufferSize <= 0.
+	// 64KB (up from 8192) cuts flush-to-disk syscall frequency ~8x under high
+	// write rates while keeping the worst-case crash-loss window small
+	// (<= 64KB of buffered, unflushed bytes). Callers wanting fewer flushes at
+	// the cost of a larger loss window can raise BufferSize explicitly.
+	defaultBufferSize = 64 << 10
+	// rotateCheckInterval bounds how often the async daemon calls rotateImpl.
+	// Real rotation only fires at minute/hour/day boundaries, so checking at
+	// most once per second preserves daily/hourly/minutely semantics (a rotate
+	// may be applied up to ~1s late, well within the finest "minutely" granular-
+	// ity) while removing the per-record time.Now()+actions-scan cost.
+	rotateCheckInterval = time.Second
+	// defaultFlushBatchSize is the number of records the async daemon writes
+	// between forced flushSync() calls when FlushBatchSize <= 0. Together with
+	// the bufio size this bounds worst-case crash loss: at most
+	// (FlushBatchSize records) + (BufferSize bytes) of unflushed data.
+	defaultFlushBatchSize = 1000
+)
+
 // FileWriter file writer for log record deal
 type FileWriter struct {
 	// write log order by order and atomic incr
@@ -26,9 +46,9 @@ type FileWriter struct {
 	lock         sync.RWMutex
 	initFileOnce sync.Once // init once
 
-	rotatePerm  os.FileMode // real used
-	perm        string      // input
-	bufferSize  int         // bufio writer size (default 8192)
+	rotatePerm os.FileMode // real used
+	perm       string      // input
+	bufferSize int         // bufio writer size (<=0 -> defaultBufferSize)
 	// input filename
 	filename string
 	// The opened file
@@ -50,6 +70,13 @@ type FileWriter struct {
 	// maxSizeCurSize int
 
 	lastWriteTime time.Time
+
+	// lastRotateCheck throttles rotateImpl calls in the async daemon. rotateImpl
+	// does time.Now() + an actions scan per record, but real rotation only fires
+	// at minute/hour/day boundaries. Checking at most once per second removes
+	// that per-record overhead from the hot path while preserving rotate
+	// semantics (daily/hourly/minutely still trigger within ~1s of the boundary).
+	lastRotateCheck time.Time
 
 	initFileOk bool
 	rotate     bool
@@ -75,9 +102,9 @@ type FileWriter struct {
 	minutelyOpenTime time.Time
 
 	// async mode (optional; default false = synchronous, backward compatible).
-	async        bool
-	asyncBufSize int
-	messages     chan *Record
+	async         bool
+	asyncBufSize  int
+	messages      chan *Record
 	policy        OverflowPolicy
 	spiller       Spiller[*Record]
 	spillType     string
@@ -85,14 +112,21 @@ type FileWriter struct {
 	spillDir      string
 	spillMaxBytes int64
 	stats         OverflowStats
-	written      uint64
-	errored      uint64
+	written       uint64
+	errored       uint64
 	flushInterval time.Duration
-	onEvent      func(name string, delta int64)
-	quit         chan struct{}
-	stop         chan struct{}
-	flushSig     chan struct{}
-	wg           sync.WaitGroup
+	// flushBatchSize forces a flushSync() every N records written by the async
+	// daemon (in addition to the time-based flushInterval ticker). <=0 uses
+	// defaultFlushBatchSize. Bounds the crash-loss window in the high-rate
+	// direction: at most flushBatchSize records + bufferSize bytes are unflushed.
+	flushBatchSize int
+	// batchSinceFlush counts writeOne records since the last batch flush; daemon-only.
+	batchSinceFlush int
+	onEvent         func(name string, delta int64)
+	quit            chan struct{}
+	stop            chan struct{}
+	flushSig        chan struct{}
+	wg              sync.WaitGroup
 }
 
 // FileWriterOptions file writer options
@@ -112,9 +146,15 @@ type FileWriterOptions struct {
 	MaxDays    int `json:"max_days" mapstructure:"max_days"`
 	MaxHours   int `json:"max_hours" mapstructure:"max_hours"`
 	MaxMinutes int `json:"max_minutes" mapstructure:"max_minutes"`
-	// BufferSize is the bufio writer size in bytes (<=0 -> 8192). A larger value
-	// reduces flush-to-disk frequency under high write rates.
+	// BufferSize is the bufio writer size in bytes (<=0 -> 64KB). A larger value
+	// reduces flush-to-disk frequency under high write rates but raises the
+	// worst-case crash-loss window (unflushed buffered bytes).
 	BufferSize int `json:"buffer_size" mapstructure:"buffer_size"`
+	// FlushBatchSize forces a bufio flush every N records written by the async
+	// daemon (<=0 -> 1000), in addition to the time-based flushInterval ticker.
+	// Bounds worst-case crash loss in the high-rate direction: at most
+	// FlushBatchSize records + BufferSize bytes are unflushed at any time.
+	FlushBatchSize int `json:"flush_batch_size" mapstructure:"flush_batch_size"`
 
 	// Async enables the async pipeline: Write delivers to a bounded channel and
 	// a daemon goroutine does bufio write + flush + rotate, isolating disk I/O
@@ -156,14 +196,15 @@ func NewFileWriterWithOptions(options FileWriterOptions) *FileWriter {
 		maxMinutes: options.MaxMinutes,
 		bufferSize: options.BufferSize,
 
-		async:         options.Async,
-		asyncBufSize:  options.AsyncBufferSize,
-		policy:        ParseOverflowPolicy(options.OverflowPolicy),
-		spillType:     options.SpillType,
-		spillSize:     options.SpillSize,
-		spillDir:      options.SpillDir,
-		spillMaxBytes: options.SpillMaxBytes,
-		flushInterval: 500 * time.Millisecond,
+		async:          options.Async,
+		asyncBufSize:   options.AsyncBufferSize,
+		policy:         ParseOverflowPolicy(options.OverflowPolicy),
+		spillType:      options.SpillType,
+		spillSize:      options.SpillSize,
+		spillDir:       options.SpillDir,
+		spillMaxBytes:  options.SpillMaxBytes,
+		flushInterval:  500 * time.Millisecond,
+		flushBatchSize: options.FlushBatchSize,
 	}
 	if err := fileWriter.SetPathPattern(options.Filename); err != nil {
 		log.Printf("[log4go] file writer init err: %v", err.Error())
@@ -175,6 +216,13 @@ func NewFileWriterWithOptions(options FileWriterOptions) *FileWriter {
 // Write file write. In async mode it delivers to a bounded channel under the
 // configured overflow policy (never spawns a goroutine per record); in sync
 // mode it writes bufio directly (backward compatible).
+//
+// In async mode the incoming *Record is owned by the caller (the logger may
+// recycle it from a pool right after this returns), while the daemon consumes
+// it later. We therefore hand the daemon a private copy so it never races the
+// caller's reuse of r. Record holds only immutable value types (strings + int),
+// so a shallow copy is sufficient and correct. (In sync mode writeOne runs to
+// completion before return, so no copy is needed.)
 func (w *FileWriter) Write(r *Record) error {
 	if r.level > w.level {
 		return nil
@@ -182,7 +230,8 @@ func (w *FileWriter) Write(r *Record) error {
 	if !w.async || w.messages == nil {
 		return w.writeSync(r)
 	}
-	w.send(r)
+	rc := *r // private copy for the daemon
+	w.send(&rc)
 	return nil
 }
 
@@ -395,7 +444,7 @@ func (w *FileWriter) rotateImpl() error {
 
 	bufSize := w.bufferSize
 	if bufSize <= 0 {
-		bufSize = 8192
+		bufSize = defaultBufferSize
 	}
 	if w.fileBufWriter = bufio.NewWriterSize(w.file, bufSize); w.fileBufWriter == nil {
 		return errors.New("fileWriter new fileBufWriter failed")
@@ -539,9 +588,22 @@ func (w *FileWriter) daemon() {
 	}
 }
 
-// writeOne rotates (by time) then writes the record to bufio.
+// writeOne rotates (by time, throttled to at most one check per second) then
+// writes the record to bufio, and every flushBatchSize records forces a
+// flushSync() to bound the crash-loss window.
+//
+// rotateImpl is only called when at least rotateCheckInterval has elapsed since
+// the last check; real rotation fires at minute/hour/day boundaries, so a <=1s
+// check cadence preserves rotate semantics while removing the per-record
+// time.Now()+actions-scan cost (the single biggest hot-path overhead under high
+// write rates). The batch-count flush bounds crash loss in the high-rate
+// direction; the time-based flushInterval ticker is the low-rate backstop.
 func (w *FileWriter) writeOne(r *Record) {
-	_ = w.rotateImpl()
+	now := time.Now()
+	if now.Sub(w.lastRotateCheck) >= rotateCheckInterval {
+		w.lastRotateCheck = now
+		_ = w.rotateImpl()
+	}
 	if w.fileBufWriter == nil {
 		atomic.AddUint64(&w.errored, 1)
 		w.fire("error", 1)
@@ -554,6 +616,18 @@ func (w *FileWriter) writeOne(r *Record) {
 	}
 	atomic.AddUint64(&w.written, 1)
 	w.fire("written", 1)
+
+	// Batch-count flush. flushBatchSize is resolved here (<=0 -> default) so the
+	// struct field stays the raw option value.
+	batchSize := w.flushBatchSize
+	if batchSize <= 0 {
+		batchSize = defaultFlushBatchSize
+	}
+	w.batchSinceFlush++
+	if w.batchSinceFlush >= batchSize {
+		w.batchSinceFlush = 0
+		_ = w.flushSync()
+	}
 }
 
 // drainSpill re-injects recovered records into the channel (non-blocking).
@@ -640,6 +714,31 @@ func (w *FileWriter) Metrics() FileWriterMetrics {
 
 // SetOnEvent installs a real-time metric hook (reserved for monitoring).
 func (w *FileWriter) SetOnEvent(fn func(name string, delta int64)) { w.onEvent = fn }
+
+// CrashLossBound reports the worst-case data loss on a sudden process crash for
+// an async FileWriter: at most this many records (plus the bufio buffer bytes)
+// can be unflushed at any instant. The bound is the configured FlushBatchSize
+// (records between forced flushes); the time-based flushInterval ticker is the
+// low-rate backstop, FlushBatchSize is the high-rate bound. The bufio buffer
+// adds up to the returned bytes of in-memory, unflushed data on top.
+//
+// Returned values resolve the <=0 defaults (FlushBatchSize<=0 -> 1000 records;
+// BufferSize<=0 -> 64KB). For a sync (non-async) writer this is not meaningful
+// (writes flush inline) and returns (0, 0).
+func (w *FileWriter) CrashLossBound() (maxRecords int, maxBufferBytes int) {
+	if !w.async {
+		return 0, 0
+	}
+	maxRecords = w.flushBatchSize
+	if maxRecords <= 0 {
+		maxRecords = defaultFlushBatchSize
+	}
+	maxBufferBytes = w.bufferSize
+	if maxBufferBytes <= 0 {
+		maxBufferBytes = defaultBufferSize
+	}
+	return maxRecords, maxBufferBytes
+}
 
 // SetAlertSink installs an alert sink (e.g. WebhookAlertSink for lark/dingtalk/
 // feishu) for overflow push notifications. Set before Start.
