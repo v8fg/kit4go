@@ -39,5 +39,46 @@
 // registered exactly once; but multi-shard fan-out, spill recovery, and Close
 // reuse are all now first-class and safe.
 //
+// # Structured logging (vs zap/zerolog parity)
+//
+// log4go now covers the structured-logging capabilities expected of a modern
+// logger, layered on a single clone() helper so child Loggers share the root's
+// records channel and metrics counter:
+//
+//   - Structured fields: Logger.With(key, val) / WithField / WithFields(map)
+//     return a child Logger carrying key/value pairs. Fields render in
+//     Record.String (trailing JSON object) and are hoisted to top-level JSON
+//     keys by KafKaWriter. No-With hot path is zero-cost.
+//
+//   - JSON format: SetFormat(FormatJSON) emits one JSON object per record
+//     ({"time","level","msg","file","fields"}). The format is decided once per
+//     record in deliverRecordToWriter and cached on r.jsonBytes, so every
+//     registered writer emits the same bytes without re-marshaling. Default
+//     encoder is goccy/go-json (~2-3x encoding/json); switch via
+//     SetJSONCodec(JSONCodecGoccy|JSONCodecStd|JSONCodecSonic).
+//
+//   - Sampling: Logger.WithSampling(initial, thereafter) drops high-frequency
+//     records per level (first initial pass, then one every thereafter).
+//     Sampled-out records are dropped BEFORE Metrics increment.
+//
+//   - context.Context: Logger.WithContext(ctx) attaches fields extracted from
+//     ctx (default probes trace/request/user/tenant keys; AddContextExtractor
+//     stacks custom extractors incl. OpenTelemetry trace/baggage with no hard
+//     otel dependency). zerolog-style binding via Logger.IntoContext /
+//     FromContext, and RequestIDMiddleware for HTTP request correlation.
+//
+//   - NetWriter (TCP/UDP) + IOWriter: additional sinks. NetWriter is async +
+//     bounded + overflow-safe (never blocks the caller on network I/O); IOWriter
+//     is a thin sync adapter for any io.Writer.
+//
+// # Net/HTTP writer performance caveat
+//
+// NetWriter (and any remote sink) is bounded by network RTT and the remote —
+// throughput is far below File/Console (~50K-200K QPS for TCP vs ~3M for async
+// File). NetWriter is async with a bounded channel + OverflowPolicy so a
+// network stall cannot back-pressure the application, but it is intended for
+// LOW-VOLUME log collection (ship to a sidecar collector). For high-throughput
+// log shipping use FileWriter + Kafka instead. See PERFORMANCE.md §13.
+//
 // SPDX-License-Identifier: MIT
 package log4go

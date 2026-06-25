@@ -6,6 +6,8 @@ package log4go_test
 // logging once at startup.
 
 import (
+	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -107,4 +109,102 @@ func Example_metrics() {
 	m := log4go.Metrics()
 	_ = m.Records[log4go.INFO]
 	_ = m.Records[log4go.WARNING]
+}
+
+// Example_structuredFields shows With/WithField/WithFields building a
+// request-scoped child logger. Fields render as a trailing JSON object on the
+// text format (and as top-level keys in FormatJSON / KafKaWriter).
+func Example_structuredFields() {
+	_ = log4go.SetupLog(log4go.LogConfig{
+		Level:         log4go.LevelFlagInfo,
+		ConsoleWriter: log4go.ConsoleWriterOptions{Enable: true, Level: log4go.LevelFlagInfo},
+	})
+	defer log4go.Close()
+
+	// chainable; each With returns a new child, parent is unaffected
+	reqLog := log4go.With("trace_id", "t-123").WithField("user_id", 42)
+	reqLog.Info("request handled")
+	reqLog.With("route", "/api/v1").Info("routed") // adds route on top
+
+	// WithFields attaches a whole map in one clone
+	log4go.WithFields(map[string]interface{}{"k1": "v1", "k2": 2}).Info("batch fields")
+}
+
+// Example_jsonFormat shows structured JSON output (one JSON object per record),
+// the convention Fluentd/Filebeat expect. Time uses the ISO layout; fields are
+// hoisted into a \"fields\" object (omitted when empty).
+func Example_jsonFormat() {
+	_ = log4go.SetupLog(log4go.LogConfig{
+		Level:  log4go.LevelFlagInfo,
+		Format: "json", // FormatJSON
+		ConsoleWriter: log4go.ConsoleWriterOptions{Enable: true, Level: log4go.LevelFlagInfo},
+	})
+	defer log4go.Close()
+
+	log4go.With("trace_id", "t-9").Info("json line")
+	// {"time":"2026-06-25T15:04:05.000+0800","level":"INFO","msg":"json line",
+	//  "file":"example_test.go:NN","fields":{"trace_id":"t-9"}}
+}
+
+// Example_sampling shows WithSampling protecting against a log storm: the first
+// 10 records pass, then one every 100 thereafter. Sampled-out records are
+// dropped before Metrics increment.
+func Example_sampling() {
+	_ = log4go.SetupLog(log4go.LogConfig{
+		Level:         log4go.LevelFlagInfo,
+		ConsoleWriter: log4go.ConsoleWriterOptions{Enable: false},
+	})
+	defer log4go.Close()
+
+	sampled := log4go.WithSampling(10, 100)
+	for i := 0; i < 1000; i++ {
+		sampled.Info("high-frequency event %d", i)
+	}
+}
+
+// Example_contextBinding shows the zerolog-style pattern: a middleware binds a
+// request-scoped logger onto the context; handlers recover it via FromContext so
+// every line carries the request id automatically.
+func Example_contextBinding() {
+	_ = log4go.SetupLog(log4go.LogConfig{
+		Level:         log4go.LevelFlagInfo,
+		ConsoleWriter: log4go.ConsoleWriterOptions{Enable: true, Level: log4go.LevelFlagInfo},
+	})
+	defer log4go.Close()
+
+	// \"middleware\": build a logger, store it on the context
+	reqLog := log4go.With("request_id", "r-1")
+	ctx := reqLog.IntoContext(context.Background())
+
+	// \"handler\": recover and log through it (carries request_id)
+	log4go.FromContext(ctx).Info("handled request")
+}
+
+// Example_requestIDMiddleware shows the HTTP middleware: it resolves a request
+// id (inbound header or generated), binds a child logger, and handlers log via
+// FromContext.
+func Example_requestIDMiddleware() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// every log line here carries request_id automatically
+		log4go.FromContext(r.Context()).Info("served")
+	})
+	// wrap with the request-id middleware
+	handler := log4go.RequestIDMiddleware(mux, log4go.RequestIDMiddlewareOpts{})
+	_ = handler
+	// http.ListenAndServe(":8080", handler)
+}
+
+// Example_netWriter shows shipping logs to a remote TCP collector. NetWriter is
+// async + bounded + overflow-safe, so a slow/down remote never blocks the
+// application. See PERFORMANCE.md for the net-throughput caveat.
+func Example_netWriter() {
+	nw := log4go.NewNetWriter(log4go.NetWriterOptions{
+		Network: "tcp", Address: "collector.internal:514",
+		BufferSize: 1024, OverflowPolicy: "drop", Timeout: 3 * time.Second,
+	})
+	log4go.Register(nw)
+	defer log4go.Close()
+
+	log4go.Info("shipped to collector")
 }
