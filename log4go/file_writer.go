@@ -127,6 +127,15 @@ type FileWriter struct {
 	stop            chan struct{}
 	flushSig        chan struct{}
 	wg              sync.WaitGroup
+	// closing is set (atomic) BEFORE Stop closes the messages channel. Once set,
+	// producers (send) stop attempting to enqueue and the daemon's drainSpill
+	// stops re-injecting into messages, so nothing sends on messages after it is
+	// closed. This closes the spill-policy shutdown race: without it the flush
+	// ticker's drainSpill branch could select over the !ok receive and send on a
+	// closed channel (panic), and in-flight OverflowBlock producers would block
+	// forever or panic. drainSpillAll (the shutdown path) bypasses messages
+	// entirely and writes directly, so it is unaffected.
+	closing atomic.Bool
 }
 
 // FileWriterOptions file writer options
@@ -484,13 +493,33 @@ func convertPatternToFmt(pattern []byte) string {
 }
 
 // send delivers a record under the overflow policy (drop/block/spill).
+//
+// Shutdown safety: Stop sets w.closing and closes w.stop, but NEVER closes
+// w.messages (see Stop docs). So send can never panic on a closed channel. The
+// closing fast path drops records once shutdown begins (keeping Stop bounded),
+// and every send also selects on w.stop so an OverflowBlock producer is
+// unblocked when the daemon is winding down instead of waiting forever on a
+// channel the daemon has stopped consuming.
 func (w *FileWriter) send(r *Record) {
+	if w.closing.Load() {
+		w.stats.IncDropped()
+		w.fire("drop", 1)
+		return
+	}
 	switch w.policy {
 	case OverflowBlock:
-		w.messages <- r
+		select {
+		case w.messages <- r:
+		case <-w.stop:
+			w.stats.IncDropped()
+			w.fire("drop", 1)
+		}
 	case OverflowSpill:
 		select {
 		case w.messages <- r:
+		case <-w.stop:
+			w.stats.IncDropped()
+			w.fire("drop", 1)
 		default:
 			if w.spiller != nil && w.spiller.Push(r) {
 				w.stats.IncSpilled()
@@ -503,6 +532,9 @@ func (w *FileWriter) send(r *Record) {
 	default: // OverflowDrop
 		select {
 		case w.messages <- r:
+		case <-w.stop:
+			w.stats.IncDropped()
+			w.fire("drop", 1)
 		default:
 			w.stats.IncDropped()
 			w.fire("drop", 1)
@@ -524,6 +556,7 @@ func (w *FileWriter) startDaemon() {
 	}
 	w.messages = make(chan *Record, size)
 	w.quit = make(chan struct{})
+	w.stop = make(chan struct{})
 	w.flushSig = make(chan struct{}, 1)
 	if w.policy == OverflowSpill {
 		switch w.spillType {
@@ -564,6 +597,14 @@ func (w *FileWriter) startDaemon() {
 
 // daemon consumes the channel: writes bufio, flushes on tick/signal, rotates by
 // time, and drains the spiller.
+//
+// Shutdown is driven by w.stop (closed by Stop), NOT by closing w.messages.
+// This is the key to the race-free shutdown: nothing ever closes messages, so
+// there is no close-vs-send race. When stop fires the daemon drains everything
+// still queued in messages (non-blocking), writes the spiller directly via
+// drainSpillAll, flushes, signals quit, and exits. drainSpill (the
+// re-inject-from-spiller path) is gated on closing so it never runs during
+// shutdown, avoiding any send while the daemon is winding down.
 func (w *FileWriter) daemon() {
 	defer w.wg.Done()
 	ticker := time.NewTicker(w.flushInterval)
@@ -572,7 +613,9 @@ func (w *FileWriter) daemon() {
 		select {
 		case r, ok := <-w.messages:
 			if !ok {
-				w.drainSpillAll()
+				// Defensive: messages should never be closed in normal operation
+				// (Stop does not close it). If it ever is, treat as shutdown.
+				w.drainQueuedAndSpill()
 				_ = w.flushSync()
 				w.quit <- struct{}{}
 				return
@@ -584,6 +627,30 @@ func (w *FileWriter) daemon() {
 		case <-w.flushSig:
 			_ = w.flushSync()
 			w.drainSpill()
+		case <-w.stop:
+			w.drainQueuedAndSpill()
+			_ = w.flushSync()
+			w.quit <- struct{}{}
+			return
+		}
+	}
+}
+
+// drainQueuedAndSpill writes everything still pending at shutdown: all records
+// left in the messages channel (non-blocking drain) then the entire spill store
+// (directly via writeOne, bypassing messages). Called only from the daemon on
+// shutdown, so no concurrent writeOne.
+func (w *FileWriter) drainQueuedAndSpill() {
+	for {
+		select {
+		case r, ok := <-w.messages:
+			if !ok {
+				return
+			}
+			w.writeOne(r)
+		default:
+			w.drainSpillAll()
+			return
 		}
 	}
 }
@@ -630,8 +697,16 @@ func (w *FileWriter) writeOne(r *Record) {
 	}
 }
 
-// drainSpill re-injects recovered records into the channel (non-blocking).
+// drainSpill re-injects recovered records into the channel (non-blocking). It
+// is called from the daemon's flush-ticker / flush-signal branches. Once Stop
+// has set closing, drainSpill is a no-op: the shutdown path is handled by
+// drainSpillAll (which writes directly via writeOne, bypassing messages), so
+// re-injecting here would race close(w.messages) — the original spill-shutdown
+// send-on-closed bug.
 func (w *FileWriter) drainSpill() {
+	if w.closing.Load() {
+		return
+	}
 	if w.spiller == nil || w.spiller.Len() == 0 {
 		return
 	}
@@ -662,13 +737,29 @@ func (w *FileWriter) flushSync() error {
 	return nil
 }
 
-// Stop gracefully shuts the async daemon: closes the channel, waits for the
-// daemon to drain + flush, then closes the spiller and file.
+// Stop gracefully shuts the async daemon.
+//
+// Race-free ordering (the spill-policy shutdown fix):
+//  1. closing=true -> new producers (send) and the daemon's drainSpill stop
+//     touching messages immediately; drainSpill returns early so it can never
+//     re-inject into messages during shutdown.
+//  2. close(stop)  -> unblocks any producer waiting in send, AND wakes the
+//     daemon's shutdown branch.
+//  3. wait <-quit   -> the daemon has drained every queued message + the entire
+//     spill store (written directly via writeOne), flushed bufio, and exited.
+//
+// Crucially Stop NEVER closes w.messages — nothing does. Closing it would race
+// any concurrent send (close-vs-send is a true memory race and send-on-closed
+// panics). Since closing=true gates send's fast path and the daemon drains all
+// pending records before exiting, leaving messages open is correct: any record a
+// racing producer slipped in after closing was set is either drained by the
+// daemon or left in an unbuffered-to-GC channel (no panic, no race).
 func (w *FileWriter) Stop() {
 	if !w.async || w.messages == nil {
 		return
 	}
-	close(w.messages)
+	w.closing.Store(true)
+	close(w.stop)
 	<-w.quit
 	w.messages = nil
 	if w.spiller != nil {
