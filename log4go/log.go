@@ -176,6 +176,13 @@ type Record struct {
 	time  string
 	file  string
 	msg   string
+	// unixNano is the wall-clock nanosecond timestamp (time.Now().UnixNano()),
+	// populated in deliverRecordToWriter for strict ordering. Consumers (ELK/Grafana)
+	// sort by seq then unixNano to reconstruct exact log order.
+	unixNano int64
+	// seq is a process-global monotonic counter (atomic). Together with unixNano
+	// it forms a globally unique ordering key: two records never share the same seq.
+	seq uint64
 	// fields carries Logger-attached structured fields. nil for the common
 	// no-With path (zero alloc overhead on the hot path). Record.String appends
 	// them as a trailing JSON object; KafKaWriter.buildPayload hoists them into
@@ -188,6 +195,12 @@ type Record struct {
 	// Reset to nil by the bootstrap goroutine before returning to the pool.
 	jsonBytes []byte
 }
+
+// globalSeq is the process-global monotonic record sequence counter.
+// Incremented atomically in deliverRecordToWriter so that even under high
+// concurrency (multi-goroutine, multi-core), every record gets a unique seq
+// that reflects its logical creation order.
+var globalSeq uint64
 
 // FieldsJSON returns the record's structured fields marshaled to a JSON object
 // (e.g. `{"trace_id":"abc","user":42}`). Returns "" when there are no fields,
@@ -212,11 +225,13 @@ func (r *Record) FieldsJSON() string {
 // FormatJSON. Fields is nil when no structured fields are attached so the JSON
 // omits the key (the omitempty makes the line shorter for the common case).
 type RecordJSON struct {
-	Time   string                 `json:"time"`
-	Level  string                 `json:"level"`
-	Msg    string                 `json:"msg"`
-	File   string                 `json:"file,omitempty"`
-	Fields map[string]interface{} `json:"fields,omitempty"`
+	UnixNano int64                  `json:"unix_nano"`
+	Seq      uint64                 `json:"seq"`
+	Time     string                 `json:"time"`
+	Level    string                 `json:"level"`
+	Msg      string                 `json:"msg"`
+	File     string                 `json:"file,omitempty"`
+	Fields   map[string]interface{} `json:"fields,omitempty"`
 }
 
 // JSON serializes the record to a single JSON object terminated by a newline
@@ -262,8 +277,12 @@ func (r *Record) JSON() []byte {
 // without With pay no extra cost.
 func (r *Record) String() string {
 	var b strings.Builder
-	// Pre-size to avoid regrowth; the +7 covers " [" + "] <" + "> " + "\n".
-	b.Grow(len(r.time) + len(LevelFlags[r.level]) + len(r.file) + len(r.msg) + 7)
+	// Pre-size; +20 covers "#<seq> " + " [" + "] <" + "> " + "\n".
+	b.Grow(len(r.time) + len(LevelFlags[r.level]) + len(r.file) + len(r.msg) + 20)
+	// seq prefix for strict ordering in text format
+	b.WriteString("#")
+	b.WriteString(strconv.FormatUint(r.seq, 10))
+	b.WriteByte(' ')
 	b.WriteString(r.time)
 	b.WriteString(" [")
 	b.WriteString(LevelFlags[r.level])
@@ -777,6 +796,8 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	r.file = fileStr
 	r.time = lastTimeStr
 	r.level = level
+	r.unixNano = now.UnixNano()
+	r.seq = atomic.AddUint64(&globalSeq, 1)
 	// Attach this logger's structured fields. l.fields is immutable after the
 	// With call that produced it, so sharing the backing slice across records is
 	// safe; bootstrapLogWriter resets r.fields=nil before returning the record to
@@ -790,9 +811,11 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	// logger's text layout, per the structured-logging convention.
 	if LogFormat(l.format.Load()) == FormatJSON {
 		rJSON := RecordJSON{
-			Level: LevelFlags[level],
-			Msg:   msg,
-			File:  fileStr,
+			UnixNano: r.unixNano,
+			Seq:      r.seq,
+			Level:    LevelFlags[level],
+			Msg:      msg,
+			File:     fileStr,
 		}
 		// JSON time prefers the canonical timestampLayout; fall back to the
 		// logger's text-layout time if formatting fails (never happens for the

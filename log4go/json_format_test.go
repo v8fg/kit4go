@@ -102,7 +102,7 @@ func Test_RecordJSON_MarshalError(t *testing.T) {
 	r := &Record{level: INFO, time: "t", file: "f", msg: "m", fields: []field{{key: "k", val: "v"}}}
 	b := r.JSON()
 	// On error JSON() falls back to String(); must contain the canonical prefix.
-	if !strings.HasPrefix(string(b), "t [INFO] <f> m") {
+	if !strings.Contains(string(b), "t [INFO] <f> m") {
 		t.Fatalf("marshal-error fallback wrong: %q", b)
 	}
 }

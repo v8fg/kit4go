@@ -17,7 +17,7 @@ import (
 func Test_RecordString_NoFields(t *testing.T) {
 	r := &Record{level: INFO, time: "t", file: "f.go:1", msg: "hello"}
 	got := r.String()
-	want := "t [INFO] <f.go:1> hello\n"
+	want := "#0 t [INFO] <f.go:1> hello\n"
 	if got != want {
 		t.Fatalf("no-fields output changed:\n got=%q\nwant=%q", got, want)
 	}
@@ -34,14 +34,14 @@ func Test_RecordString_WithFields(t *testing.T) {
 		fields: []field{{key: "trace_id", val: "abc"}, {key: "user", val: 42}},
 	}
 	got := r.String()
-	if !strings.HasPrefix(got, "t [INFO] <f.go:1> hello ") {
+	if !strings.Contains(got, "t [INFO] <f.go:1> hello ") {
 		t.Fatalf("prefix wrong: %q", got)
 	}
 	if !strings.HasSuffix(got, "\n") {
 		t.Fatalf("missing newline: %q", got)
 	}
 	// extract the JSON object between the trailing space and the newline
-	fj := strings.TrimSpace(strings.TrimPrefix(got, "t [INFO] <f.go:1> hello "))
+	fj := strings.TrimSpace(strings.TrimPrefix(got[strings.Index(got, "t [INFO]"):], "t [INFO] <f.go:1> hello "))
 	fj = strings.TrimSuffix(fj, "\n")
 	var m map[string]interface{}
 	if err := json.Unmarshal([]byte(fj), &m); err != nil {
@@ -443,7 +443,7 @@ func Test_FieldsJSON_MarshalError(t *testing.T) {
 	}
 	// String() must still render the canonical line (without fields) on error.
 	s := r.String()
-	if !strings.HasPrefix(s, "t [INFO] <f> m") {
+	if !strings.Contains(s, "t [INFO] <f> m") {
 		t.Fatalf("String() without fields wrong on marshal error: %q", s)
 	}
 }

@@ -9,7 +9,7 @@ import (
 // recordStringSprintf reproduces the pre-optimization Record.String body for a
 // byte-for-byte equivalence check against the current (strings.Builder) path.
 func recordStringSprintf(r *Record) string {
-	return fmt.Sprintf("%s [%s] <%s> %s\n", r.time, LevelFlags[r.level], r.file, r.msg)
+	return fmt.Sprintf("#%d %s [%s] <%s> %s\n", r.seq, r.time, LevelFlags[r.level], r.file, r.msg)
 }
 
 // Test_RecordString_FormatEquivalence guards the format-preserving invariant of
