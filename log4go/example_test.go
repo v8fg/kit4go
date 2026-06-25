@@ -298,3 +298,64 @@ func Example_kafkaToES() {
 	//     # or dynamic daily index derived from the record timestamp:
 	//     # index: "adx-logs-%{+YYYY.MM.dd}"
 }
+
+// Example_multiWriterAlerts shows one logger fanning out to several destinations
+// at different severities — the multi-sink routing pattern. Each Writer filters
+// by its own level, so a single log call is delivered to exactly the right
+// sinks:
+//
+//	kafka  (INFO+)  → full volume, async + spill-to-ring, feeds the Kafka→ES
+//	                  pipeline (see Example_kafkaToES)
+//	net    (WARN+)  → hot lines to a TCP/UDP collector
+//	webhook(ERROR+) → severe lines only, pushed to lark/dingtalk
+//
+// The webhook layers two trigger controls on top of its ERROR level: a Filter
+// (only forward records the predicate accepts) and a RateAlerter gate (forward
+// at most ~once/min once errors exceed 10/min — storm suppression). defer
+// log4go.Close() flushes every writer and, because WebhookWriter implements
+// io.Closer, also stops the webhook sink daemon.
+func Example_multiWriterAlerts() {
+	// 1) Kafka — INFO+, full volume, burst-safe (spill-to-ring on backpressure).
+	kafka := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+		Enable:         true,
+		Level:          log4go.LevelFlagInfo,
+		Brokers:        []string{"kafka-1:9092"},
+		ProducerTopic:  "app-logs",
+		BufferSize:     1 << 14,
+		OverflowPolicy: "spill",
+		SpillType:      "ring",
+		SpillSize:      1 << 16,
+	})
+	log4go.Register(kafka)
+
+	// 2) Net — WARN+ to a TCP collector (async, bounded, drop-on-full).
+	nw := log4go.NewNetWriter(log4go.NetWriterOptions{
+		Network:        "tcp",
+		Address:        "collector.internal:514",
+		Level:          log4go.LevelFlagWarning,
+		BufferSize:     1024,
+		OverflowPolicy: "drop",
+	})
+	log4go.Register(nw)
+
+	// 3) Webhook — ERROR+ to lark, with a filter + a rate gate.
+	sink := log4go.NewWebhookAlertSink(
+		"https://oapi.example.com/lark/xxx", 256, log4go.LarkTextFormatter(""))
+	sink.SetRateLimit(5)  // sink-level guard: at most 5 posts/sec
+	sink.SetMaxRetries(2) // retry a failed post twice
+
+	webhook := log4go.NewWebhookWriter(sink, log4go.WebhookWriterOptions{
+		Level: log4go.LevelFlagError,
+		Filter: func(r *log4go.Record) bool {
+			return true // e.g. only a domain tag; true = forward every ERROR+
+		},
+		Gate: log4go.NewRateAlerter(time.Minute, 10), // app-level: >=10/min, ~1 fire/min
+	})
+	log4go.Register(webhook)
+
+	defer log4go.Close() // flushes kafka/net; closes the webhook sink
+
+	log4go.Info("started")         // → kafka only
+	log4go.Warn("cache degraded")  // → kafka + net
+	log4go.Error("payment failed") // → kafka + net + webhook (if past threshold)
+}

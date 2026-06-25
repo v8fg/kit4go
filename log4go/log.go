@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"path"
 	"runtime"
@@ -461,6 +462,15 @@ func (l *Logger) Close() {
 	for _, w := range l.snapshotWriters() {
 		if f, ok := w.(Flusher); ok {
 			if err := f.Flush(); err != nil {
+				log.Println(err)
+			}
+		}
+		// Writers that own an async daemon with a Close() error (e.g.
+		// WebhookWriter wrapping a WebhookAlertSink) are shut down here, so a
+		// single defer log4go.Close() cleans up every sink. Writers without a
+		// Close() error (Console/File/Kafka/Net, which use Stop()) are skipped.
+		if c, ok := w.(io.Closer); ok {
+			if err := c.Close(); err != nil {
 				log.Println(err)
 			}
 		}

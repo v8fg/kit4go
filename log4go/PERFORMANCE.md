@@ -350,6 +350,32 @@ Kafka `Write` 热路径 = `buildPayload`（288ns 无字段 / 522ns 含 1 字段 
 - **连接超时 + 重连退避**（NetWriter）：`Timeout`（默认 3s）设 `SetWriteDeadline`；写失败关连接，下条 record lazy 重连（`ReconnectBackoff` 默认 1s）。
 - **JSON/Text 自适应**：`Logger.format=FormatJSON` 时 File/Console/Net/IO 直接发 `r.jsonBytes`（零额外序列化）；Kafka buildPayload 仍独立序列化（兼容其顶层 hoist 语义）。
 
+### 12.6 多目的地告警（WebhookWriter + RateAlerter）
+
+一个 logger 可注册多个 writer，**各自带 level 过滤**，实现多目的地不同级别分发（对标 zap `Tee` + logrus `Hook`）：
+
+| 目的地 | 级别 | 说明 |
+|---|---|---|
+| KafKaWriter | INFO+ | 全量 → Kafka→ES（buildPayload 手动 append，见 §12） |
+| NetWriter | WARN+ | 热线 → TCP/UDP 收集器 |
+| WebhookWriter | ERROR+ | 仅严重错误 → lark/dingtalk/wechat |
+
+**WebhookWriter** 把 `AlertSink`（`WebhookAlertSink`，已带异步/重试/限流）包成 Writer，三层可组合触发：
+- **级别**（始终）：`r.level <= w.level` 才转发；
+- **Filter**（可选）：`func(*Record) bool` 谓词，关键字/字段命中才发；
+- **Gate**（可选）：`*RateAlerter` 阈值门控，超阈值才放行（防风暴/阈值汇总）。
+
+实测热路径（mock sink，Apple M5）：
+
+| 场景 | ns/op | allocs | 说明 |
+|---|---|---|---|
+| PassThrough（级别+filter+gate 全过 → Send） | 71 | 0 | gate.Allow() 占大头（一次锁） |
+| LevelSkip（级别不过，快速跳过） | 3.7 | 0 | 仅一次整数比较 |
+
+零分配，不成为吞吐瓶颈。`Logger.Close()` 经 `io.Closer` 路径自动关闭 WebhookWriter 的 sink daemon，`defer log4go.Close()` 一次清理全部。
+
+**RateAlerter**：秒级桶环形数组滑动窗口，`Allow()` O(1) 摊销、无 per-event 分配，可安全挂热路径。`NewRateAlerter(window, threshold)` + `SetCooldown`。
+
 ## 13. 各 Writer 内存占用（100K 条，MemPerWriter，Go 1.26.0）
 
 > 数据来源：`Test_MemPerWriter`（每个 writer 直接 Write 100K 条，前后各一次 GC，取 HeapAlloc/HeapInuse delta）。接收端 I/O 噪音隔离（同 §12）。**所有 writer 100K 条 HeapAlloc < 0.05MB**——records/channel 有界 + Record 池复用 + spiller 有界，高 QPS 下内存不飙升。
