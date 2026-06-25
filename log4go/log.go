@@ -3,7 +3,6 @@ package log4go
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"path"
@@ -50,10 +49,13 @@ const (
 	timestampLayout = "2006-01-02T15:04:05.000+0800"
 )
 
-// jsonMarshal is a package-level indirection over json.Marshal so tests can
-// inject a failing encoder to exercise the error branch of FieldsJSON without
-// depending on a value json.Marshal rejects. nil in production.
-var jsonMarshal = json.Marshal
+// jsonMarshal is the JSON marshal entry point used everywhere log4go serializes
+// JSON (Record.JSON, FieldsJSON, KafKaWriter payload, deliverRecordToWriter).
+// It defaults to jsonMarshalEncode (the codec-aware function — goccy by
+// default, switchable via SetJSONCodec). Tests override it to inject a failing
+// encoder for the marshal-error paths. NOTE: test overrides bypass the codec
+// selection, which is fine — they only exercise the error branch.
+var jsonMarshal = jsonMarshalEncode
 
 // LevelFlags level Flags set
 var (
