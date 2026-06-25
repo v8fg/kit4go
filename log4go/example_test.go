@@ -208,3 +208,93 @@ func Example_netWriter() {
 
 	log4go.Info("shipped to collector")
 }
+
+// Example_kafkaWriter ships logs to Kafka via the async, bounded, overflow-safe
+// KafKaWriter. BufferSize bounds the in-flight channel; under sustained pressure
+// OverflowPolicy="spill" with SpillType="ring" absorbs bursts in an in-memory
+// ring (re-sent once Kafka recovers) instead of dropping records or blocking the
+// application. This is the foundation for Example_kafkaToES.
+func Example_kafkaWriter() {
+	kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+		Enable:         true,
+		Level:          log4go.LevelFlagInfo,
+		Brokers:        []string{"kafka-1:9092", "kafka-2:9092"},
+		ProducerTopic:  "app-logs",
+		BufferSize:     1 << 14, // 16384 in-flight records
+		OverflowPolicy: "spill", // burst absorption (no drop, no OOM)
+		SpillType:      "ring",
+		SpillSize:      1 << 16,
+	})
+	log4go.Register(kw)
+	defer log4go.Close()
+
+	log4go.Info("shipped to kafka")
+}
+
+// Example_kafkaToES shows the end-to-end Kafka→Elasticsearch pipeline:
+//
+//	app (log4go) ──KafKaWriter──▶ Kafka ──Filebeat/Logstash──▶ Elasticsearch
+//
+// Field management is unified with Base Fields: SetBaseFields registers the
+// global static fields (hostname/server_ip/app/env) every record carries, and
+// es_index is set as a Base Field so the Kafka payload itself names the target
+// ES index — the consumer routes on it with no extra parsing. The payload also
+// carries the strict-ordering keys (unix_nano + seq), so ES sorts by seq then
+// unix_nano to reconstruct exact emit order across partitions/cores.
+//
+// The legacy KafKaMSGFields (MSG.ServerIP / MSG.ESIndex / MSG.ExtraFields) is
+// kept only as a fallback: a Base Field of the same key always wins, so prefer
+// SetBaseField(s) for new code.
+func Example_kafkaToES() {
+	// 1) global static fields — set once at startup, carried by EVERY record.
+	//    Base fields propagate to child loggers built via With, so a
+	//    With("trace_id",…).Info(…) line also carries hostname/server_ip/… .
+	log4go.SetBaseFields(map[string]interface{}{
+		"hostname":  "adx-prod-01",
+		"server_ip": "10.0.1.5",
+		"app":       "adx-dsp",
+		"env":       "prod",
+	})
+	// es_index routes the record to its ES index. Static here; for time-sharded
+	// indices (adx-logs-2026.06.26) prefer computing it on the consumer side
+	// from @timestamp (see Filebeat config below) so the index rolls daily
+	// without an app redeploy.
+	log4go.SetBaseField("es_index", "adx-logs-2026.06")
+
+	// 2) Kafka writer — async, bounded, spill-to-ring on backpressure.
+	kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+		Enable:         true,
+		Level:          log4go.LevelFlagInfo,
+		Brokers:        []string{"kafka-1:9092"},
+		ProducerTopic:  "adx-logs",
+		BufferSize:     1 << 14,
+		OverflowPolicy: "spill",
+		SpillType:      "ring",
+		SpillSize:      1 << 16,
+	})
+	log4go.Register(kw)
+	defer log4go.Close()
+
+	// 3) per-request business fields via With (a child logger).
+	reqLog := log4go.With("trace_id", "a1b2c3")
+	reqLog.Info("bid won")
+
+	// Kafka record value (one JSON object — field order is fixed for the
+	// framework/routing keys; user-field order follows map iteration):
+	//
+	//   {"unix_nano":1782392990123456789,"seq":42,"level":"INFO",
+	//    "message":"bid won","timestamp":"2026-06-26T12:00:00.123456+08:00",
+	//    "now":1782392990,
+	//    "server_ip":"10.0.1.5","es_index":"adx-logs-2026.06",
+	//    "hostname":"adx-prod-01","app":"adx-dsp","env":"prod","trace_id":"a1b2c3"}
+	//
+	// Filebeat consumer — route on es_index, or roll daily from @timestamp:
+	//
+	//   kafka: { topics: [adx-logs], group_id: filebeat }
+	//   output.elasticsearch:
+	//     indices:
+	//       - index: "adx-logs-2026.06"
+	//         when.equals: { es_index: "adx-logs-2026.06" }
+	//     # or dynamic daily index derived from the record timestamp:
+	//     # index: "adx-logs-%{+YYYY.MM.dd}"
+}
