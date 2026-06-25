@@ -65,11 +65,48 @@ var (
 
 // default logger
 var (
-	loggerDefault     *Logger
+	// loggerDefault is the package singleton. It is stored in an atomic.Pointer
+	// so Close() can reset it to nil safely under concurrent access; the next
+	// global call (NewLogger/Register/Debug/...) then rebuilds it. Without this,
+	// Close() leaves loggerDefault pointing at a Logger whose bootstrap goroutine
+	// has exited and whose records channel is closed — a second SetupLog or
+	// Register would deliver records to a dead channel and orphan writers' daemon
+	// goroutines.
+	loggerDefault     atomic.Pointer[Logger]
 	recordPool        *sync.Pool
 	bufPool           *sync.Pool
 	recordChannelSize = recordChannelSizeDefault // log chan size
 )
+
+// newDefaultLoggerInstance builds a fresh Logger configured the way the package
+// singleton is configured in init() and after a Close() (flush 500ms, rotate
+// 10s, default-size records channel). It does NOT publish the result; callers
+// are responsible for storing it in loggerDefault if needed.
+func newDefaultLoggerInstance() *Logger {
+	records := make(chan *Record, recordChannelSize)
+	l := newLoggerWithRecords(records)
+	l.flushTimer = time.Millisecond * 500
+	l.rotateTimer = time.Second * 10
+	return l
+}
+
+// defaultLogger returns the package singleton, rebuilding it (once) if it was
+// reset by Close(). All package-level functions route through here so the
+// singleton survives a Close+reuse cycle instead of leaving orphaned daemons.
+func defaultLogger() *Logger {
+	if l := loggerDefault.Load(); l != nil {
+		return l
+	}
+	l := newDefaultLoggerInstance()
+	if loggerDefault.CompareAndSwap(nil, l) {
+		return l
+	}
+	// Lost the race; another goroutine published its instance. Close our extra
+	// records channel so the bootstrap goroutine we spawned exits cleanly, then
+	// return the winner.
+	l.Close()
+	return loggerDefault.Load()
+}
 
 // Record log record
 type Record struct {
@@ -140,12 +177,7 @@ type Logger struct {
 
 // NewLogger create the logger
 func NewLogger() *Logger {
-	if loggerDefault != nil {
-		return loggerDefault
-	}
-	records := make(chan *Record, recordChannelSize)
-
-	return newLoggerWithRecords(records)
+	return defaultLogger()
 }
 
 // newLoggerWithRecords is useful for go test
@@ -205,7 +237,7 @@ func (l *Logger) Metrics() LoggerMetrics {
 }
 
 // Metrics returns the default logger's per-level record counters for monitoring.
-func Metrics() LoggerMetrics { return loggerDefault.Metrics() }
+func Metrics() LoggerMetrics { return defaultLogger().Metrics() }
 
 // Close close logger
 func (l *Logger) Close() {
@@ -419,83 +451,85 @@ func bootstrapLogWriter(logger *Logger) {
 }
 
 func init() {
-	loggerDefault = NewLogger()
-	loggerDefault.flushTimer = time.Millisecond * 500
-	loggerDefault.rotateTimer = time.Second * 10
 	recordPool = &sync.Pool{New: func() interface{} {
 		return &Record{}
 	}}
 	bufPool = &sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
+	loggerDefault.Store(newDefaultLoggerInstance())
 }
 
 // Register register writer
 func Register(w Writer) {
-	loggerDefault.Register(w)
+	defaultLogger().Register(w)
 }
 
-// Close close logger
+// Close closes the package singleton and resets it so a subsequent SetupLog /
+// Register / log call rebuilds a fresh logger (rather than orphaning writer
+// daemons on a closed bootstrap). Safe to call at most once per setup cycle.
 func Close() {
-	loggerDefault.Close()
+	if l := loggerDefault.Swap(nil); l != nil {
+		l.Close()
+	}
 }
 
 // SetLayout set the logger time layout, should call before logger real use
 func SetLayout(layout string) {
-	loggerDefault.SetLayout(layout)
+	defaultLogger().SetLayout(layout)
 }
 
 // SetLevel set the logger level, should call before logger real use
 func SetLevel(lvl int) {
-	loggerDefault.level.Store(int32(lvl))
+	defaultLogger().SetLevel(lvl)
 }
 
 // WithFullPath set the logger with full path, should call before logger real use
 func WithFullPath(show bool) {
-	loggerDefault.fullPath.Store(show)
+	defaultLogger().WithFullPath(show)
 }
 
 // WithFuncName set the logger with func name, should call before logger real use
 func WithFuncName(show bool) {
-	loggerDefault.withFuncName.Store(show)
+	defaultLogger().WithFuncName(show)
 }
 
 // Debug level debug
 func Debug(fmt string, args ...interface{}) {
-	loggerDefault.deliverRecordToWriter(DEBUG, fmt, args...)
+	defaultLogger().deliverRecordToWriter(DEBUG, fmt, args...)
 }
 
 // Info level info
 func Info(fmt string, args ...interface{}) {
-	loggerDefault.deliverRecordToWriter(INFO, fmt, args...)
+	defaultLogger().deliverRecordToWriter(INFO, fmt, args...)
 }
 
 // Notice level notice
 func Notice(fmt string, args ...interface{}) {
-	loggerDefault.deliverRecordToWriter(NOTICE, fmt, args...)
+	defaultLogger().deliverRecordToWriter(NOTICE, fmt, args...)
 }
 
 // Warn level warn
 func Warn(fmt string, args ...interface{}) {
-	loggerDefault.deliverRecordToWriter(WARNING, fmt, args...)
+	defaultLogger().deliverRecordToWriter(WARNING, fmt, args...)
 }
 
 // Error level error
 func Error(fmt string, args ...interface{}) {
-	loggerDefault.deliverRecordToWriter(ERROR, fmt, args...)
+	defaultLogger().deliverRecordToWriter(ERROR, fmt, args...)
 }
 
 // Critical level critical
 func Critical(fmt string, args ...interface{}) {
-	loggerDefault.deliverRecordToWriter(CRITICAL, fmt, args...)
+	defaultLogger().deliverRecordToWriter(CRITICAL, fmt, args...)
 }
 
 // Alert level alert
 func Alert(fmt string, args ...interface{}) {
-	loggerDefault.deliverRecordToWriter(ALERT, fmt, args...)
+	defaultLogger().deliverRecordToWriter(ALERT, fmt, args...)
 }
 
 // Emergency level emergency
 func Emergency(fmt string, args ...interface{}) {
-	loggerDefault.deliverRecordToWriter(EMERGENCY, fmt, args...)
+	defaultLogger().deliverRecordToWriter(EMERGENCY, fmt, args...)
 }
 
 // The method is put here, so it's easy to test

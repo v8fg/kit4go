@@ -62,7 +62,12 @@ func Test_NewConsoleWriterWithNilLogger(t *testing.T) {
 func Test_NewConsoleWriterWithGlobalSet(t *testing.T) {
 	var color, fullColor bool
 	var layout string
-	loggerDefault = NewLogger()
+	// Reset the package singleton to a fresh logger so this test owns its
+	// layout/level/writers independent of init's instance. defer Close() will
+	// swap it back to nil for subsequent tests.
+	if old := loggerDefault.Swap(newDefaultLoggerInstance()); old != nil {
+		old.Close()
+	}
 
 	defer Close()
 	layout = "20060102 150405"
