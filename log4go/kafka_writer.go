@@ -1,13 +1,13 @@
 package log4go
 
 import (
-	"encoding/json"
 	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/IBM/sarama"
+	goccyjson "github.com/goccy/go-json"
 )
 
 // KafKaMSGFields kafka msg fields
@@ -136,7 +136,7 @@ func (k *KafKaWriter) buildPayload(r *Record) []byte {
 			m[fk] = fv
 		}
 	}
-	b, err := json.Marshal(m)
+	b, err := goccyjson.Marshal(m)
 	if err != nil {
 		log.Printf("[log4go] kafka writer json marshal err: %v", err.Error())
 		return nil
