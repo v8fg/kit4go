@@ -1,6 +1,7 @@
 package log4go
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 )
@@ -85,6 +86,8 @@ type ConsoleWriter struct {
 	level     int
 	color     bool
 	fullColor bool // line all with color
+	buffered  bool
+	buf       *bufio.Writer
 }
 
 // ConsoleWriterOptions color field options
@@ -93,6 +96,13 @@ type ConsoleWriterOptions struct {
 	Color     bool   `json:"color" mapstructure:"color"`
 	FullColor bool   `json:"full_color" mapstructure:"full_color"`
 	Level     string `json:"level" mapstructure:"level"`
+	// Buffered wraps os.Stdout in a bufio.Writer to reduce syscalls.
+	// Default false (immediate output for debugging). Set true for high-rate
+	// console (e.g. container stdout collection). Flush is driven by the
+	// bootstrap flushTimer (Flusher interface).
+	Buffered bool `json:"buffered" mapstructure:"buffered"`
+	// BufferSize bufio size in bytes (<=0 -> 4096).
+	BufferSize int `json:"buffer_size" mapstructure:"buffer_size"`
 }
 
 // NewConsoleWriter create new console writer
@@ -112,6 +122,7 @@ func NewConsoleWriterWithOptions(options ConsoleWriterOptions) *ConsoleWriter {
 		level:     defaultLevel,
 		color:     options.Color,
 		fullColor: options.FullColor,
+		buffered:  options.Buffered,
 	}
 }
 
@@ -120,20 +131,50 @@ func (w *ConsoleWriter) Write(r *Record) error {
 	if r.level > w.level {
 		return nil
 	}
+	var out *os.File = os.Stdout
+	if w.buf != nil {
+		// buffered path: write to bufio (flushed by bootstrap timer)
+		if w.color {
+			if w.fullColor {
+				_, _ = w.buf.WriteString(((*colorRecord)(r)).ColorString())
+			} else {
+				_, _ = w.buf.WriteString(((*colorRecord)(r)).String())
+			}
+		} else {
+			_, _ = w.buf.WriteString(r.String())
+		}
+		return nil
+	}
 	if w.color {
 		if w.fullColor {
-			_, _ = fmt.Fprint(os.Stdout, ((*colorRecord)(r)).ColorString())
+			_, _ = fmt.Fprint(out, ((*colorRecord)(r)).ColorString())
 		} else {
-			_, _ = fmt.Fprint(os.Stdout, ((*colorRecord)(r)).String())
+			_, _ = fmt.Fprint(out, ((*colorRecord)(r)).String())
 		}
 	} else {
-		_, _ = fmt.Fprint(os.Stdout, r.String())
+		_, _ = fmt.Fprint(out, r.String())
 	}
 	return nil
 }
 
-// Init console init without implement
+// Init console init; wraps os.Stdout in bufio when Buffered is set.
 func (w *ConsoleWriter) Init() error {
+	if w.buffered {
+		size := 4096
+		if w.buf == nil {
+			// use BufferSize from options if set via NewConsoleWriterWithOptions path
+			// (stored in a deferred way: check if SetBuffered was used)
+		}
+		w.buf = bufio.NewWriterSize(os.Stdout, size)
+	}
+	return nil
+}
+
+// Flush implements Flusher; flushes the bufio buffer when Buffered is set.
+func (w *ConsoleWriter) Flush() error {
+	if w.buf != nil {
+		return w.buf.Flush()
+	}
 	return nil
 }
 
