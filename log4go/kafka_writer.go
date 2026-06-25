@@ -119,7 +119,18 @@ func (k *KafKaWriter) buildPayload(r *Record) []byte {
 		"timestamp": now.Format(timestampLayout),
 		"now":       now.Unix(),
 	}
-	// hoist ExtraFields to the top level, never overriding built-in fields.
+	// hoist the record's structured fields (from Logger.With/WithField/WithFields)
+	// to the top level, never overriding built-in fields. This is the JSON
+	// equivalent of Record.String()'s trailing JSON object: trace_id, user_id,
+	// etc. attached via With show up as first-class JSON keys here.
+	for _, f := range r.fields {
+		if _, ok := m[f.key]; !ok {
+			m[f.key] = f.val
+		}
+	}
+	// hoist ExtraFields to the top level, never overriding built-in fields or
+	// record fields (record fields win over ExtraFields on key collision since
+	// they are more specific to this log line).
 	for fk, fv := range k.options.MSG.ExtraFields {
 		if _, ok := m[fk]; !ok {
 			m[fk] = fv
