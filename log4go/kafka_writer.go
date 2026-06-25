@@ -194,7 +194,7 @@ func (k *KafKaWriter) buildPayload(r *Record) []byte {
 			}
 		}
 	}
-	b, err := goccyjson.Marshal(p)
+	b, err := p.MarshalJSON()
 	if err != nil {
 		log.Printf("[log4go] kafka writer json marshal err: %v", err.Error())
 		return nil
