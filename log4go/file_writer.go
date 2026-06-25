@@ -249,7 +249,14 @@ func (w *FileWriter) writeSync(r *Record) error {
 	if w.fileBufWriter == nil {
 		return errors.New("fileWriter no opened file: " + w.filename)
 	}
-	_, err := w.fileBufWriter.WriteString(r.String())
+	// FormatJSON fast path: emit pre-serialized bytes verbatim (set by
+	// deliverRecordToWriter) instead of re-rendering the text line.
+	var err error
+	if len(r.jsonBytes) > 0 {
+		_, err = w.fileBufWriter.Write(r.jsonBytes)
+	} else {
+		_, err = w.fileBufWriter.WriteString(r.String())
+	}
 	if err == nil {
 		atomic.AddUint64(&w.written, 1)
 	}
@@ -676,7 +683,15 @@ func (w *FileWriter) writeOne(r *Record) {
 		w.fire("error", 1)
 		return
 	}
-	if _, err := w.fileBufWriter.WriteString(r.String()); err != nil {
+	// FormatJSON fast path: emit pre-serialized bytes (set by
+	// deliverRecordToWriter) instead of re-rendering the text line.
+	var writeErr error
+	if len(r.jsonBytes) > 0 {
+		_, writeErr = w.fileBufWriter.Write(r.jsonBytes)
+	} else {
+		_, writeErr = w.fileBufWriter.WriteString(r.String())
+	}
+	if writeErr != nil {
 		atomic.AddUint64(&w.errored, 1)
 		w.fire("error", 1)
 		return

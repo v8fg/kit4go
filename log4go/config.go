@@ -21,6 +21,10 @@ type LogConfig struct {
 	Level         string               `json:"level" mapstructure:"level"`
 	Debug         bool                 `json:"debug" mapstructure:"debug"` // output log info or not for log4go
 	FullPath      bool                 `json:"full_path" mapstructure:"full_path"`
+	// Format selects the record serialization: "text" (default, human-readable
+	// line) or "json" (one JSON object per record, machine-readable). Unknown
+	// values fall back to text. See LogFormat / SetFormat.
+	Format        string               `json:"format" mapstructure:"format"`
 	ConsoleWriter ConsoleWriterOptions `json:"console_writer" mapstructure:"console_writer"`
 	FileWriter    FileWriterOptions    `json:"file_writer" mapstructure:"file_writer"`
 	KafKaWriter   KafKaWriterOptions   `json:"kafka_writer" mapstructure:"kafka_writer"`
@@ -73,6 +77,9 @@ func SetupLog(lc LogConfig) (err error) {
 	fullPath := lc.FullPath
 	WithFullPath(fullPath)
 	SetLevel(validGlobalMinLevel)
+	// Apply the serialization format (text default, json for structured logs).
+	// Parsed here so a bad value is reported once at setup rather than per record.
+	SetFormat(ParseLogLogFormat(lc.Format))
 
 	if lc.ConsoleWriter.Enable {
 		w := NewConsoleWriterWithOptions(lc.ConsoleWriter)

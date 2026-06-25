@@ -97,6 +97,49 @@ func newDefaultLoggerInstance() *Logger {
 	return l
 }
 
+// LogFormat selects the on-the-wire record serialization. The default is
+// FormatText (the canonical "<time> [<LEVEL>] <<file>> <msg>\n" line plus any
+// structured fields). FormatJSON emits a single JSON object per record:
+//
+//	{"time":"2026-06-25T15:04:05.000+0800","level":"INFO","msg":"...",
+//	 "file":"svc.go:42","fields":{"trace_id":"abc","user":7}}
+//
+// The format is decided once per record in deliverRecordToWriter and cached on
+// r.jsonBytes, so every registered writer (Console/File/Net/IO) outputs the
+// pre-serialized bytes without re-serializing. KafKaWriter already emits its
+// own JSON payload and is unaffected.
+type LogFormat int32
+
+const (
+	// FormatText is the default human-readable line format (Record.String).
+	FormatText LogFormat = iota
+	// FormatJSON emits one JSON object per record (Record.JSON), suitable for
+	// machine ingestion / log shippers like Fluentd/Filebeat.
+	FormatJSON
+)
+
+// String returns the lowercase config name ("text"/"json") used by LogConfig.
+func (f LogFormat) String() string {
+	if f == FormatJSON {
+		return "json"
+	}
+	return "text"
+}
+
+// ParseLogLogFormat parses a config string ("text"/"json", case-insensitive)
+// into a LogFormat. Unknown values fall back to FormatText with a log line so
+// misconfiguration is loud rather than silently changing output.
+func ParseLogLogFormat(s string) LogFormat {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "json":
+		return FormatJSON
+	case "text", "":
+		return FormatText
+	}
+	log.Printf("[log4go] unknown log format %q, defaulting to text", s)
+	return FormatText
+}
+
 // defaultLogger returns the package singleton, rebuilding it (once) if it was
 // reset by Close(). All package-level functions route through here so the
 // singleton survives a Close+reuse cycle instead of leaving orphaned daemons.
@@ -136,6 +179,12 @@ type Record struct {
 	// them as a trailing JSON object; KafKaWriter.buildPayload hoists them into
 	// the top-level JSON map.
 	fields []field
+	// jsonBytes is the pre-serialized JSON form of the record, populated once by
+	// deliverRecordToWriter when the Logger's format is FormatJSON. Writers
+	// (Console/File/Net/IO) that support the FormattedWriter fast path emit these
+	// bytes verbatim to avoid re-serializing per writer. nil under FormatText.
+	// Reset to nil by the bootstrap goroutine before returning to the pool.
+	jsonBytes []byte
 }
 
 // FieldsJSON returns the record's structured fields marshaled to a JSON object
@@ -155,6 +204,48 @@ func (r *Record) FieldsJSON() string {
 		return ""
 	}
 	return string(b)
+}
+
+// RecordJSON is the on-the-wire shape of a record when the Logger format is
+// FormatJSON. Fields is nil when no structured fields are attached so the JSON
+// omits the key (the omitempty makes the line shorter for the common case).
+type RecordJSON struct {
+	Time   string                 `json:"time"`
+	Level  string                 `json:"level"`
+	Msg    string                 `json:"msg"`
+	File   string                 `json:"file,omitempty"`
+	Fields map[string]interface{} `json:"fields,omitempty"`
+}
+
+// JSON serializes the record to a single JSON object terminated by a newline
+// (one log line == one JSON document, the convention Fluentd/Filebeat expect).
+// The time field uses the ISO-ish timestampLayout; level uses LevelFlags; fields
+// is omitted entirely when there are none. On marshal error it falls back to the
+// text String() form so a record is never silently lost.
+//
+// This is called once per record in deliverRecordToWriter (FormatJSON only) and
+// cached on r.jsonBytes, so it is NOT on the multi-writer path — each record
+// pays exactly one json.Marshal regardless of how many writers are registered.
+func (r *Record) JSON() []byte {
+	rj := RecordJSON{
+		Time:  r.time,
+		Level: LevelFlags[r.level],
+		Msg:   r.msg,
+		File:  r.file,
+	}
+	if len(r.fields) > 0 {
+		rj.Fields = make(map[string]interface{}, len(r.fields))
+		for _, f := range r.fields {
+			rj.Fields[f.key] = f.val
+		}
+	}
+	b, err := jsonMarshal(rj)
+	if err != nil {
+		// never lose a record: fall back to text. The caller (deliverRecordToWriter)
+		// ignores the returned bytes in the error path; this is the last resort.
+		return []byte(r.String())
+	}
+	return append(b, '\n')
 }
 
 // String renders the record line in the canonical format
@@ -218,6 +309,7 @@ type Logger struct {
 
 	layout         atomic.Pointer[string]
 	level          atomic.Int32
+	format         atomic.Int32 // LogFormat (FormatText/FormatJSON); atomic for lock-free hot-path read
 	recordsByLevel *[DEBUG + 1]uint64 // per-level record counters (monitoring); pointer so child Loggers share the root's counters
 	fullPath       atomic.Bool       // show full path, default only show file:line_number
 	withFuncName   atomic.Bool       // show caller func name
@@ -339,6 +431,22 @@ func (l *Logger) SetLevel(lvl int) {
 	l.level.Store(int32(lvl))
 }
 
+// SetFormat selects the record serialization format (FormatText or FormatJSON).
+// FormatText (the default) emits the human-readable line; FormatJSON emits one
+// JSON object per record (see Record.JSON). The format is read once per record
+// in deliverRecordToWriter and decides whether r.jsonBytes is pre-serialized.
+// All registered writers honor the format via the FormattedWriter fast path
+// (they emit r.jsonBytes when non-nil, else r.String()), so no per-writer change
+// is needed.
+func (l *Logger) SetFormat(f LogFormat) {
+	l.format.Store(int32(f))
+}
+
+// Format returns the current serialization format.
+func (l *Logger) Format() LogFormat {
+	return LogFormat(l.format.Load())
+}
+
 // WithFullPath set the logger with full path
 func (l *Logger) WithFullPath(show bool) {
 	l.fullPath.Store(show)
@@ -378,6 +486,7 @@ func (l *Logger) clone() *Logger {
 	}
 	// copy current atomic knob values into the child
 	c.level.Store(l.level.Load())
+	c.format.Store(l.format.Load()) // child inherits the parent's JSON/text format
 	if lp := l.layout.Load(); lp != nil {
 		v := *lp
 		c.layout.Store(&v)
@@ -653,6 +762,38 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	// the pool so the reference doesn't outlive the record.
 	r.fields = l.fields
 
+	// Pre-serialize once for FormatJSON so every registered writer emits the
+	// same bytes without re-marshaling. For FormatText r.jsonBytes stays nil and
+	// writers fall back to r.String(). The JSON time field uses the ISO-ish
+	// timestampLayout (machine-readable, timezone-aware) regardless of the
+	// logger's text layout, per the structured-logging convention.
+	if LogFormat(l.format.Load()) == FormatJSON {
+		rJSON := RecordJSON{
+			Level: LevelFlags[level],
+			Msg:   msg,
+			File:  fileStr,
+		}
+		// JSON time prefers the canonical timestampLayout; fall back to the
+		// logger's text-layout time if formatting fails (never happens for the
+		// const layout, but keeps rJSON.Time non-empty defensively).
+		rJSON.Time = now.Format(timestampLayout)
+		if rJSON.Time == "" {
+			rJSON.Time = lastTimeStr
+		}
+		if len(l.fields) > 0 {
+			rJSON.Fields = make(map[string]interface{}, len(l.fields))
+			for _, f := range l.fields {
+				rJSON.Fields[f.key] = f.val
+			}
+		}
+		if b, err := jsonMarshal(rJSON); err == nil {
+			r.jsonBytes = append(b, '\n')
+		} else {
+			// marshal error: leave jsonBytes nil so writers use String() (text).
+			// Better to emit text than to drop the record.
+		}
+	}
+
 	l.records <- r
 }
 
@@ -690,11 +831,13 @@ func bootstrapLogWriter(logger *Logger) {
 				}
 			}
 
-			// Drop the fields reference before returning to the pool so a
-			// logger's fields slice (which may be long-lived) is not pinned by
-			// a pooled record. r.msg/time/file are scalars and overwritten on
-			// reuse, but r.fields is a slice header that would otherwise leak.
+			// Drop the fields + jsonBytes references before returning to the pool
+			// so a logger's long-lived fields slice and the JSON buffer are not
+			// pinned by a pooled record. r.msg/time/file are scalars and
+			// overwritten on reuse, but r.fields/r.jsonBytes are slice headers
+			// that would otherwise leak stale data into the next record.
 			r.fields = nil
+			r.jsonBytes = nil
 			recordPool.Put(r)
 
 		case <-flushTimer.C:
@@ -750,6 +893,18 @@ func SetLayout(layout string) {
 // SetLevel set the logger level, should call before logger real use
 func SetLevel(lvl int) {
 	defaultLogger().SetLevel(lvl)
+}
+
+// SetFormat selects the record serialization format on the package singleton
+// (FormatText default, FormatJSON for structured/machine-readable logs). Should
+// be called before the logger is used for real (alongside SetLevel/SetLayout).
+func SetFormat(f LogFormat) {
+	defaultLogger().SetFormat(f)
+}
+
+// Format returns the package singleton's current serialization format.
+func Format() LogFormat {
+	return defaultLogger().Format()
 }
 
 // WithFullPath set the logger with full path, should call before logger real use

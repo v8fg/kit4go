@@ -131,6 +131,19 @@ func (w *ConsoleWriter) Write(r *Record) error {
 	if r.level > w.level {
 		return nil
 	}
+	// FormatJSON fast path: when the Logger pre-serialized the record, emit the
+	// bytes verbatim (no color, no String()) — JSON is for machine ingestion.
+	// This keeps the format decision in one place (deliverRecordToWriter) and
+	// avoids re-serializing per writer.
+	if len(r.jsonBytes) > 0 {
+		var out *os.File = os.Stdout
+		if w.buf != nil {
+			_, _ = w.buf.Write(r.jsonBytes)
+			return nil
+		}
+		_, _ = fmt.Fprint(out, string(r.jsonBytes))
+		return nil
+	}
 	var out *os.File = os.Stdout
 	if w.buf != nil {
 		// buffered path: write to bufio (flushed by bootstrap timer)
