@@ -71,14 +71,49 @@
 //     bounded + overflow-safe (never blocks the caller on network I/O); IOWriter
 //     is a thin sync adapter for any io.Writer.
 //
-// # Net/HTTP writer performance caveat
+// # Writers at a glance (see PERFORMANCE.md §12 for full measured numbers)
 //
-// NetWriter (and any remote sink) is bounded by network RTT and the remote —
-// throughput is far below File/Console (~50K-200K QPS for TCP vs ~3M for async
-// File). NetWriter is async with a bounded channel + OverflowPolicy so a
-// network stall cannot back-pressure the application, but it is intended for
-// LOW-VOLUME log collection (ship to a sidecar collector). For high-throughput
-// log shipping use FileWriter + Kafka instead. See PERFORMANCE.md §13.
+// All writers share one bootstrap goroutine that calls each registered writer
+// serially per record, so end-to-end throughput ≈ 1 / Σ(writer Write time).
+// Pick the minimum set of writers for your pipeline — extra slow writers drag
+// every record. Measured single-core QPS (Apple M5, Go 1.26.0, sink isolated
+// from I/O noise: pipe/buffer/mock/loopback):
+//
+//   - FileWriter (sync bufio):     ~140 ns/op,  ~7.1M QPS — fastest disk path.
+//   - FileWriter (async + drop):   ~219 ns/op,  ~4.6M QPS — daemon isolates disk I/O.
+//   - FileWriter (async + spill):  ~217 ns/op,  ~4.6M QPS — ring fallback, no hot-data loss.
+//   - ConsoleWriter (buffered):    ~294 ns/op,  ~3.4M QPS — container stdout collection.
+//   - ConsoleWriter (unbuffered):  ~1620 ns/op, ~617K QPS — dev/debug only (per-record syscall).
+//   - ConsoleWriter (color):       ~2961 ns/op, ~338K QPS — dev/debug + ANSI color.
+//   - KafKaWriter (mock producer): ~2582 ns/op, ~387K QPS — JSON buildPayload dominates.
+//   - NetWriter (TCP loopback):    ~137 ns/op,  ~7.3M QPS caller-side; real network is RTT-bound
+//     (~50K-200K same-DC, ~5K-50K cross-DC).
+//   - IOWriter (io.Discard):       ~204 ns/op,  ~4.9M QPS — thinnest adapter, test/custom.
+//   - Record.JSON (goccy, 3 flds): ~1021 ns/op, ~980K QPS — structured JSON, paid once per record.
+//
+// Memory: every writer holds <0.05 MB HeapAlloc over 100K records (pool reuse +
+// bounded channels + bounded spiller) with a constant 4 goroutines — no OOM
+// growth under high QPS. See PERFORMANCE.md §13.
+//
+// # Scenario recommendations (see PERFORMANCE.md §14 for the decision tree)
+//
+//   - Local dev:          ConsoleWriter (unbuffered), default config.
+//   - Production disk:    FileWriter{Async:true, OverflowPolicy:"drop"} (~4.6M QPS);
+//     add SpillType:"ring" to survive bursts without hot-data loss.
+//   - Production Kafka:   KafKaWriter{BufferSize, OverflowPolicy:"spill", SpillType:"ring"}.
+//   - Container stdout:   ConsoleWriter{Buffered:true} (bufio cuts syscalls).
+//   - Remote collection:  NetWriter{Network:"tcp", OverflowPolicy:"drop"} — LOW VOLUME only;
+//     high-throughput shipping must use FileWriter + Kafka.
+//   - Structured JSON:    SetFormat(FormatJSON) + SetJSONCodec(JSONCodecGoccy) — all writers
+//     emit the same pre-serialized r.jsonBytes (no re-marshaling).
+//   - Multi-core scaling: NewShardLogger(GOMAXPROCS/2) + RegisterFunc per-shard FileWriter
+//     (~1.6M+ QPS on 10 cores / 4 shards — the only way past single-core ~1M).
+//   - Test / custom sink: IOWriter(bytes.Buffer | io.Discard) — thinnest adapter.
+//   - Max throughput:     WithCaller(false) + FileWriter(async) — drops file:line, 16 B/op 1 alloc.
+//
+// Constraints: never register ConsoleWriter(unbuffered) in production (blocks
+// bootstrap); never share one FileWriter across ShardLogger shards (use
+// RegisterFunc); never rely on NetWriter for high volume (RTT-bound).
 //
 // SPDX-License-Identifier: MIT
 package log4go
