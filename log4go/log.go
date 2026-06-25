@@ -593,18 +593,26 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 	return c
 }
 
-// attachContextFields runs the configured extractor (or the default trace-id
-// lookup) against ctx and appends any extracted fields to the logger's fields
-// slice (copy-on-write so the parent stays immutable).
+// attachContextFields extracts structured fields from ctx and appends them to
+// the logger's fields slice (copy-on-write so the parent stays immutable). The
+// extraction source is:
+//  1. if the logger has a per-instance extractor (SetContextExtractor), ONLY it
+//     runs (explicit override — useful to disable extraction by setting nil, or
+//     to pin a custom scheme on one logger without affecting the global stack);
+//  2. otherwise the global extractor stack runs (default trace/request-id/user
+//     probe + anything added via AddContextExtractor, e.g. otel span/baggage).
 func (l *Logger) attachContextFields(ctx context.Context) {
 	if ctx == nil {
 		return
 	}
-	extractor := l.ctxExtractor
-	if extractor == nil {
-		extractor = defaultContextExtractor
+	var m map[string]interface{}
+	if l.ctxExtractor != nil {
+		// per-logger override: run ONLY this extractor (not the global stack),
+		// so SetContextExtractor is a full replacement, not an addition.
+		m = l.ctxExtractor(ctx)
+	} else {
+		m = runContextExtractors(ctx)
 	}
-	m := extractor(ctx)
 	if len(m) == 0 {
 		return
 	}
@@ -617,13 +625,24 @@ func (l *Logger) attachContextFields(ctx context.Context) {
 }
 
 // defaultContextTraceKeys are the context.Value keys probed by the built-in
-// extractor when no custom extractor is configured. They cover the common
-// trace-id conventions; callers needing more can SetContextExtractor.
-var defaultContextTraceKeys = []string{"trace_id", "traceID", "x-request-id", "requestId"}
+// extractor. They cover the common trace/request/user/tenant conventions across
+// the ecosystem; callers needing more register an extractor via
+// AddContextExtractor (e.g. for OpenTelemetry spans or custom baggage).
+var defaultContextTraceKeys = []string{
+	// distributed tracing
+	"trace_id", "traceID", "trace-id",
+	"span_id", "spanID", "span-id",
+	// request / correlation
+	"x-request-id", "requestId", "request_id", "x-correlation-id", "correlation_id",
+	// business identity
+	"uid", "user_id", "userId", "tenant_id", "tenantId", "org_id", "orgId",
+}
 
-// defaultContextExtractor looks up the common trace-id keys in ctx.Value and
-// returns them as a fields map (only non-nil values are included). It is the
-// zero-config path; a custom extractor set via SetContextExtractor overrides it.
+// defaultContextExtractor looks up the common trace/request/user keys in
+// ctx.Value and returns them as a fields map (only non-nil values are included).
+// It is the zero-config base of the global extractor stack; callers add more
+// via AddContextExtractor, and a per-logger SetContextExtractor overrides the
+// whole stack.
 func defaultContextExtractor(ctx context.Context) map[string]interface{} {
 	if ctx == nil {
 		return nil
