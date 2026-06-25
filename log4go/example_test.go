@@ -346,16 +346,21 @@ func Example_multiWriterAlerts() {
 
 	webhook := log4go.NewWebhookWriter(sink, log4go.WebhookWriterOptions{
 		Level: log4go.LevelFlagError,
-		Filter: func(r *log4go.Record) bool {
-			return true // e.g. only a domain tag; true = forward every ERROR+
-		},
-		Gate: log4go.NewRateAlerter(time.Minute, 10), // app-level: >=10/min, ~1 fire/min
+		// Forward only payment-domain errors (MatchField) that mention a failure
+		// keyword (MatchKeyword). AllOf composes the two predicates.
+		Filter: log4go.AllOf(
+			log4go.MatchField("domain", "pay"),
+			log4go.MatchKeyword("fail"),
+		),
+		Gate:          log4go.NewRateAlerter(time.Minute, 10), // >=10/min, ~1 fire/min
+		RateFormatter: log4go.DefaultRateWebhookFormatter,    // payload: "[N in window] ..."
 	})
 	log4go.Register(webhook)
 
 	defer log4go.Close() // flushes kafka/net; closes the webhook sink
 
-	log4go.Info("started")         // → kafka only
-	log4go.Warn("cache degraded")  // → kafka + net
-	log4go.Error("payment failed") // → kafka + net + webhook (if past threshold)
+	log4go.Info("started")                       // → kafka only
+	log4go.Warn("cache degraded")                // → kafka + net
+	log4go.Error("db timeout")                   // → kafka + net; webhook filter rejects (not domain=pay)
+	log4go.With("domain", "pay").Error("payment failed") // → kafka + net + webhook (domain=pay + "fail", past threshold)
 }

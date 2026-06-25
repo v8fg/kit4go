@@ -1,6 +1,7 @@
 package log4go
 
 import (
+	"fmt"
 	"sync/atomic"
 )
 
@@ -27,16 +28,31 @@ import (
 // Close() closes the underlying sink (stops its async daemon). It is picked up
 // automatically by log4go.Close() (Logger.Close invokes io.Closer on writers).
 type WebhookWriter struct {
-	sink      AlertSink
-	level     int
-	filter    func(*Record) bool
-	formatter RecordWebhookFormatter
-	gate      *RateAlerter
+	sink          AlertSink
+	level         int
+	filter        Filter
+	formatter     RecordWebhookFormatter
+	rateFormatter RateWebhookFormatter
+	gate          *RateAlerter
 
 	sent    uint64
 	skipped uint64
 	onEvent func(name string, delta int64)
 }
+
+// WebhookContext carries writer-level state into a RateWebhookFormatter —
+// currently the RateAlerter in-window count, so a threshold-summary alert can
+// report "N errors in the last minute". RateCount is 0 when no gate is set.
+type WebhookContext struct {
+	RateCount int // gate.Count() snapshot at format time
+}
+
+// RateWebhookFormatter is the context-aware formatter variant: it receives the
+// writer context (e.g. the rate count) in addition to the record. Set it via
+// WebhookWriterOptions.RateFormatter when a Gate is configured and you want the
+// in-window count in the payload. When RateFormatter is nil the plain
+// Formatter is used instead.
+type RateWebhookFormatter func(r *Record, ctx WebhookContext) (kind, text string)
 
 // RecordWebhookFormatter renders a record into the (kind, text) pair passed to
 // AlertSink.Send. kind is a short category (e.g. "ERROR", "payment"); text is
@@ -49,10 +65,16 @@ type WebhookWriterOptions struct {
 	// at/above it are forwarded. Empty -> ERROR.
 	Level string
 	// Filter is an optional predicate; only records it returns true for are
-	// forwarded (after the level check). nil disables filtering.
-	Filter func(*Record) bool
+	// forwarded (after the level check). nil disables filtering. Use the
+	// MatchField / MatchKeyword / AllOf ... constructors for common cases.
+	Filter Filter
 	// Formatter renders the forwarded record. nil -> DefaultWebhookFormatter.
+	// Ignored when RateFormatter is set.
 	Formatter RecordWebhookFormatter
+	// RateFormatter is the context-aware formatter used (in preference to
+	// Formatter) when set — typically to embed the RateAlerter in-window count
+	// for a threshold-summary payload. nil falls back to Formatter.
+	RateFormatter RateWebhookFormatter
 	// Gate is an optional RateAlerter threshold gate. nil disables gating.
 	Gate *RateAlerter
 }
@@ -73,11 +95,12 @@ func NewWebhookWriter(sink AlertSink, opts WebhookWriterOptions) *WebhookWriter 
 		f = DefaultWebhookFormatter
 	}
 	return &WebhookWriter{
-		sink:      sink,
-		level:     lvl,
-		filter:    opts.Filter,
-		formatter: f,
-		gate:      opts.Gate,
+		sink:          sink,
+		level:         lvl,
+		filter:        opts.Filter,
+		formatter:     f,
+		rateFormatter: opts.RateFormatter,
+		gate:          opts.Gate,
 	}
 }
 
@@ -100,10 +123,23 @@ func (w *WebhookWriter) Write(r *Record) error {
 		w.bump(false)
 		return nil
 	}
-	kind, text := w.formatter(r)
+	kind, text := w.format(r)
 	w.sink.Send(recordAlertLevel(r.level), kind, text)
 	w.bump(true)
 	return nil
+}
+
+// format renders the record, using RateFormatter (with the gate's in-window
+// count) when configured, else the plain Formatter.
+func (w *WebhookWriter) format(r *Record) (string, string) {
+	if w.rateFormatter == nil {
+		return w.formatter(r)
+	}
+	ctx := WebhookContext{}
+	if w.gate != nil {
+		ctx.RateCount = w.gate.Count()
+	}
+	return w.rateFormatter(r, ctx)
 }
 
 // bump tallies sent/skipped and fires the onEvent hook (if any).
@@ -128,7 +164,12 @@ func (w *WebhookWriter) Close() error {
 }
 
 // SetFilter installs or replaces the record filter.
-func (w *WebhookWriter) SetFilter(f func(*Record) bool) { w.filter = f }
+func (w *WebhookWriter) SetFilter(f Filter) { w.filter = f }
+
+// SetRateFormatter installs the context-aware formatter (used in preference to
+// the plain Formatter when set), so the RateAlerter in-window count can be
+// embedded in the payload. Pass nil to revert to the plain Formatter.
+func (w *WebhookWriter) SetRateFormatter(f RateWebhookFormatter) { w.rateFormatter = f }
 
 // SetGate installs or replaces the threshold gate.
 func (w *WebhookWriter) SetGate(g *RateAlerter) { w.gate = g }
@@ -176,4 +217,16 @@ func DefaultWebhookFormatter(r *Record) (string, string) {
 		line += " " + fj
 	}
 	return LevelFlags[r.level], line
+}
+
+// DefaultRateWebhookFormatter is the context-aware default: it prepends the
+// in-window count from the gate (e.g. "[12 in window]") to the default line when
+// the count is non-zero, so a threshold-summary alert reports how many events
+// accumulated. When no gate is set (RateCount == 0) it renders the plain line.
+func DefaultRateWebhookFormatter(r *Record, ctx WebhookContext) (string, string) {
+	kind, text := DefaultWebhookFormatter(r)
+	if ctx.RateCount > 0 {
+		text = fmt.Sprintf("[%d in window] %s", ctx.RateCount, text)
+	}
+	return kind, text
 }
