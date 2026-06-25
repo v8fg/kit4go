@@ -43,10 +43,12 @@ const (
 const (
 	// default size or min size for record channel
 	recordChannelSizeDefault = uint(4096)
-	// default time layout
+	// default time layout (local time, no timezone — for human reading)
 	defaultLayout = "2006/01/02 15:04:05"
-	// timestamp with zone info
-	timestampLayout = "2006-01-02T15:04:05.000+0800"
+	// timestampLayout for JSON/Kafka: RFC3339Nano with auto timezone.
+	// Z07:00 renders +0800 in CN, -05:00 in US-East, Z for UTC.
+	// .000000 gives microsecond precision for strict ordering.
+	timestampLayout = "2006-01-02T15:04:05.000000Z07:00"
 )
 
 // jsonMarshal is the JSON marshal entry point used everywhere log4go serializes
@@ -354,6 +356,12 @@ type Logger struct {
 	ctxExtractor func(context.Context) map[string]interface{}
 
 	lock sync.RWMutex
+
+	// hasSubSecond is set by SetLayout when the layout contains a fractional
+	// seconds directive (".000", ".999", etc). When true, the time cache is
+	// bypassed so every record gets a fresh time.Now().Format() call — otherwise
+	// same-second records would share the same (stale) sub-second value.
+	hasSubSecond atomic.Bool
 }
 
 // NewLogger create the logger
@@ -444,6 +452,10 @@ func (l *Logger) Close() {
 // SetLayout set the logger time layout
 func (l *Logger) SetLayout(layout string) {
 	v := layout
+	// Detect sub-second directives: if present, bypass the time cache so every
+	// record gets a fresh Format() (otherwise same-second records share a stale
+	// sub-second value). Check for ".0", ".9", ".000", ".999" patterns.
+	l.hasSubSecond.Store(strings.Contains(layout, ".0") || strings.Contains(layout, ".9"))
 	l.layout.Store(&v)
 }
 
@@ -778,7 +790,9 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	sec := now.Unix()
 	lpStr := l.lastTimeStr.Load()
 	var lastTimeStr string
-	if lpStr != nil && l.lastTime.Load() == sec {
+	// Bypass cache when layout has sub-second precision (e.g. ".000"):
+	// cached values would give same-second records stale sub-second digits.
+	if !l.hasSubSecond.Load() && lpStr != nil && l.lastTime.Load() == sec {
 		lastTimeStr = *lpStr
 	} else {
 		lpLayout := l.layout.Load()
