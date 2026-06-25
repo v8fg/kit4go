@@ -339,11 +339,13 @@ type Logger struct {
 	hasCaller      atomic.Bool        // capture caller (file:line); disable for max throughput
 
 	// baseFields are global static fields registered once via SetBaseField(s)
-	// and carried by EVERY record. Unlike With() (per-sub-logger), these are
-	// the "environment" fields: hostname, server_ip, app_name, env, version.
-	// Set once at startup, read on every deliverRecordToWriter (immutable
-	// after set, stored in atomic.Pointer for lock-free hot-path read).
-	baseFields atomic.Pointer[[]field]
+	// and carried by EVERY record — including those emitted by child Loggers
+	// produced via With/WithField/WithFields/WithContext. To honor that contract
+	// live (a SetBaseField on the root is visible to every child, even children
+	// created earlier), the storage is shared by pointer: clone() copies the
+	// *baseFieldsHolder, so parent and children read the same atomic. Stored in
+	// an atomic.Pointer for lock-free hot-path read.
+	baseFields *baseFieldsHolder
 
 	// fields carries structured key/value pairs attached via With/WithField/
 	// WithFields. A child Logger always gets its OWN copy (see clone), so a
@@ -371,6 +373,14 @@ type Logger struct {
 	hasSubSecond atomic.Bool
 }
 
+// baseFieldsHolder is the shared backing store for a logger's base fields. It is
+// heap-allocated once per logger tree and shared (by pointer) with every clone,
+// so SetBaseField on any logger in the tree is visible to all of them — base
+// fields affect the singleton and every child Logger, per the SetBaseField doc.
+type baseFieldsHolder struct {
+	v atomic.Pointer[[]field]
+}
+
 // NewLogger create the logger
 func NewLogger() *Logger {
 	return defaultLogger()
@@ -387,6 +397,7 @@ func newLoggerWithRecords(records chan *Record) *Logger {
 	l.records = records
 	l.c = make(chan bool, 1)
 	l.recordsByLevel = new([DEBUG + 1]uint64)
+	l.baseFields = &baseFieldsHolder{} // shared with every clone (see clone)
 	l.level.Store(int32(DEBUG))
 	lp := DefaultLayout
 	l.layout.Store(&lp)
@@ -468,7 +479,7 @@ func (l *Logger) SetLayout(layout string) {
 // a child Logger), base fields affect the singleton and all child Loggers.
 // Use at startup for environment fields: hostname, server_ip, app_name, env.
 func (l *Logger) SetBaseField(key string, val interface{}) {
-	cur := l.baseFields.Load()
+	cur := l.baseFields.v.Load()
 	var next []field
 	if cur != nil {
 		next = make([]field, len(*cur)+1)
@@ -477,12 +488,12 @@ func (l *Logger) SetBaseField(key string, val interface{}) {
 		next = make([]field, 1)
 	}
 	next[len(next)-1] = field{key: key, val: val}
-	l.baseFields.Store(&next)
+	l.baseFields.v.Store(&next)
 }
 
 // SetBaseFields is a batch version of SetBaseField.
 func (l *Logger) SetBaseFields(m map[string]interface{}) {
-	cur := l.baseFields.Load()
+	cur := l.baseFields.v.Load()
 	next := make([]field, 0, len(m)+func() int { if cur != nil { return len(*cur) }; return 0 }())
 	if cur != nil {
 		next = append(next, *cur...)
@@ -490,7 +501,7 @@ func (l *Logger) SetBaseFields(m map[string]interface{}) {
 	for k, v := range m {
 		next = append(next, field{key: k, val: v})
 	}
-	l.baseFields.Store(&next)
+	l.baseFields.v.Store(&next)
 }
 
 // SetBaseField registers a global static field on the default logger.
@@ -556,6 +567,7 @@ func (l *Logger) clone() *Logger {
 		sampler:         l.sampler,
 		ctxExtractor:    l.ctxExtractor,
 		recordsByLevel:  l.recordsByLevel, // shared pointer so children's emits count on the root
+		baseFields:      l.baseFields,     // shared pointer: SetBaseField on the root is live-visible to every child
 	}
 	// copy current atomic knob values into the child
 	c.level.Store(l.level.Load())
@@ -855,7 +867,7 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	// Merge base fields (global static, e.g. hostname/server_ip) + logger fields
 	// (from With/WithField/WithFields) + context fields. Priority: context >
 	// logger > base (more specific wins). We append base fields first if present.
-	if bf := l.baseFields.Load(); bf != nil && len(*bf) > 0 {
+	if bf := l.baseFields.v.Load(); bf != nil && len(*bf) > 0 {
 		if len(l.fields) > 0 {
 			merged := make([]field, 0, len(*bf)+len(l.fields))
 			merged = append(merged, *bf...)    // base first (lowest priority)
@@ -888,9 +900,13 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 		if rJSON.Time == "" {
 			rJSON.Time = lastTimeStr
 		}
-		if len(l.fields) > 0 {
-			rJSON.Fields = make(map[string]interface{}, len(l.fields))
-			for _, f := range l.fields {
+		// Use r.fields (Base+With+Context merged in above), not l.fields: base
+		// fields registered via SetBaseField must appear in JSON output too,
+		// otherwise they'd be dropped from every FormatJSON writer and the Kafka
+		// payload (which carries r.fields).
+		if len(r.fields) > 0 {
+			rJSON.Fields = make(map[string]interface{}, len(r.fields))
+			for _, f := range r.fields {
 				rJSON.Fields[f.key] = f.val
 			}
 		}

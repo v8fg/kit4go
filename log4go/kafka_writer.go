@@ -11,17 +11,36 @@ import (
 	goccyjson "github.com/goccy/go-json"
 )
 
-// KafKaMSGFields kafka msg fields
+// KafKaMSGFields holds the legacy Kafka→ES message fields.
+//
+// Field management is unified with the Logger's structured-fields layer:
+// SetBaseField/SetBaseFields (global static), With/WithField/WithFields
+// (per-scope) and context extractors (per-request) all flow into r.fields, and
+// those take PRIORITY over the struct members here. The struct members below are
+// kept as a backward-compatible fallback for callers that configure the writer
+// directly. New code should prefer:
+//
+//	log4go.SetBaseField("server_ip", ip)
+//	log4go.SetBaseField("es_index", "adx-logs-2026.06")
+//
+// so the same field is carried by every writer on the logger, not just Kafka.
 type KafKaMSGFields struct {
-	ESIndex   string `json:"es_index" mapstructure:"es_index"` // optional, init field, can set if want send data to es
-	Level     string `json:"level"`                            // dynamic, set by logger, mark the record level
-	File      string `json:"file"`                             // source code file:line_number
-	Message   string `json:"message"`                          // required, dynamic
-	ServerIP  string `json:"server_ip"`                        // required, init field, set by app
-	Timestamp string `json:"timestamp"`                        // required, dynamic, set by logger
-	Now       int64  `json:"now"`                              // choice
+	// ESIndex and ServerIP are routing/static fields. Deprecated as struct
+	// members — prefer SetBaseField("es_index",…)/SetBaseField("server_ip",…).
+	// They are emitted only when the r.fields layer did not already supply the
+	// same key, so a Base Field always wins.
+	ESIndex  string `json:"es_index" mapstructure:"es_index"`
+	Level    string `json:"level"`     // dynamic, set by logger, mark the record level
+	File     string `json:"file"`      // source code file:line_number
+	Message  string `json:"message"`   // required, dynamic
+	ServerIP string `json:"server_ip"` // init field, set by app
+	Timestamp string `json:"timestamp"` // required, dynamic, set by logger
+	Now      int64  `json:"now"`       // choice
 
-	ExtraFields map[string]interface{} `json:"extra_fields" mapstructure:"extra_fields"` // hoisted to top level on send
+	// ExtraFields are merged into the top-level JSON on send, below r.fields in
+	// priority (a Base/With/Context field of the same key wins). Prefer
+	// SetBaseFields for static fields.
+	ExtraFields map[string]interface{} `json:"extra_fields" mapstructure:"extra_fields"`
 }
 
 // KafKaWriterOptions kafka writer options.
@@ -108,51 +127,103 @@ func (k *KafKaWriter) Init() error {
 	return k.Start()
 }
 
-// kafkaPayload is a struct with custom MarshalJSON to avoid map alloc + reflection.
+// kafkaPayload is the on-the-wire Kafka→ES record shape. Custom MarshalJSON
+// avoids map alloc + reflection on the hot path.
+//
+// Framework fields (unix_nano/seq/level/file/message/timestamp/now) are always
+// derived from the Record. unix_nano + seq are the strict-ordering keys an ES
+// consumer sorts on (seq primary, unix_nano tie-break) to reconstruct exact log
+// order across partitions/cores. Routing fields (es_index/server_ip) and all
+// business fields are taken from Fields (= the Record's Base+With+Context
+// fields) first, falling back to the legacy KafKaMSGFields struct members only
+// when Fields did not already supply them — so SetBaseField is the single source
+// of truth and always wins.
 type kafkaPayload struct {
-	ESIndex   string                 `json:"es_index"`
+	UnixNano  int64                  `json:"unix_nano"`
+	Seq       uint64                 `json:"seq"`
 	Level     string                 `json:"level"`
-	File      string                 `json:"file"`
+	File      string                 `json:"file,omitempty"`
 	Message   string                 `json:"message"`
-	ServerIP  string                 `json:"server_ip"`
+	ServerIP  string                 `json:"server_ip,omitempty"` // legacy fallback; prefer Base Field
 	Timestamp string                 `json:"timestamp"`
 	Now       int64                  `json:"now"`
-	Fields    map[string]interface{} `json:"-"` // merged into top-level via MarshalJSON
+	ESIndex   string                 `json:"es_index,omitempty"` // legacy fallback; prefer Base Field
+	Fields    map[string]interface{} `json:"-"`                   // r.fields: Base+With+Context — highest priority
 }
 
-// MarshalJSON: fast path (no fields) = struct direct marshal; slow path (fields) = map merge.
-// Custom MarshalJSON avoids goccy's reflection on the Fields map type.
+// MarshalJSON builds the payload by direct byte append for all framework fields
+// (int64/uint64/string — zero reflection, zero map alloc) and marshals only the
+// per-field VALUES of the user Fields (Base/With/Context + ExtraFields). This
+// keeps the slow path (which is hit whenever Base Fields are used — the common
+// Kafka→ES case) close to fast-path cost, instead of paying for a full
+// map[string]interface{} marshal.
+//
+// Field priority:
+//   - Framework keys (unix_nano/seq/level/file/message/timestamp/now) are always
+//     emitted from the record; a same-named user field is ignored (reserved).
+//   - Routing keys (server_ip/es_index): a user Field wins; otherwise the legacy
+//     struct member is the fallback.
+//   - Any other key is emitted from Fields.
 func (p kafkaPayload) MarshalJSON() ([]byte, error) {
-	if len(p.Fields) == 0 {
-		// fast path: no map alloc, direct struct serialization
-		buf := make([]byte, 0, 256)
-		buf = append(buf, '{')
-		buf = appendJSONString(buf, "es_index", p.ESIndex, true)
-		buf = appendJSONString(buf, "level", p.Level, true)
-		buf = appendJSONString(buf, "file", p.File, true)
-		buf = appendJSONString(buf, "message", p.Message, true)
-		buf = appendJSONString(buf, "server_ip", p.ServerIP, true)
-		buf = appendJSONString(buf, "timestamp", p.Timestamp, true)
-		buf = append(buf, `"now":`...)
-		buf = strconv.AppendInt(buf, p.Now, 10)
-		buf = append(buf, '}')
-		return buf, nil
-	}
-	// slow path: with fields, build map
-	m := make(map[string]interface{}, 8+len(p.Fields))
-	m["es_index"] = p.ESIndex
-	m["level"] = p.Level
-	m["file"] = p.File
-	m["message"] = p.Message
-	m["server_ip"] = p.ServerIP
-	m["timestamp"] = p.Timestamp
-	m["now"] = p.Now
+	buf := make([]byte, 0, 256)
+	buf = append(buf, '{')
+	// --- fixed framework block (always present) ---
+	buf = appendKVInt64(buf, "unix_nano", p.UnixNano, false)
+	buf = appendKVUint64(buf, "seq", p.Seq, true)
+	buf = appendJSONString(buf, "level", p.Level, true)
+	buf = appendJSONStringOpt(buf, "file", p.File, true)
+	buf = appendJSONString(buf, "message", p.Message, true)
+	buf = appendJSONString(buf, "timestamp", p.Timestamp, true)
+	buf = appendKVInt64(buf, "now", p.Now, true)
+	// --- routing fields: user Field wins over legacy struct fallback ---
+	buf = appendRoutingField(buf, "server_ip", p.Fields, p.ServerIP)
+	buf = appendRoutingField(buf, "es_index", p.Fields, p.ESIndex)
+	// --- remaining user fields (skip reserved + routing keys already emitted) ---
 	for k, v := range p.Fields {
-		if _, ok := m[k]; !ok {
-			m[k] = v
+		if kafkaReservedKey(k) || k == "server_ip" || k == "es_index" {
+			continue
 		}
+		buf = appendJSONField(buf, k, v)
 	}
-	return goccyjson.Marshal(m)
+	buf = append(buf, '}')
+	return buf, nil
+}
+
+// kafkaReservedKey reports whether k is a framework field always emitted from the
+// record (a same-named user field is intentionally ignored so the framework value
+// is authoritative). server_ip/es_index are NOT reserved — they are routing
+// fields a user Field may legitimately override.
+func kafkaReservedKey(k string) bool {
+	switch k {
+	case "unix_nano", "seq", "level", "file", "message", "timestamp", "now":
+		return true
+	}
+	return false
+}
+
+// appendRoutingField emits a routing key (server_ip/es_index) exactly once: from
+// the user Fields if present (Base Field wins), otherwise from the legacy struct
+// fallback when non-empty. Omitted entirely when neither supplies a value.
+func appendRoutingField(buf []byte, key string, fields map[string]interface{}, fallback string) []byte {
+	if v, ok := fields[key]; ok {
+		return appendJSONField(buf, key, v)
+	}
+	return appendJSONStringOpt(buf, key, fallback, true)
+}
+
+// appendJSONField appends ,"key":<marshaled value> for an arbitrary user field
+// value. The value is marshaled individually (handles strings, numbers, bools,
+// nested objects) with proper escaping via the active codec.
+func appendJSONField(buf []byte, key string, val interface{}) []byte {
+	vb, err := goccyjson.Marshal(val)
+	if err != nil {
+		// never drop a field on a marshal error: emit null so the key is present.
+		vb = []byte("null")
+	}
+	buf = append(buf, ',', '"')
+	buf = append(buf, key...)
+	buf = append(buf, '"', ':')
+	return append(buf, vb...)
 }
 
 // appendJSONString appends "key":"val" to buf, with comma prefix if needed.
@@ -168,17 +239,60 @@ func appendJSONString(buf []byte, key, val string, needComma bool) []byte {
 	return buf
 }
 
-// buildPayload serializes the record to a JSON payload once (struct path = zero map alloc).
+// appendJSONStringOpt is appendJSONString with omitempty semantics: an empty
+// value is omitted entirely (and contributes no comma), keeping the payload free
+// of empty routing/optional fields (es_index/server_ip/file).
+func appendJSONStringOpt(buf []byte, key, val string, needComma bool) []byte {
+	if val == "" {
+		return buf
+	}
+	return appendJSONString(buf, key, val, needComma)
+}
+
+// appendKVInt64 appends "key":<int> to buf.
+func appendKVInt64(buf []byte, key string, val int64, needComma bool) []byte {
+	if needComma {
+		buf = append(buf, ',')
+	}
+	buf = append(buf, '"')
+	buf = append(buf, key...)
+	buf = append(buf, '"', ':')
+	return strconv.AppendInt(buf, val, 10)
+}
+
+// appendKVUint64 appends "key":<uint> to buf.
+func appendKVUint64(buf []byte, key string, val uint64, needComma bool) []byte {
+	if needComma {
+		buf = append(buf, ',')
+	}
+	buf = append(buf, '"')
+	buf = append(buf, key...)
+	buf = append(buf, '"', ':')
+	return strconv.AppendUint(buf, val, 10)
+}
+
+// buildPayload serializes the record to a JSON payload once (struct path = zero
+// map alloc). It reuses the Record's already-captured time (r.unixNano) rather
+// than calling time.Now() again — there is exactly one clock read per record
+// (in deliverRecordToWriter), so the Kafka timestamp never drifts from the
+// record's own time, and the payload carries the strict-ordering keys
+// (unix_nano/seq) the ES consumer sorts on.
 func (k *KafKaWriter) buildPayload(r *Record) []byte {
-	now := time.Now()
 	p := kafkaPayload{
-		ESIndex:   k.options.MSG.ESIndex,
+		UnixNano:  r.unixNano,
+		Seq:       r.seq,
 		Level:     LevelFlags[r.level],
 		File:      r.file,
 		Message:   r.msg,
 		ServerIP:  k.options.MSG.ServerIP,
-		Timestamp: now.Format(timestampLayout),
-		Now:       now.Unix(),
+		// Force the ISO layout regardless of the logger's text layout: ES
+		// auto-parses RFC3339-ish timestamps into its date type; a text layout
+		// like "2006/01/02 15:04:05" would not. time.Unix(0,ns) is a pure field
+		// construction (no syscall), cheaper than the second time.Now() it
+		// replaces.
+		Timestamp: time.Unix(0, r.unixNano).Format(timestampLayout),
+		Now:       r.unixNano / 1e9,
+		ESIndex:   k.options.MSG.ESIndex,
 	}
 	// only allocate Fields map if there are structured fields or ExtraFields
 	if len(r.fields) > 0 || len(k.options.MSG.ExtraFields) > 0 {
