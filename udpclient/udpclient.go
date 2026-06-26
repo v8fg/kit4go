@@ -36,6 +36,12 @@ type ClientMetrics struct {
 	// Retried is the total number of retry attempts made (not counting the
 	// initial attempt). A call that required two retries contributes 2 here.
 	Retried uint64
+
+	// ActiveSends is the number of in-flight datagram calls currently doing
+	// socket I/O at snapshot time. UDP is connectionless so there is no
+	// pool/active-connection analog; this counter tracks the depth of
+	// concurrent writers/readers. Read via atomic load, zero-contention.
+	ActiveSends int32
 }
 
 // ClientEvent is passed to the hook installed via [Client.SetOnEvent] for every
@@ -83,6 +89,13 @@ type Client struct {
 	success atomic.Uint64
 	failed  atomic.Uint64
 	retried atomic.Uint64
+
+	// activeSends is the number of in-flight datagram calls (Send or
+	// SendReceive) currently doing socket I/O. UDP is connectionless so there
+	// is no pool/active-connection analog; instead this counter tracks the
+	// depth of concurrent writers/readers. Read via atomic load for a
+	// zero-contention snapshot.
+	activeSends atomic.Int32
 
 	// closed is set by Close so subsequent calls fail fast without touching the
 	// (possibly nil) conn. Read atomically; written once under no lock since
@@ -181,6 +194,8 @@ func (c *Client) Send(ctx context.Context, data []byte) error {
 		return errClosed
 	}
 	c.total.Add(1)
+	c.activeSends.Add(1)
+	defer c.activeSends.Add(-1)
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -224,6 +239,8 @@ func (c *Client) SendReceive(ctx context.Context, data []byte) ([]byte, error) {
 		return nil, errClosed
 	}
 	c.total.Add(1)
+	c.activeSends.Add(1)
+	defer c.activeSends.Add(-1)
 
 	if ctx == nil {
 		ctx = context.Background()
@@ -465,10 +482,11 @@ func retryDelay(attempt int, minWait, maxWait time.Duration) time.Duration {
 // Metrics returns a point-in-time snapshot of the client's counters.
 func (c *Client) Metrics() ClientMetrics {
 	return ClientMetrics{
-		Total:   c.total.Load(),
-		Success: c.success.Load(),
-		Failed:  c.failed.Load(),
-		Retried: c.retried.Load(),
+		Total:       c.total.Load(),
+		Success:     c.success.Load(),
+		Failed:      c.failed.Load(),
+		Retried:     c.retried.Load(),
+		ActiveSends: c.activeSends.Load(),
 	}
 }
 

@@ -31,6 +31,11 @@ type ClientMetrics struct {
 	// initial attempt). A call that required two retries contributes 2 here.
 	// Only unary RPCs are retried, so stream calls never inflate this counter.
 	Retried uint64
+
+	// Active is the number of in-flight RPCs at snapshot time — calls that have
+	// entered the unary (or stream) interceptor but not yet returned. Read via
+	// an atomic load, so zero-contention and safe to scrape on the hot path.
+	Active int32
 }
 
 // ClientEvent is passed to the hook installed via [Middleware.SetOnEvent] for
@@ -70,6 +75,12 @@ type Client struct {
 	success atomic.Uint64
 	failed  atomic.Uint64
 	retried atomic.Uint64
+
+	// active is the number of in-flight RPCs — calls that have entered an
+	// interceptor but not yet returned. Incremented at the top of each unary
+	// interceptor invocation and decremented via defer, so a snapshot (atomic
+	// load) reports the in-flight depth at zero contention.
+	active atomic.Int32
 
 	// onEvent, when non-nil, is invoked for every notable RPC outcome (request,
 	// retry, success, failed). Set via SetOnEvent and read with an atomic load,
@@ -115,6 +126,7 @@ func (c *Client) Metrics() ClientMetrics {
 		Success: c.success.Load(),
 		Failed:  c.failed.Load(),
 		Retried: c.retried.Load(),
+		Active:  c.active.Load(),
 	}
 }
 

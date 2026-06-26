@@ -113,6 +113,17 @@ type ClientMetrics struct {
 	// Retried is the total number of retry attempts made (not counting the
 	// initial attempt). A call that required two retries contributes 2 here.
 	Retried uint64
+
+	// ActiveConn is the number of in-flight connections at snapshot time —
+	// connections currently checked out of the pool and doing I/O. Read via
+	// an atomic load, so zero-contention and safe to scrape on the hot path.
+	ActiveConn int32
+
+	// PoolSize is the current depth of the idle-connection pool (the number of
+	// idle connections waiting to be reused). It is the channel depth at the
+	// instant of the snapshot and may change as connections are checked out
+	// or returned.
+	PoolSize int
 }
 
 // ClientEvent is passed to the hook installed via [Client.SetOnEvent] for every
@@ -153,6 +164,12 @@ type Client struct {
 	success atomic.Uint64
 	failed  atomic.Uint64
 	retried atomic.Uint64
+
+	// activeConn is the number of connections currently checked out of the
+	// pool and doing I/O. Incremented in withConn before the per-attempt I/O
+	// runs and decremented via defer afterwards, so a snapshot (atomic load)
+	// reports the in-flight depth at zero contention.
+	activeConn atomic.Int32
 
 	// onEvent, when non-nil, is invoked for every notable call-lifecycle event.
 	// Set via SetOnEvent and read with an atomic load, so the default (nil) is
@@ -362,6 +379,8 @@ func (c *Client) withConn(ctx context.Context, fn func(conn net.Conn, poolable *
 	if err != nil {
 		return err
 	}
+	c.activeConn.Add(1)
+	defer c.activeConn.Add(-1)
 	c.fireEvent("connect", 0, 0)
 
 	// Raw net.Conn reads/writes are not woken by context cancellation — only
@@ -569,10 +588,12 @@ func trimNewline(s string) string {
 // Metrics returns a point-in-time snapshot of the client's counters.
 func (c *Client) Metrics() ClientMetrics {
 	return ClientMetrics{
-		Total:   c.total.Load(),
-		Success: c.success.Load(),
-		Failed:  c.failed.Load(),
-		Retried: c.retried.Load(),
+		Total:      c.total.Load(),
+		Success:    c.success.Load(),
+		Failed:     c.failed.Load(),
+		Retried:    c.retried.Load(),
+		ActiveConn: c.activeConn.Load(),
+		PoolSize:   len(c.pool.pool),
 	}
 }
 

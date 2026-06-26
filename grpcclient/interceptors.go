@@ -41,6 +41,8 @@ func (m *Middleware) UnaryClientInterceptor() grpc.UnaryClientInterceptor {
 		opts ...grpc.CallOption,
 	) error {
 		m.metrics.total.Add(1)
+		m.metrics.active.Add(1)
+		defer m.metrics.active.Add(-1)
 
 		// Per-RPC timeout (only when the caller's ctx lacks a deadline). The
 		// cancel is owned by this interceptor and torn down after the loop.
@@ -132,6 +134,8 @@ func (m *Middleware) StreamClientInterceptor() grpc.StreamClientInterceptor {
 		opts ...grpc.CallOption,
 	) (grpc.ClientStream, error) {
 		m.metrics.total.Add(1)
+		m.metrics.active.Add(1)
+		defer m.metrics.active.Add(-1)
 
 		rpcCtx, cancel := m.withTimeout(ctx)
 
