@@ -77,6 +77,13 @@ type ClientOptions struct {
 	// [WithNoRedirect] helpers for clarity.
 	FollowRedirectSet bool `json:"-" mapstructure:"-"`
 
+	// EnableHTTP2 enables HTTP/2 over the transport (h2c for cleartext, ALPN
+	// for TLS). Default false — HTTP/1.1 only. Set true to negotiate HTTP/2
+	// when the server supports it (most modern servers do over TLS).
+	// HTTP/2 multiplexes multiple requests over a single TCP connection, which
+	// can significantly reduce latency for high-fanout calls to the same host.
+	EnableHTTP2 bool `json:"enable_http2" mapstructure:"enable_http2"`
+
 	// Breaker, when non-nil, wraps every call via Breaker.Execute. nil (the
 	// default) disables circuit-breaker integration.
 	Breaker CircuitBreaker `json:"-"`
