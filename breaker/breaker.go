@@ -309,10 +309,17 @@ func (b *Breaker[T]) recordFailure() {
 // b.mu. Only the matching bucket (counts for every call, fails for failures
 // only) is bumped, and the running sums are updated to match.
 func (b *Breaker[T]) recordWindow(success bool) {
-	sec := time.Now().Unix()
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// Read the second UNDER the lock: a value read before acquiring the lock can
+	// be older than base (advanced by a concurrent caller while we waited), which
+	// would otherwise trip advance's backward path and silently drop failure
+	// counts — the breaker could then fail to trip.
+	sec := time.Now().Unix()
 	b.advance(sec)
+	if sec < b.base {
+		sec = b.base // wall clock regressed: charge the current bucket
+	}
 	n := int64(len(b.counts))
 	idx := sec % n
 	b.counts[idx]++
@@ -326,12 +333,12 @@ func (b *Breaker[T]) recordWindow(success bool) {
 // maybeTrip evaluates the Closed→Open condition under b.mu and trips if met.
 // Reads the live sliding-window sums; called only from recordFailure.
 func (b *Breaker[T]) maybeTrip() {
-	sec := time.Now().Unix()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if BreakerState(b.state.Load()) != StateClosed {
 		return
 	}
+	sec := time.Now().Unix()
 	b.advance(sec)
 	if uint32(b.sumTotal) < b.opts.MinRequests {
 		return
@@ -401,16 +408,9 @@ func (b *Breaker[T]) toClosed() {
 func (b *Breaker[T]) advance(sec int64) {
 	n := int64(len(b.counts))
 	if sec <= b.base {
-		// Clock moved backward or same second: clear only the target slot so a
-		// reused second does not double-count across a window boundary.
-		if sec < b.base {
-			i := sec % n
-			b.sumTotal -= b.counts[i]
-			b.sumFail -= b.fails[i]
-			b.counts[i] = 0
-			b.fails[i] = 0
-			b.base = sec
-		}
+		// Stale read or wall-clock regression (NTP). Do NOT clear: destroying
+		// live failure counts on a backward timestamp could make the breaker fail
+		// to trip. The caller clamps its write to base, so leave the window alone.
 		return
 	}
 	if sec-b.base >= n {

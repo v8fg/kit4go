@@ -324,9 +324,10 @@ func TestLimiter_NilOptions(t *testing.T) {
 	}
 }
 
-// TestSlidingWindow_Advance_BackwardClock exercises the sliding-window
-// advance() backward-clock branch directly: a second older than base must clear
-// only the target slot without corrupting the running sum.
+// TestSlidingWindow_Advance_BackwardClock exercises advance()'s handling of a
+// second older than base (a stale read or an NTP wall-clock regression): it must
+// NOT destroy live counts — clearing on a backward timestamp would let the
+// limiter over-allow. The window is left untouched (no clear, base unchanged).
 func TestSlidingWindow_Advance_BackwardClock(t *testing.T) {
 	sw := newSlidingWindow(100, 5*time.Second) // 5 buckets
 	sw.mu.Lock()
@@ -335,25 +336,23 @@ func TestSlidingWindow_Advance_BackwardClock(t *testing.T) {
 		sw.counts[i] = 7
 	}
 	sw.sum = 35
-	sw.mu.Unlock()
 
-	sw.mu.Lock()
-	sw.advance(997) // 997 < base 1000
-	idx := int(int64(997) % int64(sw.windowSec))
-	if sw.counts[idx] != 0 {
-		t.Fatalf("backward advance did not clear slot %d: counts=%d", idx, sw.counts[idx])
+	sw.advance(997) // 997 < base 1000 -> no-op
+	if sw.base != 1000 {
+		t.Fatalf("backward advance moved base: %d, want 1000 (unchanged)", sw.base)
 	}
-	if sw.sum != 28 { // 35 - 7
-		t.Fatalf("after backward advance sum=%d want 28", sw.sum)
+	for i := range sw.counts {
+		if sw.counts[i] != 7 {
+			t.Fatalf("backward advance destroyed bucket %d: counts=%d, want 7", i, sw.counts[i])
+		}
 	}
-	if sw.base != 997 {
-		t.Fatalf("base=%d want 997", sw.base)
+	if sw.sum != 35 {
+		t.Fatalf("backward advance changed sum: %d, want 35 (unchanged)", sw.sum)
 	}
-	// Same-second advance is a no-op.
-	before := sw.sum
-	sw.advance(997)
-	if sw.sum != before {
-		t.Fatalf("same-second advance changed sum: %d -> %d", before, sw.sum)
+	// A same-second advance is likewise a no-op.
+	sw.advance(1000)
+	if sw.sum != 35 || sw.base != 1000 {
+		t.Fatalf("same-second advance changed state: sum=%d base=%d", sw.sum, sw.base)
 	}
 	sw.mu.Unlock()
 }

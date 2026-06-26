@@ -65,10 +65,17 @@ func (sw *slidingWindow) TryAcquire(n int) bool {
 }
 
 func (sw *slidingWindow) acquire(n int) bool {
-	sec := time.Now().Unix()
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
+	// Read the second UNDER the lock: a value read before acquiring the lock can
+	// be older than base (advanced by a concurrent caller while we waited), which
+	// would otherwise trip advance's backward path and silently destroy live
+	// counts — letting the limiter over-allow.
+	sec := time.Now().Unix()
 	sw.advance(sec)
+	if sec < sw.base {
+		sec = sw.base // wall clock regressed: charge the current bucket
+	}
 	if float64(sw.sum)+float64(n) <= sw.rate {
 		sw.counts[int(sec%int64(sw.windowSec))] += n
 		sw.sum += n
@@ -112,14 +119,9 @@ func (sw *slidingWindow) Wait(ctx context.Context) error {
 func (sw *slidingWindow) advance(sec int64) {
 	n := int64(sw.windowSec)
 	if sec <= sw.base {
-		// Clock moved backward or same second: clear only the target slot so a
-		// reused second does not double-count across a window boundary.
-		if sec < sw.base {
-			i := int(sec % n)
-			sw.sum -= sw.counts[i]
-			sw.counts[i] = 0
-			sw.base = sec
-		}
+		// Stale read or wall-clock regression (NTP). Do NOT clear: destroying
+		// live counts on a backward timestamp would let the limiter over-allow.
+		// The caller clamps its write to base, so leave the window untouched.
 		return
 	}
 	if sec-sw.base >= n {

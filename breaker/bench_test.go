@@ -164,9 +164,10 @@ func TestBreaker_HalfOpen_Rejects_Excess(t *testing.T) {
 	wg.Wait()
 }
 
-// TestBreaker_Advance_BackwardClock drives the advance() ring roller with a
-// timestamp older than base, exercising the clock-backward branch (it must
-// clear only the target slot and not panic or corrupt the running sums).
+// TestBreaker_Advance_BackwardClock drives advance() with a timestamp older
+// than base (a stale read or an NTP wall-clock regression): it must NOT destroy
+// live failure counts — clearing on a backward timestamp could make the breaker
+// fail to trip. The window is left untouched (no clear, base unchanged).
 func TestBreaker_Advance_BackwardClock(t *testing.T) {
 	opts := benchOpts()
 	opts.Interval = 5 * time.Second // 5 buckets
@@ -181,34 +182,24 @@ func TestBreaker_Advance_BackwardClock(t *testing.T) {
 	}
 	br.sumTotal = 50
 	br.sumFail = 25
-	br.mu.Unlock()
 
-	// Now advance to a second BEFORE base: the backward branch must clear only
-	// the target slot and lower the sums by exactly that slot's counts.
-	br.mu.Lock()
-	br.advance(997) // 997 < 1000 base
-	idx := int(int64(997) % int64(len(br.counts)))
-	wantTotal := 50 - 10
-	wantFail := 25 - 5
-	if br.counts[idx] != 0 || br.fails[idx] != 0 {
-		t.Fatalf("backward clock did not clear target slot: counts[%d]=%d fails[%d]=%d",
-			idx, br.counts[idx], idx, br.fails[idx])
+	br.advance(997) // 997 < 1000 base -> no-op
+	if br.base != 1000 {
+		t.Fatalf("backward advance moved base: %d, want 1000 (unchanged)", br.base)
 	}
-	if br.sumTotal != wantTotal || br.sumFail != wantFail {
-		t.Fatalf("after backward advance sums=(%d,%d) want (%d,%d)",
-			br.sumTotal, br.sumFail, wantTotal, wantFail)
+	for i := range br.counts {
+		if br.counts[i] != 10 || br.fails[i] != 5 {
+			t.Fatalf("backward advance destroyed bucket %d: counts=%d fails=%d, want 10/5",
+				i, br.counts[i], br.fails[i])
+		}
 	}
-	if br.base != 997 {
-		t.Fatalf("base=%d want 997 after backward advance", br.base)
+	if br.sumTotal != 50 || br.sumFail != 25 {
+		t.Fatalf("backward advance changed sums: (%d,%d), want (50,25)", br.sumTotal, br.sumFail)
 	}
-	br.mu.Unlock()
-
-	// A same-second advance (sec == base) must be a no-op.
-	br.mu.Lock()
-	before := br.sumTotal
-	br.advance(997)
-	if br.sumTotal != before {
-		t.Fatalf("same-second advance changed sum: %d -> %d", before, br.sumTotal)
+	// A same-second advance (sec == base) is likewise a no-op.
+	br.advance(1000)
+	if br.sumTotal != 50 || br.base != 1000 {
+		t.Fatalf("same-second advance changed state: sumTotal=%d base=%d", br.sumTotal, br.base)
 	}
 	br.mu.Unlock()
 }
