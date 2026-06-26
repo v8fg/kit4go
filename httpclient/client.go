@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 // bufPool reuses bytes.Buffer across drainBody calls to reduce per-request
@@ -176,6 +178,10 @@ func NewClient(opts ClientOptions) *Client {
 		MaxIdleConns:        opts.MaxIdleConns,
 		MaxIdleConnsPerHost: opts.MaxIdlePerHost,
 		IdleConnTimeout:     opts.IdleConnTimeout,
+		ForceAttemptHTTP2:   opts.EnableHTTP2,
+	}
+	if opts.EnableHTTP2 {
+		_ = http2.ConfigureTransport(transport)
 	}
 
 	httpCli := &http.Client{
