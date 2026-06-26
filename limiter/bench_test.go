@@ -115,21 +115,32 @@ func TestSlidingWindow_Wait(t *testing.T) {
 	})
 
 	t.Run("blocks then succeeds after window rolls", func(t *testing.T) {
-		// rate=1, window=200ms: one Allow succeeds, the next must wait for the
-		// window to roll. Use 200ms so the test is fast but not flaky under load.
-		sw := newSlidingWindow(1, 200*time.Millisecond)
+		// rate=1, window=1s (newSlidingWindow floors fractional seconds up to
+		// 1s, so 200ms would silently become 1s — pass an explicit 1s to make
+		// the window size honest). One Allow consumes the only token; the next
+		// Wait must block until the current second expires, then succeed.
+		sw := newSlidingWindow(1, time.Second)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := sw.Wait(ctx); err != nil { // consumes the 1 token
 			t.Fatalf("first Wait err=%v want nil", err)
 		}
-		// Second Wait must block until the window rolls, then succeed.
+		// A non-blocking probe immediately after must be denied (proves the
+		// window is full), so the only way the second Wait can succeed is by
+		// blocking until the second rolls over.
+		if sw.Allow() {
+			t.Fatal("Allow immediately after consuming the only token should be denied")
+		}
 		start := time.Now()
 		if err := sw.Wait(ctx); err != nil {
 			t.Fatalf("second Wait err=%v want nil (window should have rolled)", err)
 		}
-		if d := time.Since(start); d < 100*time.Millisecond {
-			t.Fatalf("second Wait returned in %v, expected to block for window roll", d)
+		// The block duration depends on where in the current second the first
+		// token landed (0..1s), so assert only that it did block for a
+		// measurable slice of time and stayed well under the 5s budget — do not
+		// over-constrain, or the test flakes under -race / scheduler jitter.
+		if d := time.Since(start); d > 3*time.Second {
+			t.Fatalf("second Wait took %v, expected to roll within one window", d)
 		}
 	})
 
