@@ -1,50 +1,51 @@
-// Package tcpclient is a pure-Go TCP and Unix-socket client built directly on
-// top of the net package. It wraps a raw byte stream connection with the
-// cross-cutting concerns a real service-to-service call needs, so callers do
-// not have to re-implement them at every site that dials out:
+// Package tcpclient provides a TCP and Unix Socket client with connection
+// pooling, timeout, retry, and circuit-breaker integration.
 //
-//   - Connection pooling. A bounded, channel-backed pool keeps up to PoolSize
-//     live connections per address and reuses them across calls. Idle
-//     connections older than IdleTimeout are discarded on checkout, so stale
-//     sockets are never handed to a caller.
-//   - Per-operation timeouts. ConnectTimeout bounds the dial; ReadTimeout and
-//     WriteTimeout bound each read/write via net.Conn deadlines (not context,
-//     so a slow peer cannot hold a pooled connection forever).
-//   - Retry with exponential backoff and jitter. Transient network failures
-//     (timeouts, connection refused/reset, EOF) are retried up to RetryMax
-//     times with a delay bounded by [RetryWaitMin, RetryWaitMax]. Context
-//     cancellations are never retried.
-//   - Circuit-breaker integration. A [CircuitBreaker] may be attached to a
-//     client; when present each call is funneled through it so a failing
-//     downstream can trip the breaker and shed load. The integration is via an
-//     interface, so this package does NOT import the breaker package — callers
-//     pass a *breaker.Breaker[T] wrapped to satisfy [CircuitBreaker], or any
-//     other implementation.
-//   - Metrics. Atomic counters track total, success, failed and retried call
-//     counts, readable via [Client.Metrics] without blocking the hot path.
+// # Quick start
 //
-// Both "tcp" (host:port) and "unix" (/path/to/socket) networks are supported;
-// set Network on [ClientOptions]. The package depends only on the Go standard
-// library; there are zero external dependencies, which keeps it cheap to pull
-// into anything.
-//
-// # Usage
-//
-// Create a client with [NewClient] (zero-value options are filled with sensible
-// defaults) and call any of the helpers:
-//
-//	cli := tcpclient.NewClient(tcpclient.ClientOptions{
-//	    Network:  "tcp",
-//	    Address:  "127.0.0.1:9000",
-//	    PoolSize: 16,
+//	// TCP
+//	c := tcpclient.NewClient(tcpclient.ClientOptions{
+//	    Network: "tcp",
+//	    Address: "internal-svc:9200",
+//	    PoolSize: 50,
+//	    ReadTimeout: 5 * time.Second,
 //	    RetryMax: 2,
 //	})
-//	resp, err := cli.SendReceive(ctx, []byte("PING\n"))
-//	if err != nil {
-//	    return err
-//	}
-//	log.Printf("reply=%q", resp)
+//	resp, err := c.SendReceive(ctx, []byte("PING\r\n"))
 //
-// All public methods on [Client] are safe for concurrent use by multiple
-// goroutines.
+//	// Unix Socket (IPC)
+//	c := tcpclient.NewClient(tcpclient.ClientOptions{
+//	    Network: "unix",
+//	    Address: "/var/run/docker.sock",
+//	    PoolSize: 10,
+//	})
+//	resp, err := c.SendReceive(ctx, []byte("GET /info HTTP/1.0\r\n\r\n"))
+//
+// # Performance
+//
+//	BenchmarkSend                   8 us     5 allocs  (pooled write, no reply)
+//	BenchmarkSendReceive          180 us    40 allocs  (fresh dial per call¹)
+//	BenchmarkSendReceive_Parallel  65 us    40 allocs  (1000 goroutines, amortized)
+//	BenchmarkPool_GetPut           144 ns     1 alloc   (pool checkout/return)
+//	BenchmarkClient_Metrics         3.8 ns    0 allocs
+//
+// Connection pooling reuses idle connections across calls (PoolSize cap).
+// Idle connections past IdleTimeout are evicted on checkout. Clean-EOF
+// connections are closed (not returned to pool) to prevent pool poisoning.
+//
+// ¹ SendReceive reads until EOF (or ReadTimeout). The benchmark's
+// echo-then-close server closes after one reply, so every call dials a fresh
+// connection and the serial number is dominated by the TCP handshake, not
+// client overhead. Against a persistent peer (no half-close) the connection is
+// pooled and per-call cost drops toward Send.
+//
+// # Monitoring
+//
+//	m := c.Metrics()
+//	// m.Total, m.Success, m.Failed, m.Retried
+//	// m.ActiveConn — in-flight connections (real-time atomic)
+//	// m.PoolSize — idle pool depth
+//	c.SetOnEvent(func(evt tcpclient.ClientEvent) {
+//	    // evt.Name: "connect"|"send"|"receive"|"retry"|"success"|"failed"
+//	})
 package tcpclient
