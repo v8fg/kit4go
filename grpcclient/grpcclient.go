@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync/atomic"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -147,6 +148,14 @@ func (m *Middleware) SetOnEvent(fn func(evt ClientEvent)) { m.metrics.SetOnEvent
 // Metrics returns a point-in-time snapshot of the middleware's counters. See
 // [Client.Metrics].
 func (m *Middleware) Metrics() ClientMetrics { return m.metrics.Metrics() }
+
+// observe records the RPC's end-to-end latency on the configured observer. It
+// assumes m.opts.Latency is non-nil — callers guard the start/defer behind a
+// nil check so the disabled path is a single branch with no time.Now and no
+// defer.
+func (m *Middleware) observe(start time.Time) {
+	m.opts.Latency.Observe(time.Since(start))
+}
 
 // NewMiddleware constructs a [Middleware] from opts, filling zero fields with
 // the package defaults. The returned middleware owns its metrics counters and a

@@ -210,7 +210,13 @@ func (c *Client) fireEvent(name string, bytes, attempt int) {
 	}
 }
 
-// NewClient constructs a [Client] from opts, filling zero fields with the
+// observe records the call's end-to-end latency on the configured observer. It
+// assumes c.opts.Latency is non-nil — callers guard the start/defer behind a
+// nil check so the disabled path is a single branch with no time.Now and no
+// defer.
+func (c *Client) observe(start time.Time) {
+	c.opts.Latency.Observe(time.Since(start))
+}
 // package defaults and wiring up a connection pool sized by PoolSize. The
 // returned client is safe for concurrent use and ready to serve traffic.
 func NewClient(opts ClientOptions) *Client {
@@ -228,6 +234,10 @@ func NewClient(opts ClientOptions) *Client {
 // pool afterwards. Metrics (total/success/failed/retried) are updated.
 func (c *Client) Send(ctx context.Context, data []byte) error {
 	c.total.Add(1)
+	if c.opts.Latency != nil {
+		start := time.Now()
+		defer c.observe(start)
+	}
 
 	doFn := func(ctx context.Context) error {
 		return c.DoWithRetry(ctx, func(ctx context.Context) error {
@@ -260,6 +270,10 @@ func (c *Client) Send(ctx context.Context, data []byte) error {
 // before closing.
 func (c *Client) SendReceive(ctx context.Context, data []byte) ([]byte, error) {
 	c.total.Add(1)
+	if c.opts.Latency != nil {
+		start := time.Now()
+		defer c.observe(start)
+	}
 
 	var resp []byte
 	doFn := func(ctx context.Context) error {
@@ -294,6 +308,10 @@ func (c *Client) SendReceive(ctx context.Context, data []byte) ([]byte, error) {
 // far are returned together with io.EOF.
 func (c *Client) SendReceiveLine(ctx context.Context, data []byte) (string, error) {
 	c.total.Add(1)
+	if c.opts.Latency != nil {
+		start := time.Now()
+		defer c.observe(start)
+	}
 
 	var line string
 	doFn := func(ctx context.Context) error {
