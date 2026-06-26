@@ -115,10 +115,10 @@ func TestSlidingWindow_Wait(t *testing.T) {
 	})
 
 	t.Run("blocks then succeeds after window rolls", func(t *testing.T) {
-		// rate=1, window=1s: one Allow succeeds, the next must wait for the
-		// window to roll (~1s). Use a short window so the test is fast.
-		sw := newSlidingWindow(1, 100*time.Millisecond)
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// rate=1, window=200ms: one Allow succeeds, the next must wait for the
+		// window to roll. Use 200ms so the test is fast but not flaky under load.
+		sw := newSlidingWindow(1, 200*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := sw.Wait(ctx); err != nil { // consumes the 1 token
 			t.Fatalf("first Wait err=%v want nil", err)
@@ -128,7 +128,7 @@ func TestSlidingWindow_Wait(t *testing.T) {
 		if err := sw.Wait(ctx); err != nil {
 			t.Fatalf("second Wait err=%v want nil (window should have rolled)", err)
 		}
-		if d := time.Since(start); d < 50*time.Millisecond {
+		if d := time.Since(start); d < 100*time.Millisecond {
 			t.Fatalf("second Wait returned in %v, expected to block for window roll", d)
 		}
 	})

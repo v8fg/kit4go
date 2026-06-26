@@ -66,13 +66,12 @@ func BenchmarkClient_Get(b *testing.B) {
 		if err != nil {
 			b.Fatalf("get: %v", err)
 		}
-		_ = resp
+		resp.Release()
 	}
 }
 
 // BenchmarkClient_Get_NoRetry measures the pure HTTP cost with retries
-// disabled (RetryMax=0): one send, no retry bookkeeping. Diffing against
-// BenchmarkClient_Get isolates the retry-decision overhead.
+// disabled (RetryMax=0): one send, no retry bookkeeping.
 func BenchmarkClient_Get_NoRetry(b *testing.B) {
 	srv, _ := echoServer(200, "ok")
 	defer srv.Close()
@@ -87,6 +86,7 @@ func BenchmarkClient_Get_NoRetry(b *testing.B) {
 		if err != nil {
 			b.Fatalf("get: %v", err)
 		}
+		resp.Release()
 		_ = resp
 	}
 }

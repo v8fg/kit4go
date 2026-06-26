@@ -7,9 +7,23 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// bufPool reuses bytes.Buffer across drainBody calls to reduce per-request
+// allocations. The buffer is Reset before each use and returned after.
+var bufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+// respPool reuses Response structs. Callers that are done with a Response
+// should call Response.Release() to return it to the pool; if they don't,
+// the GC collects it normally (the pool is just an optimization).
+var respPool = sync.Pool{
+	New: func() any { return new(Response) },
+}
 
 // Response is the fully-materialised result of an HTTP call. The body is read
 // into memory (and the underlying [http.Response.Body] closed) before this
@@ -27,6 +41,24 @@ type Response struct {
 	// Body is the response payload. nil for responses with no body. It is a
 	// snapshot taken at return time; mutating it does not affect the client.
 	Body []byte
+
+	// pooled indicates the Response came from respPool. Release() returns it.
+	pooled bool
+}
+
+// Release returns the Response to the internal pool for reuse. Call this when
+// you are done reading StatusCode/Header/Body to reduce GC pressure on hot
+// paths. After Release, the Response and its fields must not be accessed.
+// Calling Release on a Response not obtained from the pool is a no-op.
+func (r *Response) Release() {
+	if r == nil || !r.pooled {
+		return
+	}
+	r.StatusCode = 0
+	r.Header = nil
+	r.Body = nil
+	r.pooled = false
+	respPool.Put(r)
 }
 
 // ClientMetrics is a point-in-time snapshot of the counters maintained by a
@@ -246,11 +278,11 @@ func (c *Client) Do(ctx context.Context, method, url string, body []byte, header
 		return nil, fmt.Errorf("httpclient: read response body: %w", readErr)
 	}
 
-	resp := &Response{
-		StatusCode: raw.StatusCode,
-		Header:     raw.Header,
-		Body:       respBody,
-	}
+	resp := respPool.Get().(*Response)
+	resp.StatusCode = raw.StatusCode
+	resp.Header = raw.Header
+	resp.Body = respBody
+	resp.pooled = true
 
 	if raw.StatusCode >= 200 && raw.StatusCode < 300 {
 		c.success.Add(1)
@@ -318,8 +350,7 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request) (*http.Resp
 				req.Body = newBody
 			}
 		}
-		// Always re-attach the current ctx.
-		req = req.WithContext(ctx)
+			req = req.WithContext(ctx) // shallow copy, cheap
 
 		resp, err = c.httpCli.Do(req)
 
@@ -383,13 +414,7 @@ func (c *Client) Metrics() ClientMetrics {
 }
 
 // buildRequest constructs an [*http.Request] for the given method/URL/body/
-// headers and attaches a GetBody hook so retry can re-read the body. The body
-// is captured in a closure-backed [bytes.Reader] seeded from body (not body
-// itself), so each GetBody call yields a fresh reader.
-//
-// An error is returned only for a malformed method or URL (the cases in which
-// [http.NewRequestWithContext] fails); caller-supplied header values are
-// applied via Header.Set and do not error here.
+// headers and attaches a GetBody hook so retry can re-read the body.
 func (c *Client) buildRequest(ctx context.Context, method, url string, body []byte, headers map[string]string) (*http.Request, error) {
 	var bodyReader io.Reader
 	if body != nil {
@@ -399,36 +424,37 @@ func (c *Client) buildRequest(ctx context.Context, method, url string, body []by
 	if err != nil {
 		return nil, err
 	}
-
-	// Attach GetBody so retries can rewind. We always have the raw bytes, so
-	// GetBody simply returns a fresh reader over them.
 	if body != nil {
 		bodyCopy := body
 		req.GetBody = func() (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(bodyCopy)), nil
 		}
 	}
-
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	return req, nil
 }
 
-// drainBody reads b.Body fully into a []byte and closes it. A nil or empty body
-// yields a nil slice (rather than an empty one) to make the "no body" case easy
-// to detect. The close always happens, even on read error.
+// drainBody reads b.Body fully into a []byte and closes it. Uses a pooled
+// buffer to avoid allocating a new bytes.Buffer on every call.
 func drainBody(b *http.Response) ([]byte, error) {
 	if b == nil || b.Body == nil {
 		return nil, nil
 	}
 	defer func() { _ = b.Body.Close() }()
-	data, err := io.ReadAll(b.Body)
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+	_, err := buf.ReadFrom(b.Body)
 	if err != nil {
 		return nil, err
 	}
-	if len(data) == 0 {
+	if buf.Len() == 0 {
 		return nil, nil
 	}
-	return data, nil
+	// Append-copy so the returned slice does not alias the pooled buffer.
+	out := make([]byte, buf.Len())
+	copy(out, buf.Bytes())
+	return out, nil
 }
