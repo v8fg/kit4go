@@ -1,51 +1,46 @@
-// Package grpcclient is a production-grade gRPC client wrapper built on top of
-// google.golang.org/grpc. It does NOT generate or own any stubs — instead it
-// provides the cross-cutting middleware a real service-to-service call needs as
-// [grpc.UnaryClientInterceptor] / [grpc.StreamClientInterceptor], so callers wire
-// it onto any *grpc.ClientConn they construct themselves:
+// Package grpcclient provides gRPC interceptor middleware (not stubs) that
+// adds timeout, retry, circuit-breaker, and metrics to any gRPC client.
 //
-//   - Retry with exponential backoff and jitter. Unary RPCs whose gRPC status
-//     code is in RetryCodes (default Unavailable and DeadlineExceeded) are
-//     retried up to RetryMax times with a delay bounded by
-//     [RetryWaitMin, RetryWaitMax]. Streams are never retried by this package:
-//     retrying a stream is semantically unsafe, so the caller must reconnect.
-//   - Per-RPC timeout. RequestTimeout is applied via context.WithTimeout on
-//     every unary and stream call. A caller-supplied deadline that is tighter
-//     than RequestTimeout always wins.
-//   - Circuit-breaker integration. A [CircuitBreaker] may be attached; when
-//     present each call is funneled through it so a failing downstream can trip
-//     the breaker and shed load. The integration is via an interface, so this
-//     package does NOT import the breaker package — callers pass a
-//     *breaker.Breaker[T] which satisfies [CircuitBreaker], or any other
-//     implementation.
-//   - Metrics. Atomic counters track total, success, failed and retried call
-//     counts, readable via [Middleware.Metrics] without blocking the hot path.
-//   - Event hooks. An optional callback ([Middleware.SetOnEvent]) fires for
-//     every notable outcome (request, retry, success, failed), mirroring the
-//     hook pattern used by httpclient, breaker and log4go.
-//
-// The package depends only on google.golang.org/grpc.
-//
-// # Usage
-//
-// Build a [Middleware] from options (zero-value fields are filled with sensible
-// defaults) and pass its interceptors to grpc.Dial:
+// # Quick start
 //
 //	mw := grpcclient.NewMiddleware(grpcclient.ClientOptions{
-//	    Target:         "localhost:50051",
-//	    RequestTimeout: 5 * time.Second,
+//	    Target:         "bid-engine:50051",
+//	    RequestTimeout: 20 * time.Millisecond, // RTB hard budget
 //	    RetryMax:       2,
+//	    RetryCodes:     []codes.Code{codes.Unavailable, codes.DeadlineExceeded},
+//	    Breaker:        myBreaker, // optional
 //	})
 //	conn, err := grpc.Dial(opts.Target,
 //	    grpc.WithTransportCredentials(insecure.NewCredentials()),
 //	    grpc.WithUnaryInterceptor(mw.UnaryClientInterceptor()),
 //	    grpc.WithStreamInterceptor(mw.StreamClientInterceptor()),
 //	)
-//	// Use conn with generated stubs...
+//	// Use conn with any generated stub...
+//	client := pb.NewBidServiceClient(conn)
 //
-// [DialConn] is a convenience that performs the same wiring with insecure
-// credentials and returns the *grpc.ClientConn ready for stub construction.
+// # Performance
 //
-// All public methods on [Middleware] are safe for concurrent use by multiple
-// goroutines.
+//	BenchmarkUnary               33 us    164 allocs (bufconn, no real network)
+//	BenchmarkUnary_Parallel      12 us    149 allocs (RunParallel, amortized)
+//	BenchmarkMiddleware_Metrics    2.4 ns     0 allocs
+//
+// The middleware adds negligible overhead — allocs are dominated by gRPC
+// serialization and the protobuf wire format.
+//
+// # Retry (unary only)
+//
+// Retries gRPC codes in RetryCodes (default: Unavailable, DeadlineExceeded)
+// with exponential backoff + jitter. Never retries on context cancellation
+// or non-retryable codes (NotFound, PermissionDenied, etc.).
+// Streams are NOT retried (semantically unsafe — caller must reconnect).
+//
+// # Monitoring
+//
+//	m := mw.Metrics()
+//	// m.Total, m.Success, m.Failed, m.Retried
+//	// m.Active — in-flight RPCs (real-time atomic)
+//	mw.SetOnEvent(func(evt grpcclient.ClientEvent) {
+//	    // evt.Name: "request"|"retry"|"success"|"failed"
+//	    // evt.Method, evt.Code, evt.Attempt
+//	})
 package grpcclient
