@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
-	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -25,9 +25,10 @@ const (
 	LevelFlagNotice    = "NOTICE"
 	LevelFlagInfo      = "INFO"
 	LevelFlagDebug     = "DEBUG"
+	LevelFlagTrace     = "TRACE"
 )
 
-// RFC5424 log message levels.
+// RFC5424 log message levels + TRACE (finest, below DEBUG).
 // ref: https://tools.ietf.org/html/draft-ietf-syslog-protocol-23
 const (
 	EMERGENCY = iota // Emergency: system is unusable
@@ -38,6 +39,7 @@ const (
 	NOTICE           // Notice: normal but significant condition
 	INFO             // Informational: informational messages
 	DEBUG            // Debug: debug-level messages
+	TRACE            // Trace: variable-level detail for troubleshooting
 )
 
 const (
@@ -70,6 +72,7 @@ var (
 		LevelFlagNotice,
 		LevelFlagInfo,
 		LevelFlagDebug,
+		LevelFlagTrace,
 	}
 	DefaultLayout = defaultLayout
 )
@@ -108,8 +111,13 @@ func newDefaultLoggerInstance() *Logger {
 //	{"time":"2026-06-25T15:04:05.000+0800","level":"INFO","msg":"...",
 //	 "file":"svc.go:42","fields":{"trace_id":"abc","user":7}}
 //
+// FormatLogfmt emits one space-separated key=value line per record (Loki /
+// Promtail / docker friendly):
+//
+//	time=2026-06-25T15:04:05.000+0800 level=INFO msg="..." trace_id=abc user=42
+//
 // The format is decided once per record in deliverRecordToWriter and cached on
-// r.jsonBytes, so every registered writer (Console/File/Net/IO) outputs the
+// r.formattedBytes, so every registered writer (Console/File/Net/IO) outputs the
 // pre-serialized bytes without re-serializing. KafKaWriter already emits its
 // own JSON payload and is unaffected.
 type LogFormat int32
@@ -120,23 +128,32 @@ const (
 	// FormatJSON emits one JSON object per record (Record.JSON), suitable for
 	// machine ingestion / log shippers like Fluentd/Filebeat.
 	FormatJSON
+	// FormatLogfmt emits one space-separated key=value line per record
+	// (Record.Logfmt), the format Loki/Promtail/docker consume natively.
+	FormatLogfmt
 )
 
-// String returns the lowercase config name ("text"/"json") used by LogConfig.
+// String returns the lowercase config name ("text"/"json"/"logfmt") used by LogConfig.
 func (f LogFormat) String() string {
-	if f == FormatJSON {
+	switch f {
+	case FormatJSON:
 		return "json"
+	case FormatLogfmt:
+		return "logfmt"
+	default:
+		return "text"
 	}
-	return "text"
 }
 
-// ParseLogLogFormat parses a config string ("text"/"json", case-insensitive)
-// into a LogFormat. Unknown values fall back to FormatText with a log line so
-// misconfiguration is loud rather than silently changing output.
+// ParseLogLogFormat parses a config string ("text"/"json"/"logfmt",
+// case-insensitive) into a LogFormat. Unknown values fall back to FormatText
+// with a log line so misconfiguration is loud rather than silently changing output.
 func ParseLogLogFormat(s string) LogFormat {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "json":
 		return FormatJSON
+	case "logfmt":
+		return FormatLogfmt
 	case "text", "":
 		return FormatText
 	}
@@ -162,15 +179,8 @@ func defaultLogger() *Logger {
 	return loggerDefault.Load()
 }
 
-// field is a structured key/value pair attached to a Logger (via With/WithField/
-// WithFields) and copied onto every Record it emits. Writers that render
-// structured output (Record.String for text, KafKaWriter.buildPayload for JSON)
-// surface these fields. They are read-only after attachment; a Logger never
-// mutates the slice of a shared parent, it always clones (see With).
-type field struct {
-	key string
-	val interface{}
-}
+// field (the internal typed key/value pair) and its constructors/serialization
+// live in field.go.
 
 // Record log record
 type Record struct {
@@ -190,12 +200,12 @@ type Record struct {
 	// them as a trailing JSON object; KafKaWriter.buildPayload hoists them into
 	// the top-level JSON map.
 	fields []field
-	// jsonBytes is the pre-serialized JSON form of the record, populated once by
+	// formattedBytes is the pre-serialized JSON form of the record, populated once by
 	// deliverRecordToWriter when the Logger's format is FormatJSON. Writers
 	// (Console/File/Net/IO) that support the FormattedWriter fast path emit these
 	// bytes verbatim to avoid re-serializing per writer. nil under FormatText.
 	// Reset to nil by the bootstrap goroutine before returning to the pool.
-	jsonBytes []byte
+	formattedBytes []byte
 }
 
 // globalSeq is the process-global monotonic record sequence counter.
@@ -203,6 +213,64 @@ type Record struct {
 // concurrency (multi-goroutine, multi-core), every record gets a unique seq
 // that reflects its logical creation order.
 var globalSeq uint64
+
+// callerCache memoizes the "file:line[ func]" string per call site. A program
+// counter always maps to one source location, so the runtime string work
+// (FuncForPC, FileLine, name base) runs exactly once per log call site; every
+// subsequent call at that site is a map lookup. This removes the per-record
+// caller allocs (runtime.Caller's file string + the file:line concat). The key
+// includes fullPath/withFunc so different caller-render configs cache separate
+// strings. Bounded by the number of distinct log call sites (small).
+var (
+	callerCache   = make(map[callerKey]string)
+	callerCacheMu sync.RWMutex
+)
+
+type callerKey struct {
+	pc       uintptr
+	fullPath bool
+	withFunc bool
+}
+
+// callerFileLine resolves pc to "base.go:line" (or full path, or with func name)
+// using callerCache. Misses compute once via runtime.FuncForPC.FileLine and
+// store; hits return the memoized string with no allocation.
+func callerFileLine(pc uintptr, fullPath, withFunc bool) string {
+	key := callerKey{pc: pc, fullPath: fullPath, withFunc: withFunc}
+	callerCacheMu.RLock()
+	s, ok := callerCache[key]
+	callerCacheMu.RUnlock()
+	if ok {
+		return s
+	}
+	s = computeCallerFileLine(pc, fullPath, withFunc)
+	callerCacheMu.Lock()
+	callerCache[key] = s
+	callerCacheMu.Unlock()
+	return s
+}
+
+// computeCallerFileLine builds the caller string for a PC (runs once per site).
+func computeCallerFileLine(pc uintptr, fullPath, withFunc bool) string {
+	fn := runtime.FuncForPC(pc)
+	file, line := fn.FileLine(pc)
+	if !fullPath {
+		if i := strings.LastIndexByte(file, '/'); i >= 0 {
+			file = file[i+1:]
+		}
+	}
+	var lb [20]byte
+	s := file + ":" + string(strconv.AppendInt(lb[:0], int64(line), 10))
+	if withFunc {
+		if name := fn.Name(); name != "" {
+			if i := strings.LastIndexByte(name, '/'); i >= 0 {
+				name = name[i+1:]
+			}
+			s += " " + name
+		}
+	}
+	return s
+}
 
 // FieldsJSON returns the record's structured fields marshaled to a JSON object
 // (e.g. `{"trace_id":"abc","user":42}`). Returns "" when there are no fields,
@@ -212,15 +280,11 @@ func (r *Record) FieldsJSON() string {
 	if len(r.fields) == 0 {
 		return ""
 	}
-	m := make(map[string]interface{}, len(r.fields))
-	for _, f := range r.fields {
-		m[f.key] = f.val
-	}
-	b, err := jsonMarshal(m)
-	if err != nil {
-		return ""
-	}
-	return string(b)
+	// Direct typed append — no map allocation, no reflection. Scalars render
+	// inline; kindAny values still go through the active codec (appendFieldJSON).
+	buf := make([]byte, 0, 32+len(r.fields)*16)
+	buf = appendFieldsJSONObject(buf, r.fields)
+	return string(buf)
 }
 
 // RecordJSON is the on-the-wire shape of a record when the Logger format is
@@ -238,33 +302,35 @@ type RecordJSON struct {
 
 // JSON serializes the record to a single JSON object terminated by a newline
 // (one log line == one JSON document, the convention Fluentd/Filebeat expect).
-// The time field uses the ISO-ish timestampLayout; level uses LevelFlags; fields
-// is omitted entirely when there are none. On marshal error it falls back to the
-// text String() form so a record is never silently lost.
-//
-// This is called once per record in deliverRecordToWriter (FormatJSON only) and
-// cached on r.jsonBytes, so it is NOT on the multi-writer path — each record
-// pays exactly one json.Marshal regardless of how many writers are registered.
+// Field order is fixed (unix_nano, seq, time, level, msg, file, fields); scalars
+// are rendered by direct typed append (no map, no reflection), so this path is
+// allocation-free for scalar fields. This is called once per record in
+// deliverRecordToWriter (FormatJSON only) and cached on r.formattedBytes, so each
+// record pays exactly one serialization regardless of how many writers run.
 func (r *Record) JSON() []byte {
-	rj := RecordJSON{
-		Time:  r.time,
-		Level: LevelFlags[r.level],
-		Msg:   r.msg,
-		File:  r.file,
+	buf := make([]byte, 0, 192+len(r.fields)*16)
+	buf = append(buf, '{')
+	buf = append(buf, `"unix_nano":`...)
+	buf = strconv.AppendInt(buf, r.unixNano, 10)
+	buf = append(buf, `,"seq":`...)
+	buf = strconv.AppendUint(buf, r.seq, 10)
+	buf = append(buf, `,"time":"`...)
+	buf = appendISOTimeUTC(buf, r.unixNano)
+	buf = append(buf, '"')
+	buf = append(buf, `,"level":`...)
+	buf = appendJSONQuoted(buf, LevelFlags[r.level])
+	buf = append(buf, `,"msg":`...)
+	buf = appendJSONQuoted(buf, r.msg)
+	if r.file != "" {
+		buf = append(buf, `,"file":`...)
+		buf = appendJSONQuoted(buf, r.file)
 	}
 	if len(r.fields) > 0 {
-		rj.Fields = make(map[string]interface{}, len(r.fields))
-		for _, f := range r.fields {
-			rj.Fields[f.key] = f.val
-		}
+		buf = append(buf, `,"fields":`...)
+		buf = appendFieldsJSONObject(buf, r.fields)
 	}
-	b, err := jsonMarshal(rj)
-	if err != nil {
-		// never lose a record: fall back to text. The caller (deliverRecordToWriter)
-		// ignores the returned bytes in the error path; this is the last resort.
-		return []byte(r.String())
-	}
-	return append(b, '\n')
+	buf = append(buf, '}', '\n')
+	return buf
 }
 
 // String renders the record line in the canonical format
@@ -333,17 +399,19 @@ type Logger struct {
 	layout         atomic.Pointer[string]
 	level          atomic.Int32
 	format         atomic.Int32       // LogFormat (FormatText/FormatJSON); atomic for lock-free hot-path read
-	recordsByLevel *[DEBUG + 1]uint64 // per-level record counters (monitoring); pointer so child Loggers share the root's counters
+	recordsByLevel *[TRACE + 1]uint64 // per-level record counters (monitoring); pointer so child Loggers share the root's counters
 	fullPath       atomic.Bool        // show full path, default only show file:line_number
 	withFuncName   atomic.Bool        // show caller func name
 	hasCaller      atomic.Bool        // capture caller (file:line); disable for max throughput
 
 	// baseFields are global static fields registered once via SetBaseField(s)
-	// and carried by EVERY record. Unlike With() (per-sub-logger), these are
-	// the "environment" fields: hostname, server_ip, app_name, env, version.
-	// Set once at startup, read on every deliverRecordToWriter (immutable
-	// after set, stored in atomic.Pointer for lock-free hot-path read).
-	baseFields atomic.Pointer[[]field]
+	// and carried by EVERY record — including those emitted by child Loggers
+	// produced via With/WithField/WithFields/WithContext. To honor that contract
+	// live (a SetBaseField on the root is visible to every child, even children
+	// created earlier), the storage is shared by pointer: clone() copies the
+	// *baseFieldsHolder, so parent and children read the same atomic. Stored in
+	// an atomic.Pointer for lock-free hot-path read.
+	baseFields *baseFieldsHolder
 
 	// fields carries structured key/value pairs attached via With/WithField/
 	// WithFields. A child Logger always gets its OWN copy (see clone), so a
@@ -371,6 +439,14 @@ type Logger struct {
 	hasSubSecond atomic.Bool
 }
 
+// baseFieldsHolder is the shared backing store for a logger's base fields. It is
+// heap-allocated once per logger tree and shared (by pointer) with every clone,
+// so SetBaseField on any logger in the tree is visible to all of them — base
+// fields affect the singleton and every child Logger, per the SetBaseField doc.
+type baseFieldsHolder struct {
+	v atomic.Pointer[[]field]
+}
+
 // NewLogger create the logger
 func NewLogger() *Logger {
 	return defaultLogger()
@@ -386,7 +462,8 @@ func newLoggerWithRecords(records chan *Record) *Logger {
 
 	l.records = records
 	l.c = make(chan bool, 1)
-	l.recordsByLevel = new([DEBUG + 1]uint64)
+	l.recordsByLevel = new([TRACE + 1]uint64)
+	l.baseFields = &baseFieldsHolder{} // shared with every clone (see clone)
 	l.level.Store(int32(DEBUG))
 	lp := DefaultLayout
 	l.layout.Store(&lp)
@@ -421,7 +498,7 @@ func (l *Logger) snapshotWriters() []Writer {
 
 // LoggerMetrics is a snapshot of per-level record counters for monitoring.
 type LoggerMetrics struct {
-	Records [DEBUG + 1]uint64 // indexed by level (EMERGENCY..DEBUG)
+	Records [TRACE + 1]uint64 // indexed by level (EMERGENCY..DEBUG)
 }
 
 // Metrics returns per-level record counters of this logger for monitoring.
@@ -453,6 +530,15 @@ func (l *Logger) Close() {
 				log.Println(err)
 			}
 		}
+		// Writers that own an async daemon with a Close() error (e.g.
+		// WebhookWriter wrapping a WebhookAlertSink) are shut down here, so a
+		// single defer log4go.Close() cleans up every sink. Writers without a
+		// Close() error (Console/File/Kafka/Net, which use Stop()) are skipped.
+		if c, ok := w.(io.Closer); ok {
+			if err := c.Close(); err != nil {
+				log.Println(err)
+			}
+		}
 	}
 }
 
@@ -468,7 +554,7 @@ func (l *Logger) SetLayout(layout string) {
 // a child Logger), base fields affect the singleton and all child Loggers.
 // Use at startup for environment fields: hostname, server_ip, app_name, env.
 func (l *Logger) SetBaseField(key string, val interface{}) {
-	cur := l.baseFields.Load()
+	cur := l.baseFields.v.Load()
 	var next []field
 	if cur != nil {
 		next = make([]field, len(*cur)+1)
@@ -476,21 +562,21 @@ func (l *Logger) SetBaseField(key string, val interface{}) {
 	} else {
 		next = make([]field, 1)
 	}
-	next[len(next)-1] = field{key: key, val: val}
-	l.baseFields.Store(&next)
+	next[len(next)-1] = fieldOf(key, val)
+	l.baseFields.v.Store(&next)
 }
 
 // SetBaseFields is a batch version of SetBaseField.
 func (l *Logger) SetBaseFields(m map[string]interface{}) {
-	cur := l.baseFields.Load()
+	cur := l.baseFields.v.Load()
 	next := make([]field, 0, len(m)+func() int { if cur != nil { return len(*cur) }; return 0 }())
 	if cur != nil {
 		next = append(next, *cur...)
 	}
 	for k, v := range m {
-		next = append(next, field{key: k, val: v})
+		next = append(next, fieldOf(k, v))
 	}
-	l.baseFields.Store(&next)
+	l.baseFields.v.Store(&next)
 }
 
 // SetBaseField registers a global static field on the default logger.
@@ -507,9 +593,9 @@ func (l *Logger) SetLevel(lvl int) {
 // SetFormat selects the record serialization format (FormatText or FormatJSON).
 // FormatText (the default) emits the human-readable line; FormatJSON emits one
 // JSON object per record (see Record.JSON). The format is read once per record
-// in deliverRecordToWriter and decides whether r.jsonBytes is pre-serialized.
+// in deliverRecordToWriter and decides whether r.formattedBytes is pre-serialized.
 // All registered writers honor the format via the FormattedWriter fast path
-// (they emit r.jsonBytes when non-nil, else r.String()), so no per-writer change
+// (they emit r.formattedBytes when non-nil, else r.String()), so no per-writer change
 // is needed.
 func (l *Logger) SetFormat(f LogFormat) {
 	l.format.Store(int32(f))
@@ -556,6 +642,7 @@ func (l *Logger) clone() *Logger {
 		sampler:         l.sampler,
 		ctxExtractor:    l.ctxExtractor,
 		recordsByLevel:  l.recordsByLevel, // shared pointer so children's emits count on the root
+		baseFields:      l.baseFields,     // shared pointer: SetBaseField on the root is live-visible to every child
 	}
 	// copy current atomic knob values into the child
 	c.level.Store(l.level.Load())
@@ -584,11 +671,17 @@ func (l *Logger) clone() *Logger {
 // KafKaWriter.buildPayload (hoisted into the top-level JSON map). Loggers
 // without With pay no fields cost: Record.String short-circuits on empty fields.
 func (l *Logger) With(key string, val interface{}) *Logger {
+	return l.withField(fieldOf(key, val))
+}
+
+// withField returns a child Logger carrying one more (already typed) field.
+// copy-on-write: the parent's slice stays immutable. All With* variants funnel
+// through here so the clone happens once.
+func (l *Logger) withField(f field) *Logger {
 	c := l.clone()
-	// copy-on-write: build a new slice so the parent's slice stays immutable.
 	nf := make([]field, len(l.fields), len(l.fields)+1)
 	copy(nf, l.fields)
-	nf = append(nf, field{key: key, val: val})
+	nf = append(nf, f)
 	c.fields = nf
 	return c
 }
@@ -607,11 +700,41 @@ func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
 	nf := make([]field, 0, len(l.fields)+len(fields))
 	nf = append(nf, l.fields...)
 	for k, v := range fields {
-		nf = append(nf, field{key: k, val: v})
+		nf = append(nf, fieldOf(k, v))
 	}
 	c.fields = nf
 	return c
 }
+
+// WithAttrs returns a child Logger carrying the given typed Fields (constructed
+// via log4go.String/Int/Bool/...). Scalars never box — the allocation-free
+// counterpart to With(key, interface{}).
+func (l *Logger) WithAttrs(attrs ...Field) *Logger {
+	if len(attrs) == 0 {
+		return l.clone()
+	}
+	c := l.clone()
+	nf := make([]field, len(l.fields), len(l.fields)+len(attrs))
+	copy(nf, l.fields)
+	for _, a := range attrs {
+		nf = append(nf, a.f)
+	}
+	c.fields = nf
+	return c
+}
+
+// WithString/WithInt/... are the typed, allocation-free variants of With for
+// the common scalar types. They avoid the interface{} boxing that With pays.
+func (l *Logger) WithString(key, val string) *Logger            { return l.withField(strField(key, val)) }
+func (l *Logger) WithInt(key string, val int) *Logger           { return l.withField(intField(key, val)) }
+func (l *Logger) WithInt64(key string, val int64) *Logger       { return l.withField(int64Field(key, val)) }
+func (l *Logger) WithUint64(key string, val uint64) *Logger     { return l.withField(uint64Field(key, val)) }
+func (l *Logger) WithBool(key string, val bool) *Logger         { return l.withField(boolField(key, val)) }
+func (l *Logger) WithFloat64(key string, val float64) *Logger   { return l.withField(floatField(key, val)) }
+func (l *Logger) WithDuration(key string, val time.Duration) *Logger { return l.withField(durField(key, val)) }
+func (l *Logger) WithTime(key string, val time.Time) *Logger    { return l.withField(timeField(key, val)) }
+func (l *Logger) WithBytes(key string, val []byte) *Logger      { return l.withField(bytesField(key, val)) }
+func (l *Logger) WithError(key string, val error) *Logger       { return l.withField(errField(key, val)) }
 
 // WithSampling returns a child Logger that applies sampling to prevent
 // high-frequency log storms. The first `initial` records at each level are all
@@ -692,7 +815,7 @@ func (l *Logger) attachContextFields(ctx context.Context) {
 	nf := make([]field, 0, len(l.fields)+len(m))
 	nf = append(nf, l.fields...)
 	for k, v := range m {
-		nf = append(nf, field{key: k, val: v})
+		nf = append(nf, fieldOf(k, v))
 	}
 	l.fields = nf
 }
@@ -735,6 +858,12 @@ func defaultContextExtractor(ctx context.Context) map[string]interface{} {
 // Debug level debug
 func (l *Logger) Debug(fmt string, args ...interface{}) {
 	l.deliverRecordToWriter(DEBUG, fmt, args...)
+}
+
+// Trace level trace — finest granularity, below DEBUG. Use for variable-level
+// detail during troubleshooting (individual values, loop iterations).
+func (l *Logger) Trace(fmt string, args ...interface{}) {
+	l.deliverRecordToWriter(TRACE, fmt, args...)
 }
 
 // Info level info
@@ -791,38 +920,23 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	}
 
 	msg = f
-	sz := len(args)
-	if sz != 0 {
-		if strings.Contains(msg, "%") && !strings.Contains(msg, "%%") {
-		} else {
-			msg += strings.Repeat("%v", len(args))
+	if sz := len(args); sz != 0 {
+		if !(strings.Contains(msg, "%") && !strings.Contains(msg, "%%")) {
+			msg += strings.Repeat("%v", sz)
 		}
+		msg = fmt.Sprintf(msg, args...) // skipped for the common no-args case (saves an alloc + fixes lone-% mangling)
 	}
-	msg = fmt.Sprintf(msg, args...)
 
-	// source code, file and line num
+	// source code, file and line num. runtime.Callers returns ONLY the PC (no
+	// file-string alloc, unlike runtime.Caller); the PC -> "file:line[ func]"
+	// mapping is then resolved through callerFileLine, which memoizes it per call
+	// site (a given PC is always the same source location). Steady state: 0 alloc
+	// on the caller path (the file string + FuncForPC.Name run once per site).
 	if l.hasCaller.Load() {
-		fi := bufPool.Get().(*bytes.Buffer)
-		fi.Reset()
-		pc, file, line, ok := runtime.Caller(2)
-		if ok {
-			fileName := path.Base(file)
-			if l.fullPath.Load() {
-				fileName = file
-			}
-			fi.WriteString(fileName)
-			fi.WriteByte(':')
-			fi.WriteString(strconv.Itoa(line))
-
-			if l.withFuncName.Load() {
-				funcName := runtime.FuncForPC(pc).Name()
-				funcName = path.Base(funcName)
-				fi.WriteByte(' ')
-				fi.WriteString(funcName)
-			}
+		var pcs [1]uintptr
+		if runtime.Callers(3, pcs[:]) > 0 {
+			fileStr = callerFileLine(pcs[0], l.fullPath.Load(), l.withFuncName.Load())
 		}
-		fileStr = fi.String()
-		bufPool.Put(fi)
 	}
 
 	// format time
@@ -855,7 +969,7 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	// Merge base fields (global static, e.g. hostname/server_ip) + logger fields
 	// (from With/WithField/WithFields) + context fields. Priority: context >
 	// logger > base (more specific wins). We append base fields first if present.
-	if bf := l.baseFields.Load(); bf != nil && len(*bf) > 0 {
+	if bf := l.baseFields.v.Load(); bf != nil && len(*bf) > 0 {
 		if len(l.fields) > 0 {
 			merged := make([]field, 0, len(*bf)+len(l.fields))
 			merged = append(merged, *bf...)    // base first (lowest priority)
@@ -868,38 +982,15 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 		r.fields = l.fields
 	}
 
-	// Pre-serialize once for FormatJSON so every registered writer emits the
-	// same bytes without re-marshaling. For FormatText r.jsonBytes stays nil and
-	// writers fall back to r.String(). The JSON time field uses the ISO-ish
-	// timestampLayout (machine-readable, timezone-aware) regardless of the
-	// logger's text layout, per the structured-logging convention.
-	if LogFormat(l.format.Load()) == FormatJSON {
-		rJSON := RecordJSON{
-			UnixNano: r.unixNano,
-			Seq:      r.seq,
-			Level:    LevelFlags[level],
-			Msg:      msg,
-			File:     fileStr,
-		}
-		// JSON time prefers the canonical timestampLayout; fall back to the
-		// logger's text-layout time if formatting fails (never happens for the
-		// const layout, but keeps rJSON.Time non-empty defensively).
-		rJSON.Time = now.Format(timestampLayout)
-		if rJSON.Time == "" {
-			rJSON.Time = lastTimeStr
-		}
-		if len(l.fields) > 0 {
-			rJSON.Fields = make(map[string]interface{}, len(l.fields))
-			for _, f := range l.fields {
-				rJSON.Fields[f.key] = f.val
-			}
-		}
-		if b, err := jsonMarshal(rJSON); err == nil {
-			r.jsonBytes = append(b, '\n')
-		} else {
-			// marshal error: leave jsonBytes nil so writers use String() (text).
-			// Better to emit text than to drop the record.
-		}
+	// Pre-serialize once for FormatJSON / FormatLogfmt so every registered writer
+	// emits the same bytes without re-serializing. For FormatText r.formattedBytes
+	// stays nil and writers fall back to r.String(). Typed fields render directly
+	// (no map), so base fields (merged into r.fields above) are included.
+	switch LogFormat(l.format.Load()) {
+	case FormatJSON:
+		r.formattedBytes = r.JSON()
+	case FormatLogfmt:
+		r.formattedBytes = r.Logfmt()
 	}
 
 	l.records <- r
@@ -939,13 +1030,13 @@ func bootstrapLogWriter(logger *Logger) {
 				}
 			}
 
-			// Drop the fields + jsonBytes references before returning to the pool
+			// Drop the fields + formattedBytes references before returning to the pool
 			// so a logger's long-lived fields slice and the JSON buffer are not
 			// pinned by a pooled record. r.msg/time/file are scalars and
-			// overwritten on reuse, but r.fields/r.jsonBytes are slice headers
+			// overwritten on reuse, but r.fields/r.formattedBytes are slice headers
 			// that would otherwise leak stale data into the next record.
 			r.fields = nil
-			r.jsonBytes = nil
+			r.formattedBytes = nil
 			recordPool.Put(r)
 
 		case <-flushTimer.C:
@@ -1045,6 +1136,22 @@ func WithFields(fields map[string]interface{}) *Logger {
 	return defaultLogger().WithFields(fields)
 }
 
+// WithAttrs returns a child Logger of the package singleton carrying the given
+// typed Fields (allocation-free for scalars). See Logger.WithAttrs.
+func WithAttrs(attrs ...Field) *Logger { return defaultLogger().WithAttrs(attrs...) }
+
+// WithString/WithInt/... are the typed, allocation-free variants of With on the
+// package singleton (see the Logger methods of the same name).
+func WithString(key, val string) *Logger            { return defaultLogger().WithString(key, val) }
+func WithInt(key string, val int) *Logger           { return defaultLogger().WithInt(key, val) }
+func WithInt64(key string, val int64) *Logger       { return defaultLogger().WithInt64(key, val) }
+func WithBool(key string, val bool) *Logger         { return defaultLogger().WithBool(key, val) }
+func WithFloat64(key string, val float64) *Logger   { return defaultLogger().WithFloat64(key, val) }
+func WithDuration(key string, val time.Duration) *Logger { return defaultLogger().WithDuration(key, val) }
+func WithTime(key string, val time.Time) *Logger    { return defaultLogger().WithTime(key, val) }
+func WithBytes(key string, val []byte) *Logger      { return defaultLogger().WithBytes(key, val) }
+func WithError(key string, val error) *Logger       { return defaultLogger().WithError(key, val) }
+
 // WithSampling returns a child Logger of the package singleton with sampling
 // applied (see Logger.WithSampling).
 func WithSampling(initial, thereafter int) *Logger {
@@ -1067,6 +1174,11 @@ func WithContext(ctx context.Context) *Logger {
 // Debug level debug
 func Debug(fmt string, args ...interface{}) {
 	defaultLogger().deliverRecordToWriter(DEBUG, fmt, args...)
+}
+
+// Trace level trace — finest granularity, below DEBUG.
+func Trace(fmt string, args ...interface{}) {
+	defaultLogger().deliverRecordToWriter(TRACE, fmt, args...)
 }
 
 // Info level info

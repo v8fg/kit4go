@@ -24,14 +24,14 @@ func Test_IOWriter_Text(t *testing.T) {
 	}
 }
 
-// Test_IOWriter_JSON confirms IOWriter honors r.jsonBytes (FormatJSON records
+// Test_IOWriter_JSON confirms IOWriter honors r.formattedBytes (FormatJSON records
 // ship as JSON).
 func Test_IOWriter_JSON(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewIOWriter(&buf, DEBUG)
 	r := &Record{
 		level: INFO, time: "t", file: "f", msg: "m",
-		jsonBytes: []byte(`{"time":"t","level":"INFO","msg":"m"}` + "\n"),
+		formattedBytes: []byte(`{"time":"t","level":"INFO","msg":"m"}` + "\n"),
 	}
 	if err := w.Write(r); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -41,7 +41,7 @@ func Test_IOWriter_JSON(t *testing.T) {
 		t.Errorf("JSON output wrong: %q", got)
 	}
 	if strings.Contains(got, "[INFO]") {
-		t.Errorf("emitted text form under jsonBytes: %q", got)
+		t.Errorf("emitted text form under formattedBytes: %q", got)
 	}
 }
 
@@ -68,7 +68,7 @@ func Test_IOWriter_WithFields(t *testing.T) {
 		time:   "t",
 		file:   "f.go:9",
 		msg:    "boom",
-		fields: []field{{key: "trace_id", val: "abc"}},
+		fields: []field{fld("trace_id", "abc")},
 	}
 	if err := w.Write(r); err != nil {
 		t.Fatalf("Write: %v", err)

@@ -125,3 +125,34 @@ func Benchmark_KafKaWriter_buildPayload(b *testing.B) {
 		_ = w.buildPayload(r)
 	}
 }
+
+// Benchmark_KafKaWriter_buildPayload_baseFields measures the realistic Kafka→ES
+// path: a record carrying Base Fields (hostname/server_ip/app/es_index — set once
+// via SetBaseField) plus a per-request trace field, all flowing through r.fields.
+// This is the common integrated configuration and exercises the manual-append
+// slow path (no map marshal).
+func Benchmark_KafKaWriter_buildPayload_baseFields(b *testing.B) {
+	w := &KafKaWriter{options: KafKaWriterOptions{
+		ProducerTopic: "t",
+		MSG:           KafKaMSGFields{}, // legacy struct empty — Base Fields are the source of truth
+	}}
+	r := &Record{
+		level:    INFO,
+		msg:      "benchmark message payload",
+		file:     "f.go:1",
+		unixNano: 1782392990_123456789,
+		seq:      1234567,
+		fields: []field{
+			fld("hostname", "adx-prod-01"),
+			fld("server_ip", "10.0.1.5"),
+			fld("app", "adx-dsp"),
+			fld("es_index", "adx-logs-2026.06"),
+			fld("trace_id", "a1b2c3d4e5f6"),
+		},
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = w.buildPayload(r)
+	}
+}

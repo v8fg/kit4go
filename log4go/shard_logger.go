@@ -1,6 +1,8 @@
 package log4go
 
 import (
+	"log"
+	"runtime"
 	"sync"
 	"sync/atomic"
 )
@@ -16,17 +18,103 @@ type ShardLogger struct {
 	rr      atomic.Uint64
 }
 
-// NewShardLogger creates n independent shards (min 1).
+// autoShardMin is the floor for the auto-computed shard count. Each shard runs
+// a bootstrap goroutine that serially consumes its records channel, so we size
+// shards to GOMAXPROCS/2 — leaving the other half of the cores for the producers
+// (your app) plus the runtime/OS. There is intentionally NO fixed ceiling: the
+// right shard count scales with cores (a 64-core box has a bigger producer pool
+// and needs more parallel consumers). A hard cap like 8 would bottleneck big
+// machines — the old "8 regresses" measurement was on 10 cores (8 shards = 80%
+// of cores to bootstraps, oversubscribed); at GOMAXPROCS/2 it never
+// oversubscribes. Pass an explicit n to NewShardLogger to override.
+// See PERFORMANCE.md §18.
+const autoShardMin = 2
+
+// AutoShardCount returns a recommended shard count for the current machine:
+//
+//	max(2, GOMAXPROCS/2)
+//
+// It honors the effective GOMAXPROCS, which on Go 1.25+ respects the cgroup CPU
+// quota in containers/k8s (a 64-core host limited to 4 CPUs yields 2 shards, not
+// 32). For older Go or misreported GOMAXPROCS, pair with go.uber.org/automaxprocs.
+// Override with NewShardLogger(n) when you want a specific count.
+func AutoShardCount() int {
+	n := runtime.GOMAXPROCS(0) / 2
+	if n < autoShardMin {
+		return autoShardMin
+	}
+	return n
+}
+
+// NewShardLogger creates n independent shards. n <= 0 selects an automatic count
+// via AutoShardCount (recommended for most services); n >= 1 pins the exact
+// count for advanced tuning.
 func NewShardLogger(n int) *ShardLogger {
-	if n < 1 {
-		n = 1
+	if n <= 0 {
+		n = AutoShardCount()
 	}
 	loggers := make([]*Logger, n)
 	for i := range loggers {
 		loggers[i] = newLoggerWithRecords(make(chan *Record, recordChannelSize))
 	}
+	// One startup line so operators can see the effective parallelism log4go
+	// settled on (GOMAXPROCS honors cgroup quota on Go 1.25+; pair with the
+	// kit4go/maxprocs subpackage on older runtimes). Uses the stdlib logger to
+	// avoid bootstrapping log4go into its own startup banner.
+	log.Printf("[log4go] ShardLogger started: GOMAXPROCS=%d shards=%d", runtime.GOMAXPROCS(0), n)
 	return &ShardLogger{loggers: loggers, n: uint64(n)}
 }
+
+// NewShardLoggerAuto is an explicit alias for NewShardLogger(0) — pick the shard
+// count from AutoShardCount(). Prefer this when you want the intent to be loud.
+func NewShardLoggerAuto() *ShardLogger { return NewShardLogger(0) }
+
+// ShardLoggerOptions configures a ShardLogger. JSON/mapstructure tagged for
+// config-file loading (yaml/json/toml), mirroring the XxxWriterOptions pattern.
+//
+//	sl := log4go.NewShardLoggerWithOptions(log4go.ShardLoggerOptions{
+//	    Shards:      0,       // 0 = auto (max(2, GOMAXPROCS/2)); >=1 = pin
+//	    Level:       "info",
+//	    ChannelSize: 8192,    // per-shard records channel capacity
+//	})
+type ShardLoggerOptions struct {
+	// Shards is the shard count: 0 (default) = auto via AutoShardCount;
+	// >=1 pins the exact count (overrides GOMAXPROCS-based sizing).
+	Shards int `json:"shards" mapstructure:"shards"`
+	// Level is the severity threshold name ("debug".."emergency"); empty = DEBUG.
+	Level string `json:"level" mapstructure:"level"`
+	// ChannelSize is the per-shard records channel capacity (<=0 -> package
+	// default 4096). Larger absorbs bigger bursts at the cost of memory.
+	ChannelSize int `json:"channel_size" mapstructure:"channel_size"`
+}
+
+// NewShardLoggerWithOptions builds a ShardLogger from structured options
+// (config-file friendly). Shards<=0 auto-selects; Level and ChannelSize are
+// optional tunables.
+func NewShardLoggerWithOptions(opts ShardLoggerOptions) *ShardLogger {
+	n := opts.Shards
+	if n <= 0 {
+		n = AutoShardCount()
+	}
+	chanSize := int(recordChannelSize)
+	if opts.ChannelSize > 0 {
+		chanSize = opts.ChannelSize
+	}
+	loggers := make([]*Logger, n)
+	for i := range loggers {
+		loggers[i] = newLoggerWithRecords(make(chan *Record, chanSize))
+	}
+	log.Printf("[log4go] ShardLogger started: GOMAXPROCS=%d shards=%d channelSize=%d",
+		runtime.GOMAXPROCS(0), n, chanSize)
+	sl := &ShardLogger{loggers: loggers, n: uint64(n)}
+	if opts.Level != "" {
+		sl.SetLevel(getLevelDefault(opts.Level, DEBUG, "shard"))
+	}
+	return sl
+}
+
+// ShardCount returns the number of shards (for metrics/monitoring export).
+func (s *ShardLogger) ShardCount() int { return len(s.loggers) }
 
 // Register registers a single writer instance to every shard.
 //
@@ -82,6 +170,9 @@ func (s *ShardLogger) pick() *Logger {
 
 // Debug logs at DEBUG on a shard (round-robin).
 func (s *ShardLogger) Debug(format string, args ...interface{}) { s.pick().Debug(format, args...) }
+
+// Trace logs at TRACE on a shard (round-robin).
+func (s *ShardLogger) Trace(format string, args ...interface{}) { s.pick().Trace(format, args...) }
 
 // Info logs at INFO on a shard (round-robin).
 func (s *ShardLogger) Info(format string, args ...interface{}) { s.pick().Info(format, args...) }

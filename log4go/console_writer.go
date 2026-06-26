@@ -33,15 +33,19 @@ func newBrush(color string) brush {
 // 40: black, 41: red, 42: green, 43: yellow, 44: blue, 45: purple, 46: dark green, 47: grey
 
 // (background;font;effect)
+// Severity hierarchy (most → least prominent): red-bg > bold-red > magenta >
+// red > yellow > green > cyan > blue > dark-grey. Each level is visually
+// distinct at a glance; see README.md for the full color table.
 var colors = []brush{
-	newBrush("1;31"), // Emergency          red
-	newBrush("1;36"), // Alert              dark green
-	newBrush("1;35"), // Critical           purple
-	newBrush("1;31"), // Error              red
-	newBrush("1;33"), // Warning            yellow
-	newBrush("1;32"), // Notice             green
-	newBrush("1;34"), // Informational      blue
-	newBrush("2;37"), // Debug              grey
+	newBrush("1;41"), // Emergency          red background (most prominent)
+	newBrush("1;31"), // Alert              bold red
+	newBrush("1;35"), // Critical           bold magenta
+	newBrush("31"),   // Error              red
+	newBrush("33"),   // Warning            yellow
+	newBrush("32"),   // Notice             green
+	newBrush("36"),   // Info               cyan
+	newBrush("34"),   // Debug              blue
+	newBrush("90"),   // Trace              dark grey
 }
 
 func (r *colorRecord) ColorString() string {
@@ -53,10 +57,10 @@ func (r *colorRecord) String() string {
 	inf := ""
 	switch r.level {
 	case EMERGENCY:
-		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[31m%s\033[0m] \033[47;30m%s\033[0m %s\n",
+		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[1;41m%s\033[0m] \033[47;30m%s\033[0m %s\n",
 			r.time, LevelFlags[r.level], r.file, r.msg)
 	case ALERT:
-		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[36m%s\033[0m] \033[47;30m%s\033[0m %s\n",
+		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[1;31m%s\033[0m] \033[47;30m%s\033[0m %s\n",
 			r.time, LevelFlags[r.level], r.file, r.msg)
 	case CRITICAL:
 		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[35m%s\033[0m] \033[47;30m%s\033[0m %s\n",
@@ -71,10 +75,13 @@ func (r *colorRecord) String() string {
 		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[32m%s\033[0m] \033[47;30m%s\033[0m %s\n",
 			r.time, LevelFlags[r.level], r.file, r.msg)
 	case INFO:
-		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[34m%s\033[0m] \033[47;30m%s\033[0m %s\n",
+		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[36m%s\033[0m] \033[47;30m%s\033[0m %s\n",
 			r.time, LevelFlags[r.level], r.file, r.msg)
 	case DEBUG:
-		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[44m%s\033[0m] \033[47;30m%s\033[0m %s\n",
+		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[34m%s\033[0m] \033[47;30m%s\033[0m %s\n",
+			r.time, LevelFlags[r.level], r.file, r.msg)
+	case TRACE:
+		inf = fmt.Sprintf("\033[36m%s\033[0m [\033[90m%s\033[0m] \033[47;30m%s\033[0m %s\n",
 			r.time, LevelFlags[r.level], r.file, r.msg)
 	}
 
@@ -90,11 +97,18 @@ type ConsoleWriter struct {
 	buf       *bufio.Writer
 }
 
-// ConsoleWriterOptions color field options
+// ConsoleWriterOptions configures the console writer. All fields default to
+// zero/false — color is OFF by default so production output is clean plain text
+// (safe for grep / copy / log shippers that choke on ANSI escape codes).
 type ConsoleWriterOptions struct {
-	Enable    bool   `json:"enable" mapstructure:"enable"`
-	Color     bool   `json:"color" mapstructure:"color"`
-	FullColor bool   `json:"full_color" mapstructure:"full_color"`
+	Enable bool `json:"enable" mapstructure:"enable"`
+	// Color renders the level flag with ANSI color (e.g. red for ERROR). OFF by
+	// default — enable only for local development terminals. Production should
+	// keep this false to avoid ANSI escape codes in collected logs.
+	Color bool `json:"color" mapstructure:"color"`
+	// FullColor renders the entire line in the level color (not just the flag).
+	// OFF by default. Requires Color to be useful.
+	FullColor bool `json:"full_color" mapstructure:"full_color"`
 	Level     string `json:"level" mapstructure:"level"`
 	// Buffered wraps os.Stdout in a bufio.Writer to reduce syscalls.
 	// Default false (immediate output for debugging). Set true for high-rate
@@ -135,13 +149,13 @@ func (w *ConsoleWriter) Write(r *Record) error {
 	// bytes verbatim (no color, no String()) — JSON is for machine ingestion.
 	// This keeps the format decision in one place (deliverRecordToWriter) and
 	// avoids re-serializing per writer.
-	if len(r.jsonBytes) > 0 {
+	if len(r.formattedBytes) > 0 {
 		var out *os.File = os.Stdout
 		if w.buf != nil {
-			_, _ = w.buf.Write(r.jsonBytes)
+			_, _ = w.buf.Write(r.formattedBytes)
 			return nil
 		}
-		_, _ = fmt.Fprint(out, string(r.jsonBytes))
+		_, _ = fmt.Fprint(out, string(r.formattedBytes))
 		return nil
 	}
 	var out *os.File = os.Stdout

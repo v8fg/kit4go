@@ -19,6 +19,7 @@
 ## Support list
 
 - [x] [bit](bit) hacks for bit.
+- [x] [cert](cert) ACME (Let's Encrypt) HTTPS cert issuance + renewal (HTTP-01): proactive renewal loop, atomic directory writer (`<domain>.crt`/`<domain>.key`, 0600 key), in-process serving helpers, metrics + events.
 - [x] [datetime](datetime) parse, format, others.
 - [x] [file](file) base file ops.
 - [x] [ip](ip) parse, match, convert, info.

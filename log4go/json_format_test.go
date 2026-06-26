@@ -71,7 +71,7 @@ func Test_RecordJSON_WithFields(t *testing.T) {
 		time:   "t",
 		file:   "f.go:9",
 		msg:    "boom",
-		fields: []field{{key: "trace_id", val: "abc"}, {key: "user", val: 42}},
+		fields: []field{fld("trace_id", "abc"), fld("user", 42)},
 	}
 	b := r.JSON()
 	var m map[string]interface{}
@@ -90,25 +90,27 @@ func Test_RecordJSON_WithFields(t *testing.T) {
 	}
 }
 
-// Test_RecordJSON_MarshalError confirms a marshal error falls back to the text
-// form (never silently drops the record). We inject a failing encoder.
-func Test_RecordJSON_MarshalError(t *testing.T) {
-	orig := jsonMarshal
-	jsonMarshal = func(v interface{}) ([]byte, error) {
-		return nil, errInjected
-	}
-	defer func() { jsonMarshal = orig }()
-
-	r := &Record{level: INFO, time: "t", file: "f", msg: "m", fields: []field{{key: "k", val: "v"}}}
+// Test_RecordJSON_UnmarshallableAny confirms a kindAny value JSON cannot encode
+// (a channel) degrades to null in place. Record.JSON uses direct typed append,
+// so it never fails and never falls back to text; the document stays valid JSON.
+func Test_RecordJSON_UnmarshallableAny(t *testing.T) {
+	r := &Record{level: INFO, time: "t", file: "f", msg: "m",
+		fields: []field{anyField("k", make(chan int))}}
 	b := r.JSON()
-	// On error JSON() falls back to String(); must contain the canonical prefix.
-	if !strings.Contains(string(b), "t [INFO] <f> m") {
-		t.Fatalf("marshal-error fallback wrong: %q", b)
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("JSON() produced invalid JSON: %v\n%s", err, b)
+	}
+	if m["k"] != nil {
+		t.Errorf("unmarshallable any = %v, want null", m["k"])
+	}
+	if m["msg"] != "m" {
+		t.Errorf("msg=%v want m", m["msg"])
 	}
 }
 
 // Test_SetFormat_DeliverJSON is the end-to-end check: a Logger with SetFormat(
-// FormatJSON) pre-serializes jsonBytes on the record, and a registered writer
+// FormatJSON) pre-serializes formattedBytes on the record, and a registered writer
 // (via captureWriter) sees those bytes rather than the text form.
 func Test_SetFormat_DeliverJSON(t *testing.T) {
 	records := make(chan *Record, 4)
@@ -132,12 +134,12 @@ func Test_SetFormat_DeliverJSON(t *testing.T) {
 	cw.mu.Lock()
 	r := cw.records[0]
 	cw.mu.Unlock()
-	if len(r.jsonBytes) == 0 {
-		t.Fatalf("jsonBytes empty under FormatJSON; record was not pre-serialized")
+	if len(r.formattedBytes) == 0 {
+		t.Fatalf("formattedBytes empty under FormatJSON; record was not pre-serialized")
 	}
 	var m map[string]interface{}
-	if err := json.Unmarshal(r.jsonBytes, &m); err != nil {
-		t.Fatalf("jsonBytes not valid JSON: %v\n%s", err, r.jsonBytes)
+	if err := json.Unmarshal(r.formattedBytes, &m); err != nil {
+		t.Fatalf("formattedBytes not valid JSON: %v\n%s", err, r.formattedBytes)
 	}
 	if m["msg"] != "json line 1" {
 		t.Errorf("msg=%v want 'json line 1'", m["msg"])
@@ -151,7 +153,7 @@ func Test_SetFormat_DeliverJSON(t *testing.T) {
 	}
 }
 
-// Test_SetFormat_TextNoJSONBytes confirms FormatText leaves jsonBytes nil so
+// Test_SetFormat_TextNoJSONBytes confirms FormatText leaves formattedBytes nil so
 // writers use String() (the default/backward-compatible path).
 func Test_SetFormat_TextNoJSONBytes(t *testing.T) {
 	records := make(chan *Record, 4)
@@ -176,8 +178,8 @@ func Test_SetFormat_TextNoJSONBytes(t *testing.T) {
 	cw.mu.Lock()
 	r := cw.records[0]
 	cw.mu.Unlock()
-	if r.jsonBytes != nil {
-		t.Errorf("jsonBytes non-nil under FormatText: %s", r.jsonBytes)
+	if r.formattedBytes != nil {
+		t.Errorf("formattedBytes non-nil under FormatText: %s", r.formattedBytes)
 	}
 	s := r.String()
 	if !strings.Contains(s, "[INFO]") {
@@ -201,7 +203,7 @@ func Test_Format_InheritedByChild(t *testing.T) {
 }
 
 // Test_ConsoleWriter_JSONFastPath directly drives ConsoleWriter.Write with a
-// record carrying jsonBytes and asserts it emits the bytes (no color/text).
+// record carrying formattedBytes and asserts it emits the bytes (no color/text).
 func Test_ConsoleWriter_JSONFastPath(t *testing.T) {
 	w := &ConsoleWriter{color: true, fullColor: true} // color must be IGNORED for JSON
 	r := &Record{
@@ -209,17 +211,17 @@ func Test_ConsoleWriter_JSONFastPath(t *testing.T) {
 		time:      "t",
 		file:      "f",
 		msg:       "m",
-		jsonBytes: []byte(`{"time":"t","level":"INFO","msg":"m"}` + "\n"),
+		formattedBytes: []byte(`{"time":"t","level":"INFO","msg":"m"}` + "\n"),
 	}
 	// Write goes to os.Stdout; we can't easily capture it, but the contract is
 	// "no error and no panic". The fast path is exercised; correctness of bytes
 	// is covered by Test_SetFormat_DeliverJSON via captureWriter.
 	if err := w.Write(r); err != nil {
-		t.Fatalf("ConsoleWriter.Write jsonBytes err: %v", err)
+		t.Fatalf("ConsoleWriter.Write formattedBytes err: %v", err)
 	}
 }
 
-// Test_FileWriter_JSONFastPath drives FileWriter.writeSync with jsonBytes and
+// Test_FileWriter_JSONFastPath drives FileWriter.writeSync with formattedBytes and
 // confirms the file receives the JSON bytes (not the text line).
 func Test_FileWriter_JSONFastPath(t *testing.T) {
 	w := NewFileWriterWithOptions(FileWriterOptions{
@@ -240,7 +242,7 @@ func Test_FileWriter_JSONFastPath(t *testing.T) {
 		time:      "2026/06/25 10:00:00",
 		file:      "svc.go:1",
 		msg:       "json msg",
-		jsonBytes: []byte(`{"time":"2026-06-25T10:00:00.000+0800","level":"INFO","msg":"json msg"}` + "\n"),
+		formattedBytes: []byte(`{"time":"2026-06-25T10:00:00.000+0800","level":"INFO","msg":"json msg"}` + "\n"),
 	}
 	if err := w.writeSync(r); err != nil {
 		t.Fatalf("writeSync: %v", err)
