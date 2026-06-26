@@ -49,6 +49,30 @@ type ClientMetrics struct {
 	Retried uint64
 }
 
+// ClientEvent is passed to the hook installed via [Client.SetOnEvent] for every
+// notable outcome of a request lifecycle. It is the integration point for
+// metrics push (Prometheus counters/histograms, tracing spans, etc.), mirroring
+// the hook pattern used by the breaker package and log4go.
+//
+// Name is one of:
+//   - "request": an attempt was sent (one per send, including retries).
+//   - "retry":   an attempt failed and will be retried (fires before backoff).
+//   - "success": the call completed with a 2xx final response.
+//   - "failed":  the call completed without a 2xx response (transport error or
+//     non-2xx status), or could not be sent at all.
+//
+// Attempt is the 0-indexed attempt number this event pertains to (0 = the
+// initial send). StatusCode is the HTTP status of the attempt for "request"
+// events where a response was received, and of the final response for
+// "success"/"failed"; 0 when no response was obtained.
+type ClientEvent struct {
+	Name       string
+	Method     string
+	URL        string
+	StatusCode int
+	Attempt    int
+}
+
 // Client is a production-grade HTTP client wrapping [http.Client] with retry,
 // per-request/per-dial timeouts, connection pooling and optional
 // circuit-breaker integration. The zero value is not usable; construct one with
@@ -65,6 +89,44 @@ type Client struct {
 	success atomic.Uint64
 	failed  atomic.Uint64
 	retried atomic.Uint64
+
+	// onEvent, when non-nil, is invoked for every notable request outcome
+	// (request, retry, success, failed). Set via SetOnEvent and read with an
+	// atomic load, so the default (nil) is zero-overhead on the hot path.
+	onEvent atomic.Pointer[func(ClientEvent)]
+}
+
+// SetOnEvent installs a hook invoked for every notable request lifecycle event.
+// fn receives a [ClientEvent] describing the attempt and its outcome. Pass nil
+// to disable a previously-installed hook.
+//
+// The hook is intended for metrics/tracing and must be cheap and non-blocking:
+// it fires synchronously on the goroutine issuing the request, inside Do/Do.
+// Install it once at construction time (before traffic) for the cleanest
+// ordering; SetOnEvent is nevertheless safe to call concurrently with in-flight
+// requests.
+func (c *Client) SetOnEvent(fn func(evt ClientEvent)) {
+	if fn == nil {
+		c.onEvent.Store(nil)
+		return
+	}
+	f := fn // copy to heap
+	c.onEvent.Store(&f)
+}
+
+// fireEvent is the single chokepoint for hook dispatch. When onEvent is nil
+// (the default) the call collapses to a single nil compare, so the no-hook hot
+// path is unaffected.
+func (c *Client) fireEvent(name, method, url string, status, attempt int) {
+	if p := c.onEvent.Load(); p != nil {
+		(*p)(ClientEvent{
+			Name:       name,
+			Method:     method,
+			URL:        url,
+			StatusCode: status,
+			Attempt:    attempt,
+		})
+	}
 }
 
 // NewClient constructs a [Client] from opts, filling zero fields with the
@@ -142,6 +204,7 @@ func (c *Client) Do(ctx context.Context, method, url string, body []byte, header
 	req, bErr := c.buildRequest(ctx, method, url, body, headers)
 	if bErr != nil {
 		c.failed.Add(1)
+		c.fireEvent("failed", method, url, 0, 0)
 		return nil, fmt.Errorf("httpclient: build request: %w", bErr)
 	}
 
@@ -169,6 +232,7 @@ func (c *Client) Do(ctx context.Context, method, url string, body []byte, header
 			_, _ = io.Copy(io.Discard, raw.Body)
 			_ = raw.Body.Close()
 		}
+		c.fireEvent("failed", method, url, 0, 0)
 		return nil, err
 	}
 
@@ -178,6 +242,7 @@ func (c *Client) Do(ctx context.Context, method, url string, body []byte, header
 	respBody, readErr := drainBody(raw)
 	if readErr != nil {
 		c.failed.Add(1)
+		c.fireEvent("failed", method, url, raw.StatusCode, 0)
 		return nil, fmt.Errorf("httpclient: read response body: %w", readErr)
 	}
 
@@ -189,8 +254,10 @@ func (c *Client) Do(ctx context.Context, method, url string, body []byte, header
 
 	if raw.StatusCode >= 200 && raw.StatusCode < 300 {
 		c.success.Add(1)
+		c.fireEvent("success", method, url, raw.StatusCode, 0)
 	} else {
 		c.failed.Add(1)
+		c.fireEvent("failed", method, url, raw.StatusCode, 0)
 	}
 	return resp, nil
 }
@@ -240,6 +307,10 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request) (*http.Resp
 		err     error
 		attempt int
 	)
+	// Capture method/URL once for event dispatch; req.WithContext returns a
+	// shallow copy that preserves these, so reading them up front is safe.
+	method := req.Method
+	urlStr := req.URL.String()
 	for attempt = 0; attempt <= c.opts.RetryMax; attempt++ {
 		// Reset the request body before each attempt so retries can re-read it.
 		if req.Body != nil && req.GetBody != nil {
@@ -251,6 +322,14 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request) (*http.Resp
 		req = req.WithContext(ctx)
 
 		resp, err = c.httpCli.Do(req)
+
+		// Fire a "request" event for every attempt sent (success or fail).
+		// StatusCode is 0 when no response was obtained.
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		c.fireEvent("request", method, urlStr, status, attempt)
 
 		if !shouldRetry(resp, err) {
 			// Either a non-retryable error or a final (success/4xx/3xx)
@@ -273,6 +352,9 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request) (*http.Resp
 		}
 
 		c.retried.Add(1)
+		// Fire a "retry" event before backoff so observers can attribute the
+		// wait. The next attempt number will be attempt+1.
+		c.fireEvent("retry", method, urlStr, status, attempt+1)
 
 		// Honour ctx cancellation during the backoff sleep.
 		delay := retryDelay(attempt, c.opts.RetryWaitMin, c.opts.RetryWaitMax)

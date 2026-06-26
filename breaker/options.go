@@ -136,3 +136,21 @@ func (s BreakerState) String() string {
 // HalfOpen with all probe slots taken) and the call is therefore not attempted.
 // Callers can branch on it with errors.Is.
 var ErrCircuitOpen = errors.New("breaker: circuit is open")
+
+// BreakerEvent is passed to the hook installed via [Breaker.SetOnEvent] for
+// every notable state change and outcome. It is the integration point for
+// metrics push (e.g. a Prometheus counter or a log4go alert), mirroring the
+// hook pattern used by log4go.
+//
+// Name is one of:
+//   - "success": a wrapped call returned nil (Closed or HalfOpen probe ok).
+//   - "failure": a wrapped call returned a non-nil error (or ctx cancelled).
+//   - "trip":    the breaker transitioned Closed→Open (or HalfOpen→Open).
+//   - "recover": the breaker transitioned HalfOpen→Closed.
+//   - "reject":  a call was rejected with ErrCircuitOpen (Open or HalfOpen full).
+//
+// State is the breaker's state at the instant the event fired.
+type BreakerEvent struct {
+	Name  string
+	State BreakerState
+}

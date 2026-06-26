@@ -74,6 +74,42 @@ type Breaker[T any] struct {
 	success    atomic.Uint64
 	failures   atomic.Uint64
 	consecFail atomic.Uint32
+
+	// onEvent, when non-nil, is invoked for every notable outcome/transition
+	// (success, failure, trip, recover, reject). It is set via SetOnEvent and
+	// read with an atomic load on the hot path so the default (nil) costs
+	// nothing. Stored as an atomic.Pointer so SetOnEvent can be called before or
+	// after traffic starts without a separate lock.
+	onEvent atomic.Pointer[func(BreakerEvent)]
+}
+
+// SetOnEvent installs a hook invoked for every notable outcome and state
+// transition. fn receives a [BreakerEvent] describing what happened and the
+// state at that instant. Pass nil to disable a previously-installed hook.
+//
+// The hook is intended for metrics push (counters/histograms) and observability
+// — it must be cheap and must not block, since it fires on the Execute hot path
+// (under the same goroutine as the caller). It is invoked after all state
+// mutations for the event have settled, so reads of State/Metrics inside fn see
+// the post-event view. SetOnEvent is safe for concurrent use with Execute, but
+// callers should typically install the hook once at construction time before
+// traffic begins to avoid ordering surprises.
+func (b *Breaker[T]) SetOnEvent(fn func(evt BreakerEvent)) {
+	if fn == nil {
+		b.onEvent.Store(nil)
+		return
+	}
+	f := fn // copy to heap
+	b.onEvent.Store(&f)
+}
+
+// fireEvent is the single chokepoint for hook dispatch. It is inlined by the
+// compiler; when onEvent is nil (the default) the entire call collapses to a
+// single nil compare and no further work, so the no-hook path is zero-overhead.
+func (b *Breaker[T]) fireEvent(name string) {
+	if p := b.onEvent.Load(); p != nil {
+		(*p)(BreakerEvent{Name: name, State: b.State()})
+	}
 }
 
 // NewBreaker builds a breaker for the given value type T. opts is normalised
@@ -132,12 +168,20 @@ func (b *Breaker[T]) Metrics() BreakerMetrics {
 func (b *Breaker[T]) Execute(ctx context.Context, fn func(ctx context.Context) (T, error)) (T, error) {
 	var zero T
 
+	// A nil ctx is tolerated (treated as Background) so a careless caller can't
+	// crash the breaker; fn still receives the nil ctx and must itself be
+	// nil-safe if it intends to use it.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Admit-or-reject. beforeCall returns ErrCircuitOpen when the call must not
 	// proceed; otherwise it returns nil (and may have transitioned state).
 	if err := b.beforeCall(); err != nil {
 		// A rejected call is still a call attempted; count it as a lifetime
 		// total but not as success/failure (fn never ran).
 		b.total.Add(1)
+		b.fireEvent("reject")
 		return zero, err
 	}
 
@@ -237,6 +281,7 @@ func (b *Breaker[T]) recordSuccess() {
 	case StateClosed:
 		b.recordWindow(true)
 	}
+	b.fireEvent("success")
 }
 
 // recordFailure updates counters for a failed call and may trip the breaker.
@@ -256,6 +301,7 @@ func (b *Breaker[T]) recordFailure() {
 			b.maybeTrip()
 		}
 	}
+	b.fireEvent("failure")
 }
 
 // recordWindow advances the sliding window to the current second and records
@@ -307,6 +353,9 @@ func (b *Breaker[T]) maybeTrip() {
 func (b *Breaker[T]) tripLocked() {
 	b.state.Store(int32(StateOpen))
 	b.expiry.Store(time.Now().Add(b.opts.OpenDuration).UnixNano())
+	b.mu.Unlock()
+	b.fireEvent("trip")
+	b.mu.Lock()
 }
 
 // toOpen moves the breaker to Open from any state. Resets the half-open
@@ -318,6 +367,7 @@ func (b *Breaker[T]) toOpen() {
 	b.halfOpenSuccess.Store(0)
 	b.halfOpenCount.Store(0)
 	b.mu.Unlock()
+	b.fireEvent("trip")
 }
 
 // toClosed moves the breaker from HalfOpen back to Closed and resets the
@@ -340,6 +390,7 @@ func (b *Breaker[T]) toClosed() {
 	b.halfOpenCount.Store(0)
 	b.state.Store(int32(StateClosed))
 	b.mu.Unlock()
+	b.fireEvent("recover")
 }
 
 // advance rolls the bucket ring forward to sec, zeroing buckets that have
