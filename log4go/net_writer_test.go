@@ -229,7 +229,7 @@ func Test_NetWriter_NoGoroutineBurst(t *testing.T) {
 	}
 }
 
-// Test_NetWriter_JSONFastPath confirms NetWriter honors r.jsonBytes when set
+// Test_NetWriter_JSONFastPath confirms NetWriter honors r.formattedBytes when set
 // (FormatJSON records ship as JSON, not text).
 func Test_NetWriter_JSONFastPath(t *testing.T) {
 	var (
@@ -253,7 +253,7 @@ func Test_NetWriter_JSONFastPath(t *testing.T) {
 
 	r := &Record{
 		level: INFO, time: "t", file: "f", msg: "m",
-		jsonBytes: []byte(`{"time":"t","level":"INFO","msg":"m"}` + "\n"),
+		formattedBytes: []byte(`{"time":"t","level":"INFO","msg":"m"}` + "\n"),
 	}
 	_ = w.Write(r)
 	select {

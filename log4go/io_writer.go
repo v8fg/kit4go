@@ -7,7 +7,7 @@ import (
 
 // IOWriter adapts any io.Writer (bytes.Buffer, *os.File, a network conn, an
 // io.Pipe writer, a test buffer, ...) to the log4go Writer interface. It is the
-// thinnest possible adapter: Write renders the record (jsonBytes when the
+// thinnest possible adapter: Write renders the record (formattedBytes when the
 // Logger pre-serialized for FormatJSON, else Record.String()) with fmt.Fprint.
 //
 // IOWriter is SYNCHRONOUS — the bootstrap goroutine calls the underlying
@@ -36,14 +36,14 @@ func NewIOWriter(w io.Writer, level int) *IOWriter {
 func (i *IOWriter) Init() error { return nil }
 
 // Write renders r and writes it to the underlying io.Writer. It honors the
-// Logger's format: when r.jsonBytes is set (FormatJSON) the pre-serialized JSON
+// Logger's format: when r.formattedBytes is set (FormatJSON) the pre-serialized JSON
 // is written verbatim, otherwise the text String() form is written.
 func (i *IOWriter) Write(r *Record) error {
 	if r.level > i.level {
 		return nil
 	}
-	if len(r.jsonBytes) > 0 {
-		_, err := i.w.Write(r.jsonBytes)
+	if len(r.formattedBytes) > 0 {
+		_, err := i.w.Write(r.formattedBytes)
 		return err
 	}
 	_, err := fmt.Fprint(i.w, r.String())

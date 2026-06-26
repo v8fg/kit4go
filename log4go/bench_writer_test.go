@@ -28,7 +28,7 @@ func benchRecordWithFields() *Record {
 		time:   "2026-06-25T15:04:05.000+0800",
 		file:   "svc.go:42",
 		msg:    "benchmark writer message payload",
-		fields: []field{{key: "trace_id", val: "abc"}, {key: "user", val: 42}, {key: "route", val: "/api/v1"}},
+		fields: []field{fld("trace_id", "abc"), fld("user", 42), fld("route", "/api/v1")},
 	}
 }
 
@@ -468,6 +468,29 @@ func Benchmark_DeliverPipeline_NoCaller(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		lg.Info("x")
+	}
+}
+
+// Benchmark_Logger_WithInterfaceInt vs Benchmark_Logger_WithTypedInt isolates the
+// boxing cost the typed API removes: With(key, interface{}) boxes the int at the
+// call site (one alloc), WithInt never boxes.
+func Benchmark_Logger_WithInterfaceInt(b *testing.B) {
+	root := newBenchLogger()
+	defer root.Close()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = root.With("count", i) // i boxes into interface{}
+	}
+}
+
+func Benchmark_Logger_WithTypedInt(b *testing.B) {
+	root := newBenchLogger()
+	defer root.Close()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = root.WithInt("count", i) // no boxing
 	}
 }
 

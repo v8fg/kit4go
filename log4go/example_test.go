@@ -7,6 +7,7 @@ package log4go_test
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -207,4 +208,214 @@ func Example_netWriter() {
 	defer log4go.Close()
 
 	log4go.Info("shipped to collector")
+}
+
+// Example_kafkaWriter ships logs to Kafka via the async, bounded, overflow-safe
+// KafKaWriter. BufferSize bounds the in-flight channel; under sustained pressure
+// OverflowPolicy="spill" with SpillType="ring" absorbs bursts in an in-memory
+// ring (re-sent once Kafka recovers) instead of dropping records or blocking the
+// application. This is the foundation for Example_kafkaToES.
+func Example_kafkaWriter() {
+	kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+		Enable:         true,
+		Level:          log4go.LevelFlagInfo,
+		Brokers:        []string{"kafka-1:9092", "kafka-2:9092"},
+		ProducerTopic:  "app-logs",
+		BufferSize:     1 << 14, // 16384 in-flight records
+		OverflowPolicy: "spill", // burst absorption (no drop, no OOM)
+		SpillType:      "ring",
+		SpillSize:      1 << 16,
+	})
+	log4go.Register(kw)
+	defer log4go.Close()
+
+	log4go.Info("shipped to kafka")
+}
+
+// Example_kafkaToES shows the end-to-end Kafka→Elasticsearch pipeline:
+//
+//	app (log4go) ──KafKaWriter──▶ Kafka ──Filebeat/Logstash──▶ Elasticsearch
+//
+// Field management is unified with Base Fields: SetBaseFields registers the
+// global static fields (hostname/server_ip/app/env) every record carries, and
+// es_index is set as a Base Field so the Kafka payload itself names the target
+// ES index — the consumer routes on it with no extra parsing. The payload also
+// carries the strict-ordering keys (unix_nano + seq), so ES sorts by seq then
+// unix_nano to reconstruct exact emit order across partitions/cores.
+//
+// The legacy KafKaMSGFields (MSG.ServerIP / MSG.ESIndex / MSG.ExtraFields) is
+// kept only as a fallback: a Base Field of the same key always wins, so prefer
+// SetBaseField(s) for new code.
+func Example_kafkaToES() {
+	// 1) global static fields — set once at startup, carried by EVERY record.
+	//    Base fields propagate to child loggers built via With, so a
+	//    With("trace_id",…).Info(…) line also carries hostname/server_ip/… .
+	log4go.SetBaseFields(map[string]interface{}{
+		"hostname":  "adx-prod-01",
+		"server_ip": "10.0.1.5",
+		"app":       "adx-dsp",
+		"env":       "prod",
+	})
+	// es_index routes the record to its ES index. Static here; for time-sharded
+	// indices (adx-logs-2026.06.26) prefer computing it on the consumer side
+	// from @timestamp (see Filebeat config below) so the index rolls daily
+	// without an app redeploy.
+	log4go.SetBaseField("es_index", "adx-logs-2026.06")
+
+	// 2) Kafka writer — async, bounded, spill-to-ring on backpressure.
+	kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+		Enable:         true,
+		Level:          log4go.LevelFlagInfo,
+		Brokers:        []string{"kafka-1:9092"},
+		ProducerTopic:  "adx-logs",
+		BufferSize:     1 << 14,
+		OverflowPolicy: "spill",
+		SpillType:      "ring",
+		SpillSize:      1 << 16,
+	})
+	log4go.Register(kw)
+	defer log4go.Close()
+
+	// 3) per-request business fields via With (a child logger).
+	reqLog := log4go.With("trace_id", "a1b2c3")
+	reqLog.Info("bid won")
+
+	// Kafka record value (one JSON object — field order is fixed for the
+	// framework/routing keys; user-field order follows map iteration):
+	//
+	//   {"unix_nano":1782392990123456789,"seq":42,"level":"INFO",
+	//    "message":"bid won","timestamp":"2026-06-26T12:00:00.123456+08:00",
+	//    "now":1782392990,
+	//    "server_ip":"10.0.1.5","es_index":"adx-logs-2026.06",
+	//    "hostname":"adx-prod-01","app":"adx-dsp","env":"prod","trace_id":"a1b2c3"}
+	//
+	// Filebeat consumer — route on es_index, or roll daily from @timestamp:
+	//
+	//   kafka: { topics: [adx-logs], group_id: filebeat }
+	//   output.elasticsearch:
+	//     indices:
+	//       - index: "adx-logs-2026.06"
+	//         when.equals: { es_index: "adx-logs-2026.06" }
+	//     # or dynamic daily index derived from the record timestamp:
+	//     # index: "adx-logs-%{+YYYY.MM.dd}"
+}
+
+// Example_multiWriterAlerts shows one logger fanning out to several destinations
+// at different severities — the multi-sink routing pattern. Each Writer filters
+// by its own level, so a single log call is delivered to exactly the right
+// sinks:
+//
+//	kafka  (INFO+)  → full volume, async + spill-to-ring, feeds the Kafka→ES
+//	                  pipeline (see Example_kafkaToES)
+//	net    (WARN+)  → hot lines to a TCP/UDP collector
+//	webhook(ERROR+) → severe lines only, pushed to lark/dingtalk
+//
+// The webhook layers two trigger controls on top of its ERROR level: a Filter
+// (only forward records the predicate accepts) and a RateAlerter gate (forward
+// at most ~once/min once errors exceed 10/min — storm suppression). defer
+// log4go.Close() flushes every writer and, because WebhookWriter implements
+// io.Closer, also stops the webhook sink daemon.
+func Example_multiWriterAlerts() {
+	// 1) Kafka — INFO+, full volume, burst-safe (spill-to-ring on backpressure).
+	kafka := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+		Enable:         true,
+		Level:          log4go.LevelFlagInfo,
+		Brokers:        []string{"kafka-1:9092"},
+		ProducerTopic:  "app-logs",
+		BufferSize:     1 << 14,
+		OverflowPolicy: "spill",
+		SpillType:      "ring",
+		SpillSize:      1 << 16,
+	})
+	log4go.Register(kafka)
+
+	// 2) Net — WARN+ to a TCP collector (async, bounded, drop-on-full).
+	nw := log4go.NewNetWriter(log4go.NetWriterOptions{
+		Network:        "tcp",
+		Address:        "collector.internal:514",
+		Level:          log4go.LevelFlagWarning,
+		BufferSize:     1024,
+		OverflowPolicy: "drop",
+	})
+	log4go.Register(nw)
+
+	// 3) Webhook — ERROR+ to lark, with a filter + a rate gate.
+	sink := log4go.NewWebhookAlertSink(
+		"https://oapi.example.com/lark/xxx", 256, log4go.LarkTextFormatter(""))
+	sink.SetRateLimit(5)  // sink-level guard: at most 5 posts/sec
+	sink.SetMaxRetries(2) // retry a failed post twice
+
+	webhook := log4go.NewWebhookWriter(sink, log4go.WebhookWriterOptions{
+		Level: log4go.LevelFlagError,
+		// Forward only payment-domain errors (MatchField) that mention a failure
+		// keyword (MatchKeyword). AllOf composes the two predicates.
+		Filter: log4go.AllOf(
+			log4go.MatchField("domain", "pay"),
+			log4go.MatchKeyword("fail"),
+		),
+		Gate:          log4go.NewRateAlerter(time.Minute, 10), // >=10/min, ~1 fire/min
+		RateFormatter: log4go.DefaultRateWebhookFormatter,    // payload: "[N in window] ..."
+	})
+	log4go.Register(webhook)
+
+	defer log4go.Close() // flushes kafka/net; closes the webhook sink
+
+	log4go.Info("started")                       // → kafka only
+	log4go.Warn("cache degraded")                // → kafka + net
+	log4go.Error("db timeout")                   // → kafka + net; webhook filter rejects (not domain=pay)
+	log4go.With("domain", "pay").Error("payment failed") // → kafka + net + webhook (domain=pay + "fail", past threshold)
+}
+
+// Example_presets shows the one-line production / development configurations
+// (mirrors zap.NewProduction / NewDevelopment).
+func Example_presets() {
+	prod := log4go.NewProduction() // JSON + INFO + sampling + caller + console
+	defer prod.Close()
+	prod.Info("production line")
+
+	dev := log4go.NewDevelopment() // colored text + DEBUG + funcname + console
+	defer dev.Close()
+	dev.Debug("debug line")
+}
+
+// Example_typedFields shows the allocation-free typed field constructors
+// (WithString/WithInt/...), the counterpart to zap.Field / slog.Attr. Scalars
+// never box into interface{}.
+func Example_typedFields() {
+	_ = log4go.SetupLog(log4go.LogConfig{
+		Level:         log4go.LevelFlagInfo,
+		Format:        "json",
+		ConsoleWriter: log4go.ConsoleWriterOptions{Enable: true, Level: log4go.LevelFlagInfo},
+	})
+	defer log4go.Close()
+
+	log4go.WithString("trace_id", "t-1").
+		WithInt("status", 200).
+		WithDuration("elapsed", 3*time.Millisecond).
+		Info("served")
+	// {"...","msg":"served","fields":{"trace_id":"t-1","status":200,"elapsed":3000000}}
+}
+
+// Example_slogBridge routes the standard library log/slog (and with it net/http
+// and any third-party lib using slog) through the log4go pipeline, so its
+// writers, overflow protection and alerting all apply.
+func Example_slogBridge() {
+	lg := log4go.NewProduction()
+	defer lg.Close()
+	slog.SetDefault(slog.New(log4go.NewSlogHandler(lg)))
+
+	slog.Info("via slog", "route", "/api/v1", "status", 200)
+	// net/http and other slog-using libs now log through log4go too.
+}
+
+// Example_logfmt shows the Loki/Promtail/docker-friendly key=value format.
+func Example_logfmt() {
+	lg := log4go.NewLogger()
+	defer lg.Close()
+	lg.SetFormat(log4go.FormatLogfmt)
+	lg.SetLevel(log4go.DEBUG)
+	lg.Register(log4go.NewConsoleWriterWithOptions(log4go.ConsoleWriterOptions{Enable: true}))
+
+	lg.WithString("trace_id", "t-1").Info("logfmt line")
+	// time=2026-06-26T... level=INFO msg="logfmt line" trace_id=t-1
 }

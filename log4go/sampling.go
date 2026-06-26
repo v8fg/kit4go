@@ -25,7 +25,7 @@ type Sampler struct {
 
 	// counts[level] is the per-level counter incremented on every delivery
 	// attempt. Sized for DEBUG+1 to index directly by level.
-	counts [DEBUG + 1]uint64
+	counts [TRACE + 1]uint64
 }
 
 // newSampler builds a Sampler. initial may be 0 (sample from the first record);

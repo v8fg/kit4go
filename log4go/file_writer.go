@@ -252,8 +252,8 @@ func (w *FileWriter) writeSync(r *Record) error {
 	// FormatJSON fast path: emit pre-serialized bytes verbatim (set by
 	// deliverRecordToWriter) instead of re-rendering the text line.
 	var err error
-	if len(r.jsonBytes) > 0 {
-		_, err = w.fileBufWriter.Write(r.jsonBytes)
+	if len(r.formattedBytes) > 0 {
+		_, err = w.fileBufWriter.Write(r.formattedBytes)
 	} else {
 		_, err = w.fileBufWriter.WriteString(r.String())
 	}
@@ -686,8 +686,8 @@ func (w *FileWriter) writeOne(r *Record) {
 	// FormatJSON fast path: emit pre-serialized bytes (set by
 	// deliverRecordToWriter) instead of re-rendering the text line.
 	var writeErr error
-	if len(r.jsonBytes) > 0 {
-		_, writeErr = w.fileBufWriter.Write(r.jsonBytes)
+	if len(r.formattedBytes) > 0 {
+		_, writeErr = w.fileBufWriter.Write(r.formattedBytes)
 	} else {
 		_, writeErr = w.fileBufWriter.WriteString(r.String())
 	}
