@@ -48,14 +48,19 @@ func (a *acmeManagerAdapter) TLSConfig() *tls.Config {
 
 // newAutocertManager builds an *autocert.Manager configured from cfg: HostPolicy
 // locked to the configured domains, AcceptTOS, a DirCache rooted at CacheDir,
-// the requested ACME directory URL and the configured renewal window.
+// the requested ACME directory URL, the configured renewal window, and an
+// optional custom HTTPClient (custom CA / proxy, e.g. for Pebble).
 func newAutocertManager(cfg Config) *autocert.Manager {
+	ac := &acme.Client{DirectoryURL: cfg.directoryURL()}
+	if cfg.HTTPClient != nil {
+		ac.HTTPClient = cfg.HTTPClient
+	}
 	return &autocert.Manager{
 		Prompt:      autocert.AcceptTOS,
 		HostPolicy:  autocert.HostWhitelist(cfg.Domains...),
 		Cache:       autocert.DirCache(cfg.CacheDir),
 		Email:       cfg.Email,
 		RenewBefore: cfg.RenewBefore,
-		Client:      &acme.Client{DirectoryURL: cfg.directoryURL()},
+		Client:      ac,
 	}
 }

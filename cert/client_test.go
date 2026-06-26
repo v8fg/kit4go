@@ -40,6 +40,15 @@ func TestNew(t *testing.T) {
 		c, _ := New(Config{Domains: []string{"a.com"}, Dir: t.TempDir()})
 		convey.So(c.mgr.(*acmeManagerAdapter).m.Client.DirectoryURL, convey.ShouldEqual, LEProdDirectoryURL)
 	})
+	convey.Convey("HTTPClient is wired into the ACME client when set", t, func() {
+		hc := &http.Client{Timeout: 7 * time.Second}
+		c, _ := New(Config{Domains: []string{"a.com"}, Dir: t.TempDir(), HTTPClient: hc})
+		convey.So(c.mgr.(*acmeManagerAdapter).m.Client.HTTPClient, convey.ShouldEqual, hc)
+	})
+	convey.Convey("HTTPClient nil leaves the ACME client default", t, func() {
+		c, _ := New(Config{Domains: []string{"a.com"}, Dir: t.TempDir()})
+		convey.So(c.mgr.(*acmeManagerAdapter).m.Client.HTTPClient, convey.ShouldBeNil)
+	})
 }
 
 // newTestClient wires a Client with fresh mocks and a self-signed cert for domain.

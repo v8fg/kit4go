@@ -3,6 +3,7 @@ package cert
 import (
 	"crypto/tls"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -64,6 +65,13 @@ type Config struct {
 	// DirectoryURL overrides the ACME directory (e.g. a private ACME CA such as
 	// Pebble for local testing). When non-empty it wins over Staging.
 	DirectoryURL string `json:"directory_url" mapstructure:"directory_url"`
+
+	// HTTPClient, when non-nil, is used for all ACME HTTPS calls (directory,
+	// registration, order, challenge). Use it to inject a custom trust store —
+	// e.g. Pebble's root CA for offline testing — or an egress proxy. nil leaves
+	// the Go default client. Tagged "-" because an *http.Client is not
+	// (de)serialisable.
+	HTTPClient *http.Client `json:"-" mapstructure:"-"`
 
 	// RenewBefore is forwarded to autocert's Manager.RenewBefore: autocert
 	// renews a certificate when its remaining lifetime drops below this. Default
