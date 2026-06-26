@@ -76,19 +76,47 @@ type Client struct {
 // [Client.Run] tick or [Client.EnsureCert] call — so a misconfigured path fails
 // here at construction rather than mid-issuance.
 func New(cfg Config) (*Client, error) {
-	cfg = cfg.withDefaults()
-	if err := cfg.validate(); err != nil {
+	cfg, err := prepare(cfg)
+	if err != nil {
 		return nil, err
 	}
+	return newClient(cfg, &acmeManagerAdapter{m: newAutocertManager(cfg)})
+}
+
+// NewWithManager is like New but injects a custom [ACMEManager] backend instead
+// of the default autocert wrapper. Use it to plug in an alternative ACME engine
+// — e.g. a lego-based DNS-01 backend for wildcard/internal certs — while keeping
+// the same atomic directory writer, proactive renewal loop, metrics and events.
+// Config.Dir and Config.CacheDir are created (0700) exactly as in [New].
+func NewWithManager(cfg Config, mgr ACMEManager) (*Client, error) {
+	cfg, err := prepare(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(cfg, mgr)
+}
+
+// prepare applies defaults and validates the config, returning the resolved
+// config. Shared by [New] and [NewWithManager].
+func prepare(cfg Config) (Config, error) {
+	cfg = cfg.withDefaults()
+	if err := cfg.validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// newClient creates the output dirs and wires the supplied manager with the real
+// osDirWriter. The manager is injected so tests (and NewWithManager) can supply
+// a non-autocert backend.
+func newClient(cfg Config, mgr ACMEManager) (*Client, error) {
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("cert: create dir %q: %w", cfg.Dir, err)
 	}
 	if err := os.MkdirAll(cfg.CacheDir, 0o700); err != nil {
 		return nil, fmt.Errorf("cert: create cache dir %q: %w", cfg.CacheDir, err)
 	}
-	mgr := &acmeManagerAdapter{m: newAutocertManager(cfg)}
-	writer := &osDirWriter{dir: cfg.Dir}
-	return newWithSeams(cfg, mgr, writer), nil
+	return newWithSeams(cfg, mgr, &osDirWriter{dir: cfg.Dir}), nil
 }
 
 // newWithSeams wires a [Client] with the supplied (injectable) seams. New calls

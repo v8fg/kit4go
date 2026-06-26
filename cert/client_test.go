@@ -163,6 +163,24 @@ func TestServingDelegates(t *testing.T) {
 	})
 }
 
+func TestNewWithManager(t *testing.T) {
+	convey.Convey("NewWithManager wires an injected backend with the real writer", t, func() {
+		mgr := NewMockACMEManager(t)
+		cert := selfSignedCert(t, "a.com", true, 90*24*time.Hour)
+		mgr.EXPECT().GetCertificate(matchDomain("a.com")).Return(cert, nil).Once()
+		c, err := NewWithManager(Config{Domains: []string{"a.com"}, Dir: t.TempDir()}, mgr)
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(c.EnsureCert(context.Background(), "a.com"), convey.ShouldBeNil)
+		convey.So(c.Metrics().Issued, convey.ShouldEqual, uint64(1))
+		convey.So(c.Metrics().Written, convey.ShouldEqual, uint64(1))
+	})
+	convey.Convey("NewWithManager still validates config", t, func() {
+		mgr := NewMockACMEManager(t)
+		_, err := NewWithManager(Config{}, mgr)
+		convey.So(errors.Is(err, ErrNoDomains), convey.ShouldBeTrue)
+	})
+}
+
 func TestEnsureCertSingleFlight(t *testing.T) {
 	domain := "example.com"
 	convey.Convey("100 concurrent calls dedupe to one obtain and one write", t, func() {
