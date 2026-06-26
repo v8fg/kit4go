@@ -31,7 +31,7 @@ func Test_RecordString_WithFields(t *testing.T) {
 		time:   "t",
 		file:   "f.go:1",
 		msg:    "hello",
-		fields: []field{{key: "trace_id", val: "abc"}, {key: "user", val: 42}},
+		fields: []field{fld("trace_id", "abc"), fld("user", 42)},
 	}
 	got := r.String()
 	if !strings.Contains(got, "t [INFO] <f.go:1> hello ") {
@@ -70,7 +70,7 @@ func Test_LoggerWith_Chainable(t *testing.T) {
 	}
 	got := map[string]interface{}{}
 	for _, f := range child.fields {
-		got[f.key] = f.val
+		got[f.key] = f.value()
 	}
 	if got["a"] != 1 || got["b"] != 2 {
 		t.Fatalf("child fields wrong: %v", got)
@@ -165,8 +165,8 @@ func Test_KafKaWriter_BuildPayload_RecordFields(t *testing.T) {
 		msg:   "boom",
 		file:  "f.go:9",
 		fields: []field{
-			{key: "trace_id", val: "abc"},
-			{key: "level", val: "OVERRIDE"}, // built-in wins, not record field
+			fld("trace_id", "abc"),
+			fld("level", "OVERRIDE"), // built-in wins, not record field
 		},
 	}
 	b := w.buildPayload(r)
@@ -323,7 +323,7 @@ func Test_Context_DefaultExtractor(t *testing.T) {
 	}
 	got := map[string]interface{}{}
 	for _, f := range child.fields {
-		got[f.key] = f.val
+		got[f.key] = f.value()
 	}
 	if got["trace_id"] != "trace-xyz" || got["x-request-id"] != "req-1" {
 		t.Fatalf("context fields wrong: %v", got)
@@ -341,7 +341,7 @@ func Test_Context_CustomExtractor(t *testing.T) {
 	child := root.WithContext(context.Background())
 	got := map[string]interface{}{}
 	for _, f := range child.fields {
-		got[f.key] = f.val
+		got[f.key] = f.value()
 	}
 	if got["span_id"] != "s-1" || got["custom"] != true {
 		t.Fatalf("custom extractor fields wrong: %v", got)
@@ -431,26 +431,17 @@ func Test_LoggerClone_ConcurrentSafe(t *testing.T) {
 // injecting a failing json.Marshal (a value json.Marshal cannot encode). The
 // method must return "" rather than panic.
 func Test_FieldsJSON_MarshalError(t *testing.T) {
-	orig := jsonMarshal
-	jsonMarshal = func(v interface{}) ([]byte, error) {
-		return nil, errInjected
+	// Typed scalars never reach the JSON codec, so they cannot fail. A kindAny
+	// value JSON cannot encode (a channel) degrades to null in place — FieldsJSON
+	// keeps the field (never silently drops it) and never panics.
+	r := &Record{level: INFO, time: "t", file: "f", msg: "m",
+		fields: []field{anyField("k", make(chan int))}}
+	if got := r.FieldsJSON(); got != `{"k":null}` {
+		t.Fatalf("FieldsJSON on unmarshallable any = %q, want {\"k\":null}", got)
 	}
-	defer func() { jsonMarshal = orig }()
-
-	r := &Record{level: INFO, time: "t", file: "f", msg: "m", fields: []field{{key: "k", val: "v"}}}
-	if got := r.FieldsJSON(); got != "" {
-		t.Fatalf("FieldsJSON on marshal error = %q, want empty", got)
-	}
-	// String() must still render the canonical line (without fields) on error.
+	// String() still renders the canonical line (fields appended after).
 	s := r.String()
 	if !strings.Contains(s, "t [INFO] <f> m") {
-		t.Fatalf("String() without fields wrong on marshal error: %q", s)
+		t.Fatalf("String() wrong on unmarshallable field: %q", s)
 	}
 }
-
-// errInjected is the sentinel returned by the test jsonMarshal override.
-type errSentinel string
-
-func (e errSentinel) Error() string { return string(e) }
-
-var errInjected error = errSentinel("injected marshal error")

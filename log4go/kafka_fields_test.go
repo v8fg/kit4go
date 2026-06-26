@@ -23,7 +23,7 @@ func decodeNumber(t *testing.T, b []byte) map[string]interface{} {
 }
 
 // intField extracts a JSON number field as int64 (via json.Number.Int64).
-func intField(t *testing.T, m map[string]interface{}, k string) int64 {
+func numField(t *testing.T, m map[string]interface{}, k string) int64 {
 	t.Helper()
 	n, ok := m[k].(json.Number)
 	if !ok {
@@ -56,8 +56,8 @@ func Test_KafKaWriter_Payload_BaseFieldPriority(t *testing.T) {
 		unixNano: 1782392990_123456789,
 		seq:      42,
 		fields: []field{
-			{key: "server_ip", val: "from-base"}, // base field wins over MSG.ServerIP
-			{key: "trace_id", val: "t1"},
+			fld("server_ip", "from-base"), // base field wins over MSG.ServerIP
+			fld("trace_id", "t1"),
 		},
 	}
 	b := w.buildPayload(r)
@@ -80,10 +80,10 @@ func Test_KafKaWriter_Payload_BaseFieldPriority(t *testing.T) {
 	// strict-ordering keys are present and carry the record's exact values (ES
 	// sorts on seq then unix_nano). Decode with json.Number so the 18-digit
 	// unix_nano is not rounded through float64.
-	if got := intField(t, m, "unix_nano"); got != r.unixNano {
+	if got := numField(t, m, "unix_nano"); got != r.unixNano {
 		t.Errorf("payload[unix_nano]=%d want %d", got, r.unixNano)
 	}
-	if got := intField(t, m, "seq"); got != int64(r.seq) {
+	if got := numField(t, m, "seq"); got != int64(r.seq) {
 		t.Errorf("payload[seq]=%d want %d", got, r.seq)
 	}
 }
@@ -99,7 +99,7 @@ func Test_KafKaWriter_Payload_TimestampFromRecordTime(t *testing.T) {
 
 	b := w.buildPayload(r)
 	m := decodeNumber(t, b)
-	want := time.Unix(0, fixed).Format(timestampLayout)
+	want := time.Unix(0, fixed).UTC().Format(timestampLayout) // UTC (Z), unified across JSON/Kafka
 	if got, _ := m["timestamp"].(string); got != want {
 		t.Errorf("timestamp=%q want %q", got, want)
 	}
@@ -108,7 +108,7 @@ func Test_KafKaWriter_Payload_TimestampFromRecordTime(t *testing.T) {
 		t.Errorf("timestamp %q is not ISO (no 'T' separator)", want)
 	}
 	// "now" is the unix-seconds companion, also from the record time.
-	if got := intField(t, m, "now"); got != fixed/1e9 {
+	if got := numField(t, m, "now"); got != fixed/1e9 {
 		t.Errorf("now=%d want %d", got, fixed/1e9)
 	}
 }
@@ -185,12 +185,12 @@ func Test_SetFormat_JSON_CarriesBaseFields(t *testing.T) {
 	cw.mu.Lock()
 	r := cw.records[0]
 	cw.mu.Unlock()
-	if len(r.jsonBytes) == 0 {
-		t.Fatal("jsonBytes empty under FormatJSON")
+	if len(r.formattedBytes) == 0 {
+		t.Fatal("formattedBytes empty under FormatJSON")
 	}
 	var m map[string]interface{}
-	if err := json.Unmarshal(r.jsonBytes, &m); err != nil {
-		t.Fatalf("jsonBytes not valid JSON: %v\n%s", err, r.jsonBytes)
+	if err := json.Unmarshal(r.formattedBytes, &m); err != nil {
+		t.Fatalf("formattedBytes not valid JSON: %v\n%s", err, r.formattedBytes)
 	}
 	fields, _ := m["fields"].(map[string]interface{})
 	for k, want := range map[string]string{"hostname": "adx-prod-01", "app": "adx-dsp", "trace_id": "t-9"} {
@@ -231,7 +231,7 @@ func Test_BaseField_PropagatesToChildLoggers(t *testing.T) {
 	cw.mu.Unlock()
 	got := map[string]interface{}{}
 	for _, f := range r.fields {
-		got[f.key] = f.val
+		got[f.key] = f.value()
 	}
 	for k, want := range map[string]string{"app": "adx-dsp", "env": "prod", "trace_id": "t-1"} {
 		if got[k] != want {

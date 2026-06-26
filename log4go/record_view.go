@@ -38,7 +38,7 @@ func (r *Record) Seq() uint64 { return r.seq }
 func (r *Record) FieldValue(key string) (interface{}, bool) {
 	for _, f := range r.fields {
 		if f.key == key {
-			return f.val, true
+			return f.value(), true
 		}
 	}
 	return nil, false

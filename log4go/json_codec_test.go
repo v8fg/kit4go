@@ -33,7 +33,7 @@ func Test_JSONCodec_AllProduceValidJSON(t *testing.T) {
 		time:   "t",
 		file:   "f.go:1",
 		msg:    "msg with \"quotes\"",
-		fields: []field{{key: "trace_id", val: "abc"}, {key: "n", val: 42}},
+		fields: []field{fld("trace_id", "abc"), fld("n", 42)},
 	}
 
 	for _, codec := range []JSONCodec{JSONCodecGoccy, JSONCodecStd, JSONCodecSonic} {
@@ -59,7 +59,7 @@ func Test_JSONCodec_TextFieldsHonored(t *testing.T) {
 	defer SetJSONCodec(JSONCodecGoccy)
 	r := &Record{
 		level: INFO, time: "t", file: "f", msg: "m",
-		fields: []field{{key: "k", val: "v"}},
+		fields: []field{fld("k", "v")},
 	}
 	for _, codec := range []JSONCodec{JSONCodecGoccy, JSONCodecStd, JSONCodecSonic} {
 		SetJSONCodec(codec)
@@ -78,7 +78,7 @@ func Benchmark_Record_JSON_Goccy(b *testing.B) {
 	defer SetJSONCodec(JSONCodecGoccy)
 	r := &Record{
 		level: INFO, time: "2026-06-25T15:04:05.000+0800", file: "svc.go:42", msg: "benchmark json payload",
-		fields: []field{{key: "trace_id", val: "abc"}, {key: "user", val: 42}, {key: "route", val: "/api/v1"}},
+		fields: []field{fld("trace_id", "abc"), fld("user", 42), fld("route", "/api/v1")},
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -93,7 +93,7 @@ func Benchmark_Record_JSON_Std(b *testing.B) {
 	defer SetJSONCodec(JSONCodecGoccy)
 	r := &Record{
 		level: INFO, time: "2026-06-25T15:04:05.000+0800", file: "svc.go:42", msg: "benchmark json payload",
-		fields: []field{{key: "trace_id", val: "abc"}, {key: "user", val: 42}, {key: "route", val: "/api/v1"}},
+		fields: []field{fld("trace_id", "abc"), fld("user", 42), fld("route", "/api/v1")},
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -108,7 +108,7 @@ func Benchmark_Record_JSON_Sonic(b *testing.B) {
 	defer SetJSONCodec(JSONCodecGoccy)
 	r := &Record{
 		level: INFO, time: "2026-06-25T15:04:05.000+0800", file: "svc.go:42", msg: "benchmark json payload",
-		fields: []field{{key: "trace_id", val: "abc"}, {key: "user", val: 42}, {key: "route", val: "/api/v1"}},
+		fields: []field{fld("trace_id", "abc"), fld("user", 42), fld("route", "/api/v1")},
 	}
 	b.ReportAllocs()
 	b.ResetTimer()

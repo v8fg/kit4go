@@ -16,7 +16,7 @@ func Test_Record_Accessors(t *testing.T) {
 		msg:      "boom",
 		unixNano: 1782392990_123456789,
 		seq:      7,
-		fields:   []field{{key: "domain", val: "pay"}, {key: "code", val: 42}},
+		fields:   []field{fld("domain", "pay"), fld("code", 42)},
 	}
 	if r.Msg() != "boom" {
 		t.Errorf("Msg=%q want boom", r.Msg())
@@ -46,7 +46,7 @@ func Test_Record_Accessors(t *testing.T) {
 
 func rec(domain string, code int, msg string) *Record {
 	return &Record{level: ERROR, msg: msg, fields: []field{
-		{key: "domain", val: domain}, {key: "code", val: code},
+		fld("domain", domain), fld("code", code),
 	}}
 }
 

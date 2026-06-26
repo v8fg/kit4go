@@ -50,7 +50,7 @@ type NetWriterOptions struct {
 // NetWriter ships records to a remote TCP/UDP endpoint. It is async by design:
 // Write hands the record to a bounded daemon goroutine and returns immediately
 // (under the configured OverflowPolicy), so the application's hot path is never
-// blocked on network I/O. The daemon serializes each record (jsonBytes when the
+// blocked on network I/O. The daemon serializes each record (formattedBytes when the
 // Logger pre-serialized, else Record.String) and writes it with a deadline; on
 // any write error it closes the conn and re-dials on the next record (lazy
 // reconnect with ReconnectBackoff).
@@ -155,11 +155,11 @@ func (n *NetWriter) Write(r *Record) error {
 }
 
 // serialize returns the bytes to send for a record: the Logger's pre-serialized
-// jsonBytes (FormatJSON) when present, else the text String() form. This makes
+// formattedBytes (FormatJSON) when present, else the text String() form. This makes
 // NetWriter honor the Logger's format without its own format logic.
 func (n *NetWriter) serialize(r *Record) []byte {
-	if len(r.jsonBytes) > 0 {
-		return r.jsonBytes
+	if len(r.formattedBytes) > 0 {
+		return r.formattedBytes
 	}
 	return []byte(r.String())
 }

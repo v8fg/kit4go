@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	goccyjson "github.com/goccy/go-json"
 )
 
 // KafKaMSGFields holds the legacy Kafka→ES message fields.
@@ -139,51 +138,60 @@ func (k *KafKaWriter) Init() error {
 // when Fields did not already supply them — so SetBaseField is the single source
 // of truth and always wins.
 type kafkaPayload struct {
-	UnixNano  int64                  `json:"unix_nano"`
-	Seq       uint64                 `json:"seq"`
-	Level     string                 `json:"level"`
-	File      string                 `json:"file,omitempty"`
-	Message   string                 `json:"message"`
-	ServerIP  string                 `json:"server_ip,omitempty"` // legacy fallback; prefer Base Field
-	Timestamp string                 `json:"timestamp"`
-	Now       int64                  `json:"now"`
-	ESIndex   string                 `json:"es_index,omitempty"` // legacy fallback; prefer Base Field
-	Fields    map[string]interface{} `json:"-"`                   // r.fields: Base+With+Context — highest priority
+	UnixNano   int64
+	Seq        uint64
+	Level      string
+	File       string
+	Message    string
+	ServerIP   string // legacy fallback; prefer Base Field
+	Now        int64
+	ESIndex    string // legacy fallback; prefer Base Field
+	userFields []field // merged r.fields (typed) + ExtraFields (typed); r.fields wins
 }
 
-// MarshalJSON builds the payload by direct byte append for all framework fields
-// (int64/uint64/string — zero reflection, zero map alloc) and marshals only the
-// per-field VALUES of the user Fields (Base/With/Context + ExtraFields). This
-// keeps the slow path (which is hit whenever Base Fields are used — the common
-// Kafka→ES case) close to fast-path cost, instead of paying for a full
-// map[string]interface{} marshal.
+// MarshalJSON renders the payload by direct typed byte append: framework fields
+// (int64/uint64/escaped strings) append inline (zero reflection, zero map
+// alloc), and user fields go through appendFieldJSON (scalars allocation-free;
+// kindAny via the active codec). String framework fields are JSON-escaped so a
+// message containing quotes can never break the document.
 //
 // Field priority:
 //   - Framework keys (unix_nano/seq/level/file/message/timestamp/now) are always
 //     emitted from the record; a same-named user field is ignored (reserved).
 //   - Routing keys (server_ip/es_index): a user Field wins; otherwise the legacy
 //     struct member is the fallback.
-//   - Any other key is emitted from Fields.
+//   - Any other key is emitted from userFields.
 func (p kafkaPayload) MarshalJSON() ([]byte, error) {
 	buf := make([]byte, 0, 256)
 	buf = append(buf, '{')
 	// --- fixed framework block (always present) ---
-	buf = appendKVInt64(buf, "unix_nano", p.UnixNano, false)
-	buf = appendKVUint64(buf, "seq", p.Seq, true)
-	buf = appendJSONString(buf, "level", p.Level, true)
-	buf = appendJSONStringOpt(buf, "file", p.File, true)
-	buf = appendJSONString(buf, "message", p.Message, true)
-	buf = appendJSONString(buf, "timestamp", p.Timestamp, true)
-	buf = appendKVInt64(buf, "now", p.Now, true)
+	buf = append(buf, `"unix_nano":`...)
+	buf = strconv.AppendInt(buf, p.UnixNano, 10)
+	buf = append(buf, `,"seq":`...)
+	buf = strconv.AppendUint(buf, p.Seq, 10)
+	buf = append(buf, `,"level":`...)
+	buf = appendJSONQuoted(buf, p.Level)
+	if p.File != "" {
+		buf = append(buf, `,"file":`...)
+		buf = appendJSONQuoted(buf, p.File)
+	}
+	buf = append(buf, `,"message":`...)
+	buf = appendJSONQuoted(buf, p.Message)
+	buf = append(buf, `,"timestamp":"`...)
+	buf = appendISOTimeUTC(buf, p.UnixNano)
+	buf = append(buf, '"')
+	buf = append(buf, `,"now":`...)
+	buf = strconv.AppendInt(buf, p.Now, 10)
 	// --- routing fields: user Field wins over legacy struct fallback ---
-	buf = appendRoutingField(buf, "server_ip", p.Fields, p.ServerIP)
-	buf = appendRoutingField(buf, "es_index", p.Fields, p.ESIndex)
+	buf = appendRoutingField(buf, "server_ip", p.userFields, p.ServerIP)
+	buf = appendRoutingField(buf, "es_index", p.userFields, p.ESIndex)
 	// --- remaining user fields (skip reserved + routing keys already emitted) ---
-	for k, v := range p.Fields {
-		if kafkaReservedKey(k) || k == "server_ip" || k == "es_index" {
+	for _, f := range p.userFields {
+		if kafkaReservedKey(f.key) || f.key == "server_ip" || f.key == "es_index" {
 			continue
 		}
-		buf = appendJSONField(buf, k, v)
+		buf = append(buf, ',')
+		buf = appendFieldJSON(buf, f)
 	}
 	buf = append(buf, '}')
 	return buf, nil
@@ -202,73 +210,22 @@ func kafkaReservedKey(k string) bool {
 }
 
 // appendRoutingField emits a routing key (server_ip/es_index) exactly once: from
-// the user Fields if present (Base Field wins), otherwise from the legacy struct
-// fallback when non-empty. Omitted entirely when neither supplies a value.
-func appendRoutingField(buf []byte, key string, fields map[string]interface{}, fallback string) []byte {
-	if v, ok := fields[key]; ok {
-		return appendJSONField(buf, key, v)
+// the typed user fields if present (Base Field wins), otherwise from the legacy
+// struct fallback when non-empty. Omitted entirely when neither supplies a value.
+func appendRoutingField(buf []byte, key string, fields []field, fallback string) []byte {
+	for _, f := range fields {
+		if f.key == key {
+			buf = append(buf, ',')
+			return appendFieldJSON(buf, f)
+		}
 	}
-	return appendJSONStringOpt(buf, key, fallback, true)
-}
-
-// appendJSONField appends ,"key":<marshaled value> for an arbitrary user field
-// value. The value is marshaled individually (handles strings, numbers, bools,
-// nested objects) with proper escaping via the active codec.
-func appendJSONField(buf []byte, key string, val interface{}) []byte {
-	vb, err := goccyjson.Marshal(val)
-	if err != nil {
-		// never drop a field on a marshal error: emit null so the key is present.
-		vb = []byte("null")
+	if fallback != "" {
+		buf = append(buf, ',', '"')
+		buf = append(buf, key...)
+		buf = append(buf, '"', ':')
+		return appendJSONQuoted(buf, fallback)
 	}
-	buf = append(buf, ',', '"')
-	buf = append(buf, key...)
-	buf = append(buf, '"', ':')
-	return append(buf, vb...)
-}
-
-// appendJSONString appends "key":"val" to buf, with comma prefix if needed.
-func appendJSONString(buf []byte, key, val string, needComma bool) []byte {
-	if needComma {
-		buf = append(buf, ',')
-	}
-	buf = append(buf, '"')
-	buf = append(buf, key...)
-	buf = append(buf, '"', ':', '"')
-	buf = append(buf, val...)
-	buf = append(buf, '"')
 	return buf
-}
-
-// appendJSONStringOpt is appendJSONString with omitempty semantics: an empty
-// value is omitted entirely (and contributes no comma), keeping the payload free
-// of empty routing/optional fields (es_index/server_ip/file).
-func appendJSONStringOpt(buf []byte, key, val string, needComma bool) []byte {
-	if val == "" {
-		return buf
-	}
-	return appendJSONString(buf, key, val, needComma)
-}
-
-// appendKVInt64 appends "key":<int> to buf.
-func appendKVInt64(buf []byte, key string, val int64, needComma bool) []byte {
-	if needComma {
-		buf = append(buf, ',')
-	}
-	buf = append(buf, '"')
-	buf = append(buf, key...)
-	buf = append(buf, '"', ':')
-	return strconv.AppendInt(buf, val, 10)
-}
-
-// appendKVUint64 appends "key":<uint> to buf.
-func appendKVUint64(buf []byte, key string, val uint64, needComma bool) []byte {
-	if needComma {
-		buf = append(buf, ',')
-	}
-	buf = append(buf, '"')
-	buf = append(buf, key...)
-	buf = append(buf, '"', ':')
-	return strconv.AppendUint(buf, val, 10)
 }
 
 // buildPayload serializes the record to a JSON payload once (struct path = zero
@@ -283,30 +240,49 @@ func (k *KafKaWriter) buildPayload(r *Record) []byte {
 		Seq:       r.seq,
 		Level:     LevelFlags[r.level],
 		File:      r.file,
-		Message:   r.msg,
-		ServerIP:  k.options.MSG.ServerIP,
-		// Force the ISO layout regardless of the logger's text layout: ES
-		// auto-parses RFC3339-ish timestamps into its date type; a text layout
-		// like "2006/01/02 15:04:05" would not. time.Unix(0,ns) is a pure field
-		// construction (no syscall), cheaper than the second time.Now() it
-		// replaces.
-		Timestamp: time.Unix(0, r.unixNano).Format(timestampLayout),
-		Now:       r.unixNano / 1e9,
-		ESIndex:   k.options.MSG.ESIndex,
+		Message:  r.msg,
+		ServerIP: k.options.MSG.ServerIP,
+		// Timestamp is formatted directly in MarshalJSON from UnixNano via
+		// appendISOTimeUTC (RFC3339 micros, UTC) — ES-friendly, no string alloc.
+		Now:     r.unixNano / 1e9,
+		ESIndex: k.options.MSG.ESIndex,
 	}
-	// only allocate Fields map if there are structured fields or ExtraFields
-	if len(r.fields) > 0 || len(k.options.MSG.ExtraFields) > 0 {
-		p.Fields = make(map[string]interface{}, len(r.fields)+len(k.options.MSG.ExtraFields))
-		for _, f := range r.fields {
-			if _, ok := p.Fields[f.key]; !ok {
-				p.Fields[f.key] = f.val
-			}
+	// Attach user fields. Three cases avoid a dedup map on the hot single-source
+	// paths (the common Base-Fields-only and ExtraFields-only shapes):
+	//   - r.fields only: share the slice read-only (duplicate keys keep the last
+	//     value, which is the With-overrides-Base semantics already established
+	//     when the logger merged them).
+	//   - ExtraFields only: map keys are unique, no dedup needed.
+	//   - both: dedup by key (r.fields wins) via a small set.
+	rf := r.fields
+	ef := k.options.MSG.ExtraFields
+	switch {
+	case len(rf) > 0 && len(ef) == 0:
+		p.userFields = rf
+	case len(rf) == 0 && len(ef) > 0:
+		uf := make([]field, 0, len(ef))
+		for fk, fv := range ef {
+			uf = append(uf, fieldOf(fk, fv))
 		}
-		for fk, fv := range k.options.MSG.ExtraFields {
-			if _, ok := p.Fields[fk]; !ok {
-				p.Fields[fk] = fv
+		p.userFields = uf
+	case len(rf) > 0:
+		seen := make(map[string]struct{}, len(rf)+len(ef))
+		uf := make([]field, 0, len(rf)+len(ef))
+		for _, f := range rf {
+			if _, ok := seen[f.key]; ok {
+				continue
 			}
+			seen[f.key] = struct{}{}
+			uf = append(uf, f)
 		}
+		for fk, fv := range ef {
+			if _, ok := seen[fk]; ok {
+				continue
+			}
+			seen[fk] = struct{}{}
+			uf = append(uf, fieldOf(fk, fv))
+		}
+		p.userFields = uf
 	}
 	b, err := p.MarshalJSON()
 	if err != nil {

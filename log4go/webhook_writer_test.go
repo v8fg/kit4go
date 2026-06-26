@@ -121,7 +121,7 @@ func Test_WebhookWriter_DefaultFormatter(t *testing.T) {
 		time:   "2026-06-26 12:00:00",
 		file:   "svc.go:42",
 		msg:    "payment failed",
-		fields: []field{{key: "order_id", val: "o-1"}},
+		fields: []field{fld("order_id", "o-1")},
 	}
 	kind, text := DefaultWebhookFormatter(r)
 	if kind != "ERROR" {

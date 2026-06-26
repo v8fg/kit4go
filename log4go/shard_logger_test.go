@@ -141,6 +141,18 @@ func Test_ShardLogger_RegisterFunc_IndependentFileWriters(t *testing.T) {
 	// file assertions so buffered data is on disk.
 	closeOnce.Do(func() { s.Close() })
 
+	// Logger.Close only Flushes (bufio); the async FileWriter daemons keep their
+	// own buffers and survive Close, so under load a file may not be fully
+	// drained yet. Stop() each FileWriter to deterministically drain its async
+	// buffer + flush + exit, so the on-disk content is complete before asserting.
+	for _, l := range s.loggers {
+		for _, w := range l.snapshotWriters() {
+			if fw, ok := w.(*FileWriter); ok {
+				fw.Stop()
+			}
+		}
+	}
+
 	// Every shard's file exists and is non-empty; every line is well-formed.
 	matches, err := filepath.Glob(filepath.Join(dir, "shard*-*.log"))
 	if err != nil {
@@ -177,5 +189,47 @@ func Test_ShardLogger_RegisterFunc_IndependentFileWriters(t *testing.T) {
 	}
 	if totalLines == 0 {
 		t.Fatal("no well-formed log lines written across shards")
+	}
+}
+
+// slowSink prevents the compiler from eliding slowWriter's synthetic work
+// (without it, the loop's result is unused and DCE'd away, making the writer
+// instant and hiding sharding's benefit).
+var slowSink uint64
+
+// slowWriter simulates a real (disk/kafka-like) writer that takes real CPU time
+// per record, so the bootstrap goroutine becomes the bottleneck that sharding
+// relieves. (discardWriter is instant, so it never stresses a single bootstrap
+// and hides sharding's benefit.)
+type slowWriter struct{ work int }
+
+func (slowWriter) Init() error { return nil }
+func (w slowWriter) Write(*Record) error {
+	var x uint64
+	for i := 0; i < w.work; i++ {
+		x += uint64(i) * uint64(i)
+	}
+	atomic.AddUint64(&slowSink, x) // observed -> not elided
+	return nil
+}
+
+// Benchmark_ShardLoggerScale_SlowWriter sweeps shard count with a writer that
+// does real per-record work — the regime where sharding parallelizes bootstrap
+// consumption and throughput scales toward GOMAXPROCS.
+func Benchmark_ShardLoggerScale_SlowWriter(b *testing.B) {
+	const work = 2000 // ~1µs of synthetic writer work per record (writer-bound)
+	for _, n := range []int{1, 2, 4, 8} {
+		b.Run(fmt.Sprintf("shard=%d", n), func(b *testing.B) {
+			s := NewShardLogger(n)
+			s.Register(slowWriter{work: work})
+			defer s.Close()
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					s.Info("slow shard msg")
+				}
+			})
+		})
 	}
 }

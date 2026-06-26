@@ -7,6 +7,7 @@ package log4go_test
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -363,4 +364,58 @@ func Example_multiWriterAlerts() {
 	log4go.Warn("cache degraded")                // → kafka + net
 	log4go.Error("db timeout")                   // → kafka + net; webhook filter rejects (not domain=pay)
 	log4go.With("domain", "pay").Error("payment failed") // → kafka + net + webhook (domain=pay + "fail", past threshold)
+}
+
+// Example_presets shows the one-line production / development configurations
+// (mirrors zap.NewProduction / NewDevelopment).
+func Example_presets() {
+	prod := log4go.NewProduction() // JSON + INFO + sampling + caller + console
+	defer prod.Close()
+	prod.Info("production line")
+
+	dev := log4go.NewDevelopment() // colored text + DEBUG + funcname + console
+	defer dev.Close()
+	dev.Debug("debug line")
+}
+
+// Example_typedFields shows the allocation-free typed field constructors
+// (WithString/WithInt/...), the counterpart to zap.Field / slog.Attr. Scalars
+// never box into interface{}.
+func Example_typedFields() {
+	_ = log4go.SetupLog(log4go.LogConfig{
+		Level:         log4go.LevelFlagInfo,
+		Format:        "json",
+		ConsoleWriter: log4go.ConsoleWriterOptions{Enable: true, Level: log4go.LevelFlagInfo},
+	})
+	defer log4go.Close()
+
+	log4go.WithString("trace_id", "t-1").
+		WithInt("status", 200).
+		WithDuration("elapsed", 3*time.Millisecond).
+		Info("served")
+	// {"...","msg":"served","fields":{"trace_id":"t-1","status":200,"elapsed":3000000}}
+}
+
+// Example_slogBridge routes the standard library log/slog (and with it net/http
+// and any third-party lib using slog) through the log4go pipeline, so its
+// writers, overflow protection and alerting all apply.
+func Example_slogBridge() {
+	lg := log4go.NewProduction()
+	defer lg.Close()
+	slog.SetDefault(slog.New(log4go.NewSlogHandler(lg)))
+
+	slog.Info("via slog", "route", "/api/v1", "status", 200)
+	// net/http and other slog-using libs now log through log4go too.
+}
+
+// Example_logfmt shows the Loki/Promtail/docker-friendly key=value format.
+func Example_logfmt() {
+	lg := log4go.NewLogger()
+	defer lg.Close()
+	lg.SetFormat(log4go.FormatLogfmt)
+	lg.SetLevel(log4go.DEBUG)
+	lg.Register(log4go.NewConsoleWriterWithOptions(log4go.ConsoleWriterOptions{Enable: true}))
+
+	lg.WithString("trace_id", "t-1").Info("logfmt line")
+	// time=2026-06-26T... level=INFO msg="logfmt line" trace_id=t-1
 }

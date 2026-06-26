@@ -107,7 +107,7 @@ func Test_AddContextExtractor_Merge(t *testing.T) {
 
 	got := map[string]interface{}{}
 	for _, f := range child.fields {
-		got[f.key] = f.val
+		got[f.key] = f.value()
 	}
 	if got["a"] != 1 || got["b"] != 2 {
 		t.Errorf("merge lost keys: %v", got)
@@ -135,7 +135,7 @@ func Test_AddContextExtractor_DefaultStillRuns(t *testing.T) {
 
 	got := map[string]interface{}{}
 	for _, f := range child.fields {
-		got[f.key] = f.val
+		got[f.key] = f.value()
 	}
 	if got["trace_id"] != "t-9" {
 		t.Errorf("default extractor did not run: %v", got)
@@ -199,7 +199,7 @@ func Test_SetContextExtractor_OverridesStack(t *testing.T) {
 	child := root.WithContext(context.Background())
 	got := map[string]interface{}{}
 	for _, f := range child.fields {
-		got[f.key] = f.val
+		got[f.key] = f.value()
 	}
 	if _, ok := got["stack"]; ok {
 		t.Errorf("per-logger extractor did not override global stack: %v", got)
@@ -222,7 +222,7 @@ func Test_RequestIDMiddleware_InboundHeader(t *testing.T) {
 		lg := FromContext(r.Context())
 		gotFields = map[string]interface{}{}
 		for _, f := range lg.fields {
-			gotFields[f.key] = f.val
+			gotFields[f.key] = f.value()
 		}
 	}), RequestIDMiddlewareOpts{})
 
@@ -262,7 +262,7 @@ func Test_RequestIDMiddleware_CustomHeaderAndField(t *testing.T) {
 		lg := FromContext(r.Context())
 		gotFields = map[string]interface{}{}
 		for _, f := range lg.fields {
-			gotFields[f.key] = f.val
+			gotFields[f.key] = f.value()
 		}
 	}), RequestIDMiddlewareOpts{Header: "X-Correlation-Id", FieldName: "correlation_id"})
 
@@ -363,7 +363,7 @@ func Test_RequestIDMiddleware_EndToEnd_LogLine(t *testing.T) {
 	cw.mu.Unlock()
 	var foundReqID bool
 	for _, f := range r.fields {
-		if f.key == "request_id" && f.val == "rid-e2e" {
+		if f.key == "request_id" && f.value() == "rid-e2e" {
 			foundReqID = true
 		}
 	}

@@ -143,11 +143,11 @@ func Benchmark_KafKaWriter_buildPayload_baseFields(b *testing.B) {
 		unixNano: 1782392990_123456789,
 		seq:      1234567,
 		fields: []field{
-			{key: "hostname", val: "adx-prod-01"},
-			{key: "server_ip", val: "10.0.1.5"},
-			{key: "app", val: "adx-dsp"},
-			{key: "es_index", val: "adx-logs-2026.06"},
-			{key: "trace_id", val: "a1b2c3d4e5f6"},
+			fld("hostname", "adx-prod-01"),
+			fld("server_ip", "10.0.1.5"),
+			fld("app", "adx-dsp"),
+			fld("es_index", "adx-logs-2026.06"),
+			fld("trace_id", "a1b2c3d4e5f6"),
 		},
 	}
 	b.ReportAllocs()
