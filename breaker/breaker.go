@@ -1,0 +1,384 @@
+package breaker
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// BreakerMetrics is a best-effort snapshot of a breaker's lifetime counters and
+// current state. It is safe to read concurrently; the fields are populated
+// atomically but are not mutually consistent across fields (State may be read a
+// few nanoseconds apart from Total). Treat it as an observation, not a source
+// of truth for transactional decisions.
+type BreakerMetrics struct {
+	// State is the breaker's state at the instant of the snapshot.
+	State BreakerState
+	// Total is the cumulative number of Execute calls (including ones rejected
+	// with ErrCircuitOpen since they were attempted). It never decreases.
+	Total uint64
+	// Success is the cumulative number of calls whose fn returned nil.
+	Success uint64
+	// Failures is the cumulative number of calls whose fn returned a non-nil
+	// error (ctx cancellation counts as a failure).
+	Failures uint64
+	// ConsecutiveFail is the current run of failures since the last success.
+	// Reset to 0 on the next success.
+	ConsecutiveFail uint32
+}
+
+// Breaker is a generic circuit breaker parameterised by the value type returned
+// by the wrapped operation. Construct one with [NewBreaker].
+//
+// Concurrency model: state, expiry, half-open counters and lifetime metrics
+// are all stored in atomics for lock-free fast-path reads. The per-instance
+// mutex b.mu guards only (a) writes to the sliding-window buckets and their
+// running sums, and (b) state-transition critical sections, so a healthy
+// Closed breaker pays for one lock/unlock per call plus atomics.
+//
+// The sliding window is a per-second ring buffer (one int bucket per second of
+// Interval) identical in design to log4go.RateAlerter: advance() rolls the
+// ring forward and subtracts expired buckets from the running sum, making
+// record O(1) amortized with no per-call allocation.
+type Breaker[T any] struct {
+	opts BreakerOptions
+
+	// state holds a BreakerState value; read/written atomically.
+	state atomic.Int32
+	// mu guards the sliding-window fields below and serialises state
+	// transitions. Held only briefly.
+	mu sync.Mutex
+	// expiry is the unix-nano timestamp at/after which StateOpen transitions
+	// to StateHalfOpen on the next call. Read atomically; written under mu.
+	expiry atomic.Int64
+
+	// Sliding window (per-second ring), guarded by mu. counts holds successes,
+	// fails holds failures, one slot per second of Interval. base is the unix
+	// second of the newest bucket advanced to; sumTotal/sumFail are the running
+	// sums of all live buckets.
+	counts   []int
+	fails    []int
+	base     int64
+	sumTotal int
+	sumFail  int
+
+	// Half-open probe tracking. halfOpenCount is the number of probe slots
+	// taken; halfOpenSuccess the number that have succeeded. Both atomic so
+	// probes can admit/complete without taking mu.
+	halfOpenSuccess atomic.Int32
+	halfOpenCount   atomic.Int32
+
+	// Lifetime metrics, all atomic.
+	total      atomic.Uint64
+	success    atomic.Uint64
+	failures   atomic.Uint64
+	consecFail atomic.Uint32
+}
+
+// NewBreaker builds a breaker for the given value type T. opts is normalised
+// with withDefaults, so the zero BreakerOptions yields a breaker with all
+// defaults. Returns a *Breaker ready to use.
+func NewBreaker[T any](opts BreakerOptions) *Breaker[T] {
+	opts = opts.withDefaults()
+	secs := int(opts.Interval.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	b := &Breaker[T]{
+		opts:   opts,
+		counts: make([]int, secs),
+		fails:  make([]int, secs),
+		base:   time.Now().Unix(),
+	}
+	b.state.Store(int32(StateClosed))
+	return b
+}
+
+// State returns the breaker's current state. It is a lock-free atomic read.
+func (b *Breaker[T]) State() BreakerState {
+	return BreakerState(b.state.Load())
+}
+
+// Metrics returns a snapshot of the lifetime counters and current state. See
+// BreakerMetrics for the consistency caveat.
+func (b *Breaker[T]) Metrics() BreakerMetrics {
+	return BreakerMetrics{
+		State:           b.State(),
+		Total:           b.total.Load(),
+		Success:         b.success.Load(),
+		Failures:        b.failures.Load(),
+		ConsecutiveFail: b.consecFail.Load(),
+	}
+}
+
+// Execute runs fn under the breaker's protection.
+//
+// If the breaker is Open and its OpenDuration has not elapsed, or HalfOpen with
+// all MaxRequests probe slots taken, Execute returns the zero value of T and
+// ErrCircuitOpen without invoking fn. Otherwise fn runs; its result and error
+// are propagated unchanged, and the outcome is recorded:
+//
+//   - Closed: the call is added to the sliding window; if the in-window failure
+//     rate then reaches FailRate over >= MinRequests calls, the breaker trips
+//     to Open.
+//   - HalfOpen: a successful probe increments the half-open success counter,
+//     and once it reaches MaxRequests the breaker returns to Closed; a failed
+//     probe immediately trips back to Open.
+//
+// If ctx is already cancelled, Execute counts that as a failure but still
+// records it (so a flaky caller cancelling on timeout cannot hide failures
+// from the breaker).
+func (b *Breaker[T]) Execute(ctx context.Context, fn func(ctx context.Context) (T, error)) (T, error) {
+	var zero T
+
+	// Admit-or-reject. beforeCall returns ErrCircuitOpen when the call must not
+	// proceed; otherwise it returns nil (and may have transitioned state).
+	if err := b.beforeCall(); err != nil {
+		// A rejected call is still a call attempted; count it as a lifetime
+		// total but not as success/failure (fn never ran).
+		b.total.Add(1)
+		return zero, err
+	}
+
+	// Respect a pre-cancelled context: count it as a failure (callers that
+	// cancel on timeout should not be able to mask downstream trouble).
+	if err := ctx.Err(); err != nil {
+		b.total.Add(1)
+		b.recordFailure()
+		return zero, err
+	}
+
+	b.total.Add(1)
+	v, err := fn(ctx)
+	if err != nil {
+		b.recordFailure()
+		return v, err
+	}
+	b.recordSuccess()
+	return v, nil
+}
+
+// beforeCall enforces the state-dependent admission policy. It returns
+// ErrCircuitOpen when the call must not proceed, and nil otherwise. Open→HalfOpen
+// and the HalfOpen probe-slot accounting happen here.
+func (b *Breaker[T]) beforeCall() error {
+	switch BreakerState(b.state.Load()) {
+	case StateClosed:
+		return nil
+	case StateOpen:
+		// Transition to HalfOpen once the cooldown has elapsed. Compare
+		// atomically; if it hasn't, reject without taking the lock.
+		if time.Now().UnixNano() < b.expiry.Load() {
+			return ErrCircuitOpen
+		}
+		return b.toHalfOpenOrReject()
+	case StateHalfOpen:
+		// Admit up to MaxRequests concurrent probes. Extra callers are rejected
+		// so the probe set stays bounded.
+		if uint32(b.halfOpenCount.Load()) >= b.opts.MaxRequests {
+			return ErrCircuitOpen
+		}
+		if b.halfOpenCount.Add(1) > int32(b.opts.MaxRequests) {
+			// Lost the admission race: undo and reject.
+			b.halfOpenCount.Add(-1)
+			return ErrCircuitOpen
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+// toHalfOpenOrReject is the Open→HalfOpen transition under contention: the
+// first caller that observes the elapsed expiry flips the state to HalfOpen and
+// takes the first probe slot; losers see HalfOpen and go through the normal
+// half-open admission path.
+func (b *Breaker[T]) toHalfOpenOrReject() error {
+	b.mu.Lock()
+	// Re-check under lock: another goroutine may have transitioned already, or
+	// the clock may read differently now.
+	if BreakerState(b.state.Load()) != StateOpen {
+		b.mu.Unlock()
+		// Already moved (likely HalfOpen); re-evaluate via beforeCall's path.
+		if BreakerState(b.state.Load()) == StateHalfOpen {
+			if b.halfOpenCount.Add(1) <= int32(b.opts.MaxRequests) {
+				return nil
+			}
+			b.halfOpenCount.Add(-1)
+		}
+		return ErrCircuitOpen
+	}
+	if time.Now().UnixNano() < b.expiry.Load() {
+		b.mu.Unlock()
+		return ErrCircuitOpen
+	}
+	// Flip to HalfOpen and arm the probe counters.
+	b.state.Store(int32(StateHalfOpen))
+	b.halfOpenSuccess.Store(0)
+	b.halfOpenCount.Store(1) // current call takes the first slot
+	b.mu.Unlock()
+	return nil
+}
+
+// recordSuccess updates counters for a successful call and may transition
+// HalfOpen→Closed.
+func (b *Breaker[T]) recordSuccess() {
+	b.success.Add(1)
+	b.consecFail.Store(0)
+
+	switch BreakerState(b.state.Load()) {
+	case StateHalfOpen:
+		// A successful probe: once MaxRequests of them land in a row, the
+		// downstream is healthy again — return to Closed and reset the window.
+		if uint32(b.halfOpenSuccess.Add(1)) >= b.opts.MaxRequests {
+			b.toClosed()
+		}
+	case StateClosed:
+		b.recordWindow(true)
+	}
+}
+
+// recordFailure updates counters for a failed call and may trip the breaker.
+func (b *Breaker[T]) recordFailure() {
+	b.failures.Add(1)
+	b.consecFail.Add(1)
+
+	switch BreakerState(b.state.Load()) {
+	case StateHalfOpen:
+		// Any failed probe is enough evidence the downstream is still broken.
+		b.toOpen()
+	case StateClosed:
+		b.recordWindow(false)
+		// Re-read state in case another goroutine tripped while we held the
+		// window lock; if still Closed, evaluate the trip condition ourselves.
+		if BreakerState(b.state.Load()) == StateClosed {
+			b.maybeTrip()
+		}
+	}
+}
+
+// recordWindow advances the sliding window to the current second and records
+// one call in it. success selects the success vs failure bucket. Caller holds
+// b.mu. Only the matching bucket (counts for every call, fails for failures
+// only) is bumped, and the running sums are updated to match.
+func (b *Breaker[T]) recordWindow(success bool) {
+	sec := time.Now().Unix()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.advance(sec)
+	n := int64(len(b.counts))
+	idx := sec % n
+	b.counts[idx]++
+	b.sumTotal++
+	if !success {
+		b.fails[idx]++
+		b.sumFail++
+	}
+}
+
+// maybeTrip evaluates the Closed→Open condition under b.mu and trips if met.
+// Reads the live sliding-window sums; called only from recordFailure.
+func (b *Breaker[T]) maybeTrip() {
+	sec := time.Now().Unix()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if BreakerState(b.state.Load()) != StateClosed {
+		return
+	}
+	b.advance(sec)
+	if uint32(b.sumTotal) < b.opts.MinRequests {
+		return
+	}
+	// sumFail/sumTotal >= FailRate. FailRate <= 0 trips as soon as MinRequests
+	// failures land; FailRate > 1 never trips.
+	if b.opts.FailRate <= 0 {
+		if b.sumFail > 0 {
+			b.tripLocked()
+		}
+		return
+	}
+	if float64(b.sumFail)/float64(b.sumTotal) >= b.opts.FailRate {
+		b.tripLocked()
+	}
+}
+
+// tripLocked moves the breaker from Closed to Open. Caller holds b.mu.
+func (b *Breaker[T]) tripLocked() {
+	b.state.Store(int32(StateOpen))
+	b.expiry.Store(time.Now().Add(b.opts.OpenDuration).UnixNano())
+}
+
+// toOpen moves the breaker to Open from any state. Resets the half-open
+// counters so a future HalfOpen phase starts clean.
+func (b *Breaker[T]) toOpen() {
+	b.mu.Lock()
+	b.state.Store(int32(StateOpen))
+	b.expiry.Store(time.Now().Add(b.opts.OpenDuration).UnixNano())
+	b.halfOpenSuccess.Store(0)
+	b.halfOpenCount.Store(0)
+	b.mu.Unlock()
+}
+
+// toClosed moves the breaker from HalfOpen back to Closed and resets the
+// sliding window so the freshly-recovered breaker is not re-tripped by stale
+// failures from before the outage.
+func (b *Breaker[T]) toClosed() {
+	b.mu.Lock()
+	if BreakerState(b.state.Load()) != StateHalfOpen {
+		b.mu.Unlock()
+		return
+	}
+	for i := range b.counts {
+		b.counts[i] = 0
+		b.fails[i] = 0
+	}
+	b.sumTotal = 0
+	b.sumFail = 0
+	b.base = time.Now().Unix()
+	b.halfOpenSuccess.Store(0)
+	b.halfOpenCount.Store(0)
+	b.state.Store(int32(StateClosed))
+	b.mu.Unlock()
+}
+
+// advance rolls the bucket ring forward to sec, zeroing buckets that have
+// fallen out of the window and subtracting them from sumTotal/sumFail. After it
+// returns, the bucket at index sec%n is cleared and ready for a fresh count.
+// This is the same algorithm as log4go.RateAlerter.advance, applied to two
+// rings in lockstep. Caller holds b.mu.
+func (b *Breaker[T]) advance(sec int64) {
+	n := int64(len(b.counts))
+	if sec <= b.base {
+		// Clock moved backward or same second: clear only the target slot so a
+		// reused second does not double-count across a window boundary.
+		if sec < b.base {
+			i := sec % n
+			b.sumTotal -= b.counts[i]
+			b.sumFail -= b.fails[i]
+			b.counts[i] = 0
+			b.fails[i] = 0
+			b.base = sec
+		}
+		return
+	}
+	if sec-b.base >= n {
+		// A full window (or more) has elapsed: every bucket is expired.
+		for i := range b.counts {
+			b.sumTotal -= b.counts[i]
+			b.sumFail -= b.fails[i]
+			b.counts[i] = 0
+			b.fails[i] = 0
+		}
+		b.base = sec
+		return
+	}
+	for b.base < sec {
+		b.base++
+		i := b.base % n
+		b.sumTotal -= b.counts[i]
+		b.sumFail -= b.fails[i]
+		b.counts[i] = 0
+		b.fails[i] = 0
+	}
+}
