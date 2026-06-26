@@ -21,6 +21,16 @@ type CircuitBreaker interface {
 	Execute(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
+// LatencyObserver receives the end-to-end duration of an RPC. grpcclient does
+// not import the latency package; pass a *latency.Histogram (which satisfies
+// this interface) or any other implementation. A nil Latency on ClientOptions
+// disables observation — the call site is a single nil check, with no time.Now
+// and no defer, so the disabled path is free.
+type LatencyObserver interface {
+	// Observe records a single latency sample. Must be safe for concurrent use.
+	Observe(time.Duration)
+}
+
 // ClientOptions configures a [Middleware]. Zero values are replaced with
 // sensible defaults by withDefaults at construction time, so the zero
 // ClientOptions is usable (it yields a middleware with all defaults). Breaker
@@ -71,6 +81,11 @@ type ClientOptions struct {
 	// Breaker, when non-nil, wraps every unary and stream call via
 	// Breaker.Execute. nil (the default) disables circuit-breaker integration.
 	Breaker CircuitBreaker `json:"-"`
+
+	// Latency, when non-nil, receives the end-to-end duration of every RPC
+	// (unary calls include retries; streams measure open time). nil (the
+	// default) disables latency observation.
+	Latency LatencyObserver `json:"-"`
 }
 
 // defaultClientOptions returns the package defaults used to fill zero option

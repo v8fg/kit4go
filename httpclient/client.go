@@ -163,7 +163,13 @@ func (c *Client) fireEvent(name, method, url string, status, attempt int) {
 	}
 }
 
-// NewClient constructs a [Client] from opts, filling zero fields with the
+// observe records the call's end-to-end latency on the configured observer. It
+// assumes c.opts.Latency is non-nil — callers guard the start/defer behind a
+// nil check so the disabled path is a single branch with no time.Now and no
+// defer.
+func (c *Client) observe(start time.Time) {
+	c.opts.Latency.Observe(time.Since(start))
+}
 // package defaults. It builds a single shared [http.Transport] sized by the
 // connection-pool options and wires the connect timeout into the dialer.
 //
@@ -223,6 +229,10 @@ func NewClient(opts ClientOptions) *Client {
 // torn down. DoWithRetry honours the deadline encoded on the request's context.
 func (c *Client) Do(ctx context.Context, method, url string, body []byte, headers map[string]string) (*Response, error) {
 	c.total.Add(1)
+	if c.opts.Latency != nil {
+		start := time.Now()
+		defer c.observe(start)
+	}
 
 	if ctx == nil {
 		ctx = context.Background()
