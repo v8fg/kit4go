@@ -108,9 +108,15 @@ func (h *Histogram) Observe(d time.Duration) {
 	ns := uint64(d)
 	idx := bucketIndex(h.boundaries, d) // lock-free; boundaries is read-only
 
-	sec := time.Now().Unix()
 	h.mu.Lock()
+	// Read the second UNDER the lock. A value read before acquiring the lock can
+	// be older than base (advanced by a concurrent caller while we waited), which
+	// would otherwise trip advance's backward path and destroy live samples.
+	sec := time.Now().Unix()
 	h.advance(sec)
+	if sec < h.base {
+		sec = h.base // wall clock regressed (NTP): attribute the sample to the current bucket
+	}
 	b := &h.buckets[int(sec%int64(h.windowSec))]
 	if b.total == 0 {
 		// First sample in this (possibly just-cleared) bucket: seed min/max so
@@ -211,10 +217,10 @@ func (h *Histogram) foldLocked(sec int64, out []int) (total int, sum uint64, min
 func (h *Histogram) advance(sec int64) {
 	n := int64(h.windowSec)
 	if sec <= h.base {
-		if sec < h.base { // clock moved backward: clear only the target slot
-			h.zeroBucket(int(sec % n))
-			h.base = sec
-		}
+		// Stale read or wall-clock regression (NTP). Do NOT clear: destroying
+		// live data on a backward timestamp would silently drop samples. The
+		// caller (Observe) clamps its write bucket to base, so leave the window
+		// untouched here.
 		return
 	}
 	if sec-h.base >= n { // a full window (or more) elapsed: every bucket expired

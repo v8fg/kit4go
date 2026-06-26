@@ -98,29 +98,23 @@ func TestHistogram_Advance_SameSecond(t *testing.T) {
 }
 
 func TestHistogram_Advance_BackwardClock(t *testing.T) {
+	// A backward/stale second must NOT destroy data: advance leaves the window
+	// untouched (no clearing, base unchanged) so samples are never silently
+	// dropped on a stale read or an NTP wall-clock regression.
 	h := NewHistogram(Options{Window: 5 * time.Second})
 	h.mu.Lock()
 	h.base = 1000
 	for i := range h.buckets {
 		fillBucket(h, i, 7, time.Millisecond)
 	}
-	h.advance(997) // 997 < 1000 -> clear only the target slot
-	idx := int(int64(997) % int64(h.windowSec))
-	if h.buckets[idx].total != 0 {
-		t.Fatalf("backward advance did not clear slot %d: total=%d", idx, h.buckets[idx].total)
+	h.advance(997) // 997 < base 1000 -> no-op
+	if h.base != 1000 {
+		t.Fatalf("backward advance moved base: %d, want 1000 (unchanged)", h.base)
 	}
-	if h.base != 997 {
-		t.Fatalf("base=%d want 997", h.base)
-	}
-	// Other buckets are untouched.
-	untouched := 0
 	for i := range h.buckets {
-		if h.buckets[i].total == 7 {
-			untouched++
+		if h.buckets[i].total != 7 {
+			t.Fatalf("backward advance destroyed bucket %d data: total=%d, want 7", i, h.buckets[i].total)
 		}
-	}
-	if untouched != h.windowSec-1 {
-		t.Fatalf("untouched buckets=%d, want %d", untouched, h.windowSec-1)
 	}
 	h.mu.Unlock()
 }
