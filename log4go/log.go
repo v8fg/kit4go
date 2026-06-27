@@ -381,6 +381,15 @@ type Rotater interface {
 	SetPathPattern(string) error
 }
 
+// Stopper is implemented by writers that own a background daemon and/or a
+// connection that must be released on shutdown (File/Kafka/Net). Logger.Close
+// stops every registered Stopper so a single log4go.Close() reclaims all writer
+// goroutines, channels, file handles, and connections. Stop is idempotent, so a
+// writer the caller already Stop()ed (or one without a daemon) is a no-op.
+type Stopper interface {
+	Stop()
+}
+
 // Logger logger define
 type Logger struct {
 	writers         atomic.Value // []Writer, copy-on-write for lock-free reads
@@ -525,10 +534,14 @@ func (l *Logger) Close() {
 				log.Println(err)
 			}
 		}
-		// Writers that own an async daemon with a Close() error (e.g.
-		// WebhookWriter wrapping a WebhookAlertSink) are shut down here, so a
-		// single defer log4go.Close() cleans up every sink. Writers without a
-		// Close() error (Console/File/Kafka/Net, which use Stop()) are skipped.
+		// Stop async-daemon writers (File/Kafka/Net) so a single log4go.Close()
+		// reclaims their goroutines, channels, file handles, and connections.
+		// Stop is idempotent, so a writer the caller already Stop()ed is a no-op.
+		if s, ok := w.(Stopper); ok {
+			s.Stop()
+		}
+		// Writers that own a resource exposed via Close() error (e.g.
+		// WebhookWriter wrapping a WebhookAlertSink) are shut down here too.
 		if c, ok := w.(io.Closer); ok {
 			if err := c.Close(); err != nil {
 				log.Println(err)

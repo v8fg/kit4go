@@ -501,6 +501,7 @@ func (k *KafKaWriter) Stop() {
 	if k.spiller != nil {
 		_ = k.spiller.Close()
 	}
+	k.run.Store(false) // mark stopped so a second Stop (e.g. via Logger.Close) is a no-op
 }
 
 // Stats returns a snapshot of overflow counters.

@@ -16,6 +16,7 @@ require (
 	github.com/smartystreets/goconvey v1.7.2
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/automaxprocs v1.6.0
+	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.56.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11

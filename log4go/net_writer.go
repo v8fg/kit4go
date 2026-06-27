@@ -292,6 +292,7 @@ func (n *NetWriter) Stop() {
 		n.conn = nil
 	}
 	n.connMu.Unlock()
+	n.run.Store(false) // mark stopped so a second Stop (e.g. via Logger.Close) is a no-op
 }
 
 // Flush is a no-op for NetWriter (writes are flushed inline by the daemon on
