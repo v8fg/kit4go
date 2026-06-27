@@ -1024,6 +1024,32 @@ func (l *Logger) SetSamplingStrategy(s SamplingStrategy) {
 	l.samplingStrategy.Store(&s)
 }
 
+// SetSamplingStrategyFor temporarily installs s for duration, then auto-reverts
+// to the previous strategy (or nil/Full). Returns a stop func for early cancel
+// (idempotent). Use as a bounded debug/troubleshoot window, e.g. sample 10% for
+// 30 minutes then return to full logging. A new call overrides any active
+// session. Safe under concurrency.
+func (l *Logger) SetSamplingStrategyFor(s SamplingStrategy, duration time.Duration) (stop func()) {
+	prev := l.samplingStrategy.Load()
+	l.SetSamplingStrategy(s)
+	done := make(chan struct{})
+	var once sync.Once
+	revert := func() { l.samplingStrategy.Store(prev) }
+	go func() {
+		t := time.NewTimer(duration)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			revert() // timer expired -> revert
+		case <-done:
+			// stop() already reverted synchronously
+		}
+	}()
+	return func() {
+		once.Do(func() { close(done); revert() }) // synchronous revert + signal goroutine
+	}
+}
+
 // attachContextFields extracts structured fields from ctx and appends them to
 // the logger's fields slice (copy-on-write so the parent stays immutable). The
 // extraction source is:
@@ -1379,6 +1405,12 @@ func Runtime() RuntimeConfig { return defaultLogger().Runtime() }
 // SetSamplingStrategy installs an id-based sampling policy on the package
 // singleton (nil ⇒ FullSampling / keep all). See Logger.SetSamplingStrategy.
 func SetSamplingStrategy(s SamplingStrategy) { defaultLogger().SetSamplingStrategy(s) }
+
+// SetSamplingStrategyFor temporarily installs s on the singleton for duration,
+// then reverts. See Logger.SetSamplingStrategyFor.
+func SetSamplingStrategyFor(s SamplingStrategy, duration time.Duration) (stop func()) {
+	return defaultLogger().SetSamplingStrategyFor(s, duration)
+}
 
 // Writers returns a snapshot of the writers registered on the package singleton.
 func Writers() []Writer { return defaultLogger().Writers() }

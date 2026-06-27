@@ -243,3 +243,67 @@ func TestPackage_SetSamplingStrategy(t *testing.T) {
 		t.Error("package SetSamplingStrategy(nil) did not clear")
 	}
 }
+
+// TestSetSamplingStrategyFor_AutoRevert: a temporary session keeps records while
+// active, then auto-reverts to the previous (drop-all) policy.
+func TestSetSamplingStrategyFor_AutoRevert(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 4))
+	defer root.Close()
+	cw := &captureWriter{}
+	root.Register(cw)
+	root.SetLevel(DEBUG)
+	ctx := context.WithValue(context.Background(), "trace_id", "4a3f0b1c2d3e4f60718293a4b5c6d7e8")
+
+	root.SetSamplingStrategy(TraceIDRatioBased{Ratio: 0}) // prev: drop all
+	root.SetSamplingStrategyFor(TraceIDRatioBased{Ratio: 1}, 50*time.Millisecond)
+	root.WithContext(ctx).Info("during") // kept (session active)
+	waitFor(t, func() bool { return cw.Len() >= 1 }, time.Second)
+	if cw.Len() < 1 {
+		t.Fatal("during session: record should be kept")
+	}
+	time.Sleep(90 * time.Millisecond)   // session expired -> reverted to ratio=0
+	root.WithContext(ctx).Info("after") // dropped
+	time.Sleep(50 * time.Millisecond)   // let any delivery settle
+	if cw.Len() != 1 {
+		t.Errorf("after auto-revert: cw.Len()=%d, want 1 (dropped)", cw.Len())
+	}
+}
+
+// TestSetSamplingStrategyFor_EarlyStop: stop() reverts immediately (synchronous).
+func TestSetSamplingStrategyFor_EarlyStop(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 4))
+	defer root.Close()
+	cw := &captureWriter{}
+	root.Register(cw)
+	root.SetLevel(DEBUG)
+	ctx := context.WithValue(context.Background(), "trace_id", "4a3f0b1c2d3e4f60718293a4b5c6d7e8")
+
+	root.SetSamplingStrategy(TraceIDRatioBased{Ratio: 0}) // prev: drop all
+	stop := root.SetSamplingStrategyFor(TraceIDRatioBased{Ratio: 1}, 5*time.Second)
+	stop()                                // synchronous revert -> back to ratio=0
+	root.WithContext(ctx).Info("stopped") // dropped
+	time.Sleep(50 * time.Millisecond)
+	if cw.Len() != 0 {
+		t.Errorf("after stop: cw.Len()=%d, want 0 (reverted to drop)", cw.Len())
+	}
+	// stop() is idempotent — calling again must not panic.
+	stop()
+	stop()
+}
+
+// TestPackage_SetSamplingStrategyFor covers the package-level temporary-session
+// installer on the singleton (install + stop-revert).
+func TestPackage_SetSamplingStrategyFor(t *testing.T) {
+	dl := defaultLogger()
+	saved := dl.samplingStrategy.Load()
+	defer dl.samplingStrategy.Store(saved)
+
+	stop := SetSamplingStrategyFor(TraceIDRatioBased{Ratio: 0.5}, 5*time.Second)
+	if dl.samplingStrategy.Load() == nil {
+		t.Error("package SetSamplingStrategyFor did not install")
+	}
+	stop() // synchronous revert to saved
+	if got := dl.samplingStrategy.Load(); got != saved {
+		t.Error("package SetSamplingStrategyFor stop did not revert to saved")
+	}
+}
