@@ -1010,7 +1010,8 @@ var defaultContextTraceKeys = []string{
 	"span_id", "spanID", "span-id",
 	// request / correlation
 	"x-request-id", "requestId", "request_id", "x-correlation-id", "correlation_id",
-	// business identity
+	// business identity (ad-tech: device id is a first-class correlation key)
+	"device_id", "deviceId", "did", "dpid",
 	"uid", "user_id", "userId", "tenant_id", "tenantId", "org_id", "orgId",
 }
 
