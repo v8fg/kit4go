@@ -44,22 +44,34 @@ type SamplingStrategy interface {
 log4go.SetSamplingStrategy(strategy)   // switch: install to enable; nil = Full
 ```
 
-Built-in strategies:
-- `FullSampling` (**default**, backward-compatible) — keep everything, no sampling.
-- `ProbabilisticSampling(ratio)` — `hash(trace_id or request_id) < ratio`
-  (documented FNV-1a). Deterministic by id → the **whole chain** (all records,
-  all services) for that id is kept-or-dropped together — no fragmentation.
-- `TailDigitSampling(idKey, modulus, keep)` — keep when the tail digits of
-  `request_id`/`uid` mod `modulus` fall in `keep` (e.g. tail < 3 ⇒ 30%).
-  Deterministic, trivially portable, easy to reason about.
-- existing per-level `Sampler` — rate-limit per level (storm protection); per-
-  service, not chain-consistent.
+Built-in strategies (industry-aligned with OpenTelemetry):
+- `FullSampling` (**default**, backward-compatible; dev/test) — keep everything.
+- `TraceIDRatioBased(ratio)` (**preferred**, matches OTel): compare the id
+  (trace_id, or request_id if UUID/random) treated as a uint64 against
+  `ratio * MaxUint64` — keep if below. No hash needed (the id is already random),
+  high precision, deterministic → the whole chain for that id is kept/dropped
+  together across all services. OTel SDKs implement this identically in
+  Go/Java/Python, so ports agree by construction.
+- **Honor W3C `traceparent` sampled flag** (ParentBased semantics): if the
+  record's trace context carries a sampled flag, honor it (the entry service's
+  head decision propagates) — automatic cross-service consistency without each
+  service re-deciding. Ignoring this flag is a known cause of fragmented traces.
+- `TailDigitSampling(idKey, modulus, keep)` — coarse, readable (e.g. the classic
+  `hash(request_id) % 10 < N` pattern). MUST use a **documented fixed hash**
+  (FNV-1a) — language-builtin hashes differ across Go/Java/Python and break
+  cross-language consistency. Use only when 10%/1% granularity suffices.
+- existing per-level `Sampler` — rate-limit per level (storm protection);
+  per-service, not chain-consistent.
+
+Two traps to avoid (why TraceIDRatioBased is preferred over `hash(id)%N`):
+language-builtin string hashes are not portable (Go's is randomized; Java/Python
+differ) → cross-service inconsistency; and `%N` is coarse. Treating a random id
+as a number (OTel style) needs no hash and gives full precision.
 
 Defaults are generic and carry no business logic. A business installs its own
-`SamplingStrategy` for custom rules (tenant, feature-flag, gray-release, …) —
-log4go just calls it and honors the verdict. Cross-language consistency: the
-built-in deterministic strategies use a documented fixed algorithm (FNV-1a /
-tail-digit modulo) so Java/Python ports decide identically for the same id.
+`SamplingStrategy` for custom rules — log4go just calls it and honors the
+verdict. Cross-language consistency: built-in deterministic strategies follow
+the OTel spec exactly, so Java/Python ports decide identically for the same id.
 
 ## Operations (dev vs prod, and the enabler)
 
