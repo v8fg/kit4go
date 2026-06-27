@@ -28,25 +28,52 @@ a separate capture component / the backend.
   Go/Java/Python) → backend `trace_id=xyz` reconstructs the full chain.
 - Records carry `seq` + `unix_nano` for exact cross-shard ordering.
 
-## B. Deterministic id-based sampling (DEFAULT policy — whole-chain consistent)
+## B. Pluggable sampling strategy (decide what actually ships to Kafka)
 
-A request's logs must be kept-or-dropped **together across all services**, or the
-chain fragments. The decision is therefore a **pure function of the id** — every
-service/language seeing the same id reaches the same verdict:
+Writing 100% of logs to Kafka wastes bandwidth/storage/consumer cost (ship all,
+keep a fraction). Sampling cuts volume at the source. Rather than bake in one
+algorithm, log4go exposes a **pluggable strategy** + common built-ins, and lets
+the **business system decide** via a hook:
 
-- **Honor the W3C `traceparent` sampled flag** (preferred, OTel-native): the
-  entry service's head decision propagates in the flag; log4go keeps a record
-  whose trace is flagged sampled. Automatic cross-language consistency — the flag
-  is the single source of truth.
-- **Deterministic hash fallback** (no OTel): `hash(trace_id) % 10000 < ratio*10000`
-  with a **documented, fixed hash** (e.g. FNV-1a of the id string). Ports in
-  Java/Python MUST use the identical algorithm so the same id decides the same
-  everywhere — no coordination, no propagation needed.
-- No id present (rare) → fall back to the existing per-record rate-limit sampler
-  (storm protection).
+```go
+// SamplingStrategy decides whether a record is actually written (shipped). It is
+// called on the delivery path, so implementations must be fast + concurrency-safe.
+type SamplingStrategy interface {
+    ShouldLog(r *Record) bool
+}
+log4go.SetSamplingStrategy(strategy)   // switch: install to enable; nil = Full
+```
 
-This is a generic algorithm, no business logic. It replaces per-service random
-sampling (which fragments chains) for id-bearing records.
+Built-in strategies:
+- `FullSampling` (**default**, backward-compatible) — keep everything, no sampling.
+- `ProbabilisticSampling(ratio)` — `hash(trace_id or request_id) < ratio`
+  (documented FNV-1a). Deterministic by id → the **whole chain** (all records,
+  all services) for that id is kept-or-dropped together — no fragmentation.
+- `TailDigitSampling(idKey, modulus, keep)` — keep when the tail digits of
+  `request_id`/`uid` mod `modulus` fall in `keep` (e.g. tail < 3 ⇒ 30%).
+  Deterministic, trivially portable, easy to reason about.
+- existing per-level `Sampler` — rate-limit per level (storm protection); per-
+  service, not chain-consistent.
+
+Defaults are generic and carry no business logic. A business installs its own
+`SamplingStrategy` for custom rules (tenant, feature-flag, gray-release, …) —
+log4go just calls it and honors the verdict. Cross-language consistency: the
+built-in deterministic strategies use a documented fixed algorithm (FNV-1a /
+tail-digit modulo) so Java/Python ports decide identically for the same id.
+
+## Operations (dev vs prod, and the enabler)
+
+- **Dev/test**: `FullSampling` (default) — see everything, no surprises.
+- **Prod**: install a deterministic strategy (`ProbabilisticSampling` /
+  `TailDigitSampling`) to cut Kafka/ingest cost. Because the decision is a pure
+  function of the id, a sampled id keeps its **whole chain** (no loss for what
+  you keep) while the rest is never shipped (cost win).
+- **The enabler** — the entry point (e.g. the ad bid request handler, which
+  already has `request_id`/`device_id`) must **capture the id and propagate it**
+  on the request context (and across services via W3C `traceparent` / a header).
+  Every downstream log then carries it, so deterministic-by-id sampling is
+  lossless for sampled ids. Without propagation, sampling can fragment a chain —
+  so propagation is the prerequisite, not a log4go feature.
 
 ## C. id-based routing (capture mode — generic filter, no business logic)
 
