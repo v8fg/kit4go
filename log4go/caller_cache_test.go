@@ -27,11 +27,15 @@ func Test_CallerCache_Hit(t *testing.T) {
 	if s1 != s2 {
 		t.Errorf("cache inconsistent: %q vs %q", s1, s2)
 	}
-	if after1 != before+1 {
-		t.Errorf("first call should add one entry: before=%d after=%d", before, after1)
-	}
-	if len(callerCache) != after1 {
-		t.Errorf("second call should hit cache (no new entry): %d vs %d", len(callerCache), after1)
+	// callerCache is a process-wide shared map that the background logger (and
+	// other tests) insert into concurrently, so map-size deltas are inherently
+	// racy. Verify presence of THIS key under the lock instead. `before`/`after1`
+	// are kept only as a best-effort signal in the failure message.
+	callerCacheMu.RLock()
+	_, cached := callerCache[callerKey{pc: pc, fullPath: false, withFunc: false}]
+	callerCacheMu.RUnlock()
+	if !cached {
+		t.Errorf("first call did not cache the caller key (size %d -> %d)", before, after1)
 	}
 
 	// value must match a fresh runtime resolution (base.go:line)

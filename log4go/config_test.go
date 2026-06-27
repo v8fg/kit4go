@@ -60,3 +60,36 @@ func TestConfig(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 }
+
+// TestSetupLog_KafkaWriterEnable covers the KafKaWriter.Enable branches in
+// SetupLog: the level-aggregation block (maxInt + the validGlobalMinLevelBy
+// assignment) and the NewKafKaWriter/Register block.
+//
+// Register calls w.Init() → Start(), which dials brokers via
+// sarama.NewAsyncProducer. Brokers are intentionally unset so Start fails fast
+// (sarama rejects a broker-less client synchronously) and Register re-panics —
+// Start returns before spawning its daemon, so nothing leaks. All target lines
+// (69-74, 98-102) execute before the panic; defers run during the unwind, so the
+// default logger's writers are restored. Recover confirms the panic, not a crash.
+func TestSetupLog_KafkaWriterEnable(t *testing.T) {
+	dl := defaultLogger()
+	saved := dl.snapshotWriters()
+	defer dl.writers.Store(saved)
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected SetupLog to panic when the enabled kafka writer cannot start")
+		}
+	}()
+
+	lc := LogConfig{
+		Level: "info",
+		KafKaWriter: KafKaWriterOptions{
+			Enable:        true,
+			Level:         "ERROR",
+			ProducerTopic: "log4go-cov",
+			BufferSize:    8,
+			// Brokers intentionally unset: Start fails fast rather than dialing.
+		},
+	}
+	_ = SetupLog(lc)
+}

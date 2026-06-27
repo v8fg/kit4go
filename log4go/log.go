@@ -1,7 +1,6 @@
 package log4go
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -88,7 +87,6 @@ var (
 	// goroutines.
 	loggerDefault     atomic.Pointer[Logger]
 	recordPool        *sync.Pool
-	bufPool           *sync.Pool
 	recordChannelSize = recordChannelSizeDefault // log chan size
 )
 
@@ -456,9 +454,6 @@ func NewLogger() *Logger {
 func newLoggerWithRecords(records chan *Record) *Logger {
 	l := new(Logger)
 	l.writers.Store(make([]Writer, 0, 1)) // normal least has console writer
-	if l.recordsChanSize == 0 {
-		recordChannelSize = recordChannelSizeDefault
-	}
 
 	l.records = records
 	l.c = make(chan bool, 1)
@@ -569,7 +564,12 @@ func (l *Logger) SetBaseField(key string, val interface{}) {
 // SetBaseFields is a batch version of SetBaseField.
 func (l *Logger) SetBaseFields(m map[string]interface{}) {
 	cur := l.baseFields.v.Load()
-	next := make([]field, 0, len(m)+func() int { if cur != nil { return len(*cur) }; return 0 }())
+	next := make([]field, 0, len(m)+func() int {
+		if cur != nil {
+			return len(*cur)
+		}
+		return 0
+	}())
 	if cur != nil {
 		next = append(next, *cur...)
 	}
@@ -725,16 +725,22 @@ func (l *Logger) WithAttrs(attrs ...Field) *Logger {
 
 // WithString/WithInt/... are the typed, allocation-free variants of With for
 // the common scalar types. They avoid the interface{} boxing that With pays.
-func (l *Logger) WithString(key, val string) *Logger            { return l.withField(strField(key, val)) }
-func (l *Logger) WithInt(key string, val int) *Logger           { return l.withField(intField(key, val)) }
-func (l *Logger) WithInt64(key string, val int64) *Logger       { return l.withField(int64Field(key, val)) }
-func (l *Logger) WithUint64(key string, val uint64) *Logger     { return l.withField(uint64Field(key, val)) }
-func (l *Logger) WithBool(key string, val bool) *Logger         { return l.withField(boolField(key, val)) }
-func (l *Logger) WithFloat64(key string, val float64) *Logger   { return l.withField(floatField(key, val)) }
-func (l *Logger) WithDuration(key string, val time.Duration) *Logger { return l.withField(durField(key, val)) }
-func (l *Logger) WithTime(key string, val time.Time) *Logger    { return l.withField(timeField(key, val)) }
-func (l *Logger) WithBytes(key string, val []byte) *Logger      { return l.withField(bytesField(key, val)) }
-func (l *Logger) WithError(key string, val error) *Logger       { return l.withField(errField(key, val)) }
+func (l *Logger) WithString(key, val string) *Logger      { return l.withField(strField(key, val)) }
+func (l *Logger) WithInt(key string, val int) *Logger     { return l.withField(intField(key, val)) }
+func (l *Logger) WithInt64(key string, val int64) *Logger { return l.withField(int64Field(key, val)) }
+func (l *Logger) WithUint64(key string, val uint64) *Logger {
+	return l.withField(uint64Field(key, val))
+}
+func (l *Logger) WithBool(key string, val bool) *Logger { return l.withField(boolField(key, val)) }
+func (l *Logger) WithFloat64(key string, val float64) *Logger {
+	return l.withField(floatField(key, val))
+}
+func (l *Logger) WithDuration(key string, val time.Duration) *Logger {
+	return l.withField(durField(key, val))
+}
+func (l *Logger) WithTime(key string, val time.Time) *Logger { return l.withField(timeField(key, val)) }
+func (l *Logger) WithBytes(key string, val []byte) *Logger   { return l.withField(bytesField(key, val)) }
+func (l *Logger) WithError(key string, val error) *Logger    { return l.withField(errField(key, val)) }
 
 // WithSampling returns a child Logger that applies sampling to prevent
 // high-frequency log storms. The first `initial` records at each level are all
@@ -972,7 +978,7 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	if bf := l.baseFields.v.Load(); bf != nil && len(*bf) > 0 {
 		if len(l.fields) > 0 {
 			merged := make([]field, 0, len(*bf)+len(l.fields))
-			merged = append(merged, *bf...)    // base first (lowest priority)
+			merged = append(merged, *bf...)      // base first (lowest priority)
 			merged = append(merged, l.fields...) // logger fields override base
 			r.fields = merged
 		} else {
@@ -1066,7 +1072,6 @@ func init() {
 	recordPool = &sync.Pool{New: func() interface{} {
 		return &Record{}
 	}}
-	bufPool = &sync.Pool{New: func() interface{} { return new(bytes.Buffer) }}
 	loggerDefault.Store(newDefaultLoggerInstance())
 }
 
@@ -1142,15 +1147,17 @@ func WithAttrs(attrs ...Field) *Logger { return defaultLogger().WithAttrs(attrs.
 
 // WithString/WithInt/... are the typed, allocation-free variants of With on the
 // package singleton (see the Logger methods of the same name).
-func WithString(key, val string) *Logger            { return defaultLogger().WithString(key, val) }
-func WithInt(key string, val int) *Logger           { return defaultLogger().WithInt(key, val) }
-func WithInt64(key string, val int64) *Logger       { return defaultLogger().WithInt64(key, val) }
-func WithBool(key string, val bool) *Logger         { return defaultLogger().WithBool(key, val) }
-func WithFloat64(key string, val float64) *Logger   { return defaultLogger().WithFloat64(key, val) }
-func WithDuration(key string, val time.Duration) *Logger { return defaultLogger().WithDuration(key, val) }
-func WithTime(key string, val time.Time) *Logger    { return defaultLogger().WithTime(key, val) }
-func WithBytes(key string, val []byte) *Logger      { return defaultLogger().WithBytes(key, val) }
-func WithError(key string, val error) *Logger       { return defaultLogger().WithError(key, val) }
+func WithString(key, val string) *Logger          { return defaultLogger().WithString(key, val) }
+func WithInt(key string, val int) *Logger         { return defaultLogger().WithInt(key, val) }
+func WithInt64(key string, val int64) *Logger     { return defaultLogger().WithInt64(key, val) }
+func WithBool(key string, val bool) *Logger       { return defaultLogger().WithBool(key, val) }
+func WithFloat64(key string, val float64) *Logger { return defaultLogger().WithFloat64(key, val) }
+func WithDuration(key string, val time.Duration) *Logger {
+	return defaultLogger().WithDuration(key, val)
+}
+func WithTime(key string, val time.Time) *Logger { return defaultLogger().WithTime(key, val) }
+func WithBytes(key string, val []byte) *Logger   { return defaultLogger().WithBytes(key, val) }
+func WithError(key string, val error) *Logger    { return defaultLogger().WithError(key, val) }
 
 // WithSampling returns a child Logger of the package singleton with sampling
 // applied (see Logger.WithSampling).

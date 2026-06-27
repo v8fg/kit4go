@@ -462,9 +462,10 @@ func (w *FileWriter) rotateImpl() error {
 	if bufSize <= 0 {
 		bufSize = defaultBufferSize
 	}
-	if w.fileBufWriter = bufio.NewWriterSize(w.file, bufSize); w.fileBufWriter == nil {
-		return errors.New("fileWriter new fileBufWriter failed")
-	}
+	// bufio.NewWriterSize never returns nil for a valid size (>=1), and bufSize is
+	// guaranteed >= defaultBufferSize above, so the previous nil-check was dead
+	// code — removed during coverage hardening.
+	w.fileBufWriter = bufio.NewWriterSize(w.file, bufSize)
 	w.suffix = filepath.Ext(filePath)
 	w.filenameOnly = strings.TrimSuffix(filePath, w.suffix)
 	return nil

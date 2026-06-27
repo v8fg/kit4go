@@ -100,7 +100,6 @@ type KafKaWriter struct {
 
 	run  atomic.Bool // set true once the daemon starts
 	quit chan struct{}
-	stop chan struct{}
 }
 
 // NewKafKaWriter new kafka writer
@@ -112,7 +111,6 @@ func NewKafKaWriter(options KafKaWriterOptions) *KafKaWriter {
 	w := &KafKaWriter{
 		options:       options,
 		quit:          make(chan struct{}),
-		stop:          make(chan struct{}),
 		level:         defaultLevel,
 		policy:        ParseOverflowPolicy(options.OverflowPolicy),
 		drainInterval: 200 * time.Millisecond,
@@ -284,11 +282,10 @@ func (k *KafKaWriter) buildPayload(r *Record) []byte {
 		}
 		p.userFields = uf
 	}
-	b, err := p.MarshalJSON()
-	if err != nil {
-		log.Printf("[log4go] kafka writer json marshal err: %v", err.Error())
-		return nil
-	}
+	// MarshalJSON is a hand-rolled, infallible append marshaler with no error
+	// path (see kafkaPayload.MarshalJSON), so the former `if err != nil` branch
+	// was unreachable dead code — removed during coverage hardening.
+	b, _ := p.MarshalJSON()
 	return b
 }
 
@@ -301,10 +298,9 @@ func (k *KafKaWriter) Write(r *Record) error {
 	if r.msg == "" {
 		return nil
 	}
+	// buildPayload never returns nil (MarshalJSON is infallible), so the former
+	// nil-guard was unreachable dead code — removed during coverage hardening.
 	payload := k.buildPayload(r)
-	if payload == nil {
-		return nil
-	}
 	key := k.options.Key
 	msg := &sarama.ProducerMessage{
 		Topic: k.options.ProducerTopic,
@@ -400,10 +396,6 @@ func (k *KafKaWriter) daemon() {
 			}
 		case <-ticker.C:
 			k.drainSpill()
-		case <-k.stop:
-			k.drainSpillToProducer()
-			k.quit <- struct{}{}
-			return
 		}
 	}
 }
