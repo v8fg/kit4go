@@ -28,13 +28,13 @@ type KafKaMSGFields struct {
 	// members — prefer SetBaseField("es_index",…)/SetBaseField("server_ip",…).
 	// They are emitted only when the r.fields layer did not already supply the
 	// same key, so a Base Field always wins.
-	ESIndex  string `json:"es_index" mapstructure:"es_index"`
-	Level    string `json:"level"`     // dynamic, set by logger, mark the record level
-	File     string `json:"file"`      // source code file:line_number
-	Message  string `json:"message"`   // required, dynamic
-	ServerIP string `json:"server_ip"` // init field, set by app
+	ESIndex   string `json:"es_index" mapstructure:"es_index"`
+	Level     string `json:"level"`     // dynamic, set by logger, mark the record level
+	File      string `json:"file"`      // source code file:line_number
+	Message   string `json:"message"`   // required, dynamic
+	ServerIP  string `json:"server_ip"` // init field, set by app
 	Timestamp string `json:"timestamp"` // required, dynamic, set by logger
-	Now      int64  `json:"now"`       // choice
+	Now       int64  `json:"now"`       // choice
 
 	// ExtraFields are merged into the top-level JSON on send, below r.fields in
 	// priority (a Base/With/Context field of the same key wins). Prefer
@@ -82,6 +82,7 @@ type KafKaWriterOptions struct {
 // KafKaWriter kafka writer (async, bounded, overflow-safe).
 type KafKaWriter struct {
 	level    int
+	paused   atomic.Bool
 	producer sarama.AsyncProducer
 	messages chan *sarama.ProducerMessage
 	options  KafKaWriterOptions
@@ -143,7 +144,7 @@ type kafkaPayload struct {
 	Message    string
 	ServerIP   string // legacy fallback; prefer Base Field
 	Now        int64
-	ESIndex    string // legacy fallback; prefer Base Field
+	ESIndex    string  // legacy fallback; prefer Base Field
 	userFields []field // merged r.fields (typed) + ExtraFields (typed); r.fields wins
 }
 
@@ -234,10 +235,10 @@ func appendRoutingField(buf []byte, key string, fields []field, fallback string)
 // (unix_nano/seq) the ES consumer sorts on.
 func (k *KafKaWriter) buildPayload(r *Record) []byte {
 	p := kafkaPayload{
-		UnixNano:  r.unixNano,
-		Seq:       r.seq,
-		Level:     LevelFlags[r.level],
-		File:      r.file,
+		UnixNano: r.unixNano,
+		Seq:      r.seq,
+		Level:    LevelFlags[r.level],
+		File:     r.file,
 		Message:  r.msg,
 		ServerIP: k.options.MSG.ServerIP,
 		// Timestamp is formatted directly in MarshalJSON from UnixNano via
@@ -291,7 +292,22 @@ func (k *KafKaWriter) buildPayload(r *Record) []byte {
 
 // Write service for Record. It never spawns a goroutine per record; the record
 // is delivered to a bounded channel under the configured overflow policy.
+// Name returns WriterNameKafka.
+func (k *KafKaWriter) Name() string { return WriterNameKafka }
+
+// Pause drops incoming records without removing the writer or closing the producer.
+func (k *KafKaWriter) Pause() { k.paused.Store(true) }
+
+// Resume restores delivery after Pause.
+func (k *KafKaWriter) Resume() { k.paused.Store(false) }
+
+// Paused reports whether the writer is currently paused.
+func (k *KafKaWriter) Paused() bool { return k.paused.Load() }
+
 func (k *KafKaWriter) Write(r *Record) error {
+	if k.paused.Load() {
+		return nil
+	}
 	if r.level > k.level {
 		return nil
 	}

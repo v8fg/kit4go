@@ -60,6 +60,7 @@ type NetWriterOptions struct {
 // FileWriter + Kafka — net throughput is bounded by network RTT and the remote.
 type NetWriter struct {
 	level   int
+	paused  atomic.Bool
 	options NetWriterOptions
 
 	policy   OverflowPolicy
@@ -132,7 +133,22 @@ func (n *NetWriter) Init() error {
 // caller under drop/spill (block policy blocks, as the name promises). The
 // record is copied because the bootstrap goroutine returns it to the record
 // pool after Write returns.
+// Name returns WriterNameNet.
+func (n *NetWriter) Name() string { return WriterNameNet }
+
+// Pause drops incoming records without removing the writer or closing the conn.
+func (n *NetWriter) Pause() { n.paused.Store(true) }
+
+// Resume restores delivery after Pause.
+func (n *NetWriter) Resume() { n.paused.Store(false) }
+
+// Paused reports whether the writer is currently paused.
+func (n *NetWriter) Paused() bool { return n.paused.Load() }
+
 func (n *NetWriter) Write(r *Record) error {
+	if n.paused.Load() {
+		return nil
+	}
 	if r.level > n.level {
 		return nil
 	}

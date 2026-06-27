@@ -15,6 +15,8 @@ const (
 	WriterNameConsole = "console_writer"
 	WriterNameFile    = "file_writer"
 	WriterNameKafka   = "kafka_writer"
+	WriterNameNet     = "net_writer"
+	WriterNameIO      = "io_writer"
 )
 
 // LogConfig log config

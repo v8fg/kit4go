@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sync/atomic"
 )
 
 type colorRecord Record
@@ -95,7 +96,20 @@ type ConsoleWriter struct {
 	fullColor bool // line all with color
 	buffered  bool
 	buf       *bufio.Writer
+	paused    atomic.Bool
 }
+
+// Name returns WriterNameConsole (for by-name control).
+func (w *ConsoleWriter) Name() string { return WriterNameConsole }
+
+// Pause drops incoming records without removing the writer (atomic, non-blocking).
+func (w *ConsoleWriter) Pause() { w.paused.Store(true) }
+
+// Resume restores delivery after Pause.
+func (w *ConsoleWriter) Resume() { w.paused.Store(false) }
+
+// Paused reports whether the writer is currently paused.
+func (w *ConsoleWriter) Paused() bool { return w.paused.Load() }
 
 // ConsoleWriterOptions configures the console writer. All fields default to
 // zero/false — color is OFF by default so production output is clean plain text
@@ -108,7 +122,7 @@ type ConsoleWriterOptions struct {
 	Color bool `json:"color" mapstructure:"color"`
 	// FullColor renders the entire line in the level color (not just the flag).
 	// OFF by default. Requires Color to be useful.
-	FullColor bool `json:"full_color" mapstructure:"full_color"`
+	FullColor bool   `json:"full_color" mapstructure:"full_color"`
 	Level     string `json:"level" mapstructure:"level"`
 	// Buffered wraps os.Stdout in a bufio.Writer to reduce syscalls.
 	// Default false (immediate output for debugging). Set true for high-rate
@@ -142,6 +156,9 @@ func NewConsoleWriterWithOptions(options ConsoleWriterOptions) *ConsoleWriter {
 
 // Write console write
 func (w *ConsoleWriter) Write(r *Record) error {
+	if w.paused.Load() {
+		return nil
+	}
 	if r.level > w.level {
 		return nil
 	}

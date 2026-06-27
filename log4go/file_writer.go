@@ -43,6 +43,7 @@ type FileWriter struct {
 	// write log order by order and atomic incr
 	// maxLinesCurLines and maxSizeCurSize
 	level        int
+	paused       atomic.Bool
 	lock         sync.RWMutex
 	initFileOnce sync.Once // init once
 
@@ -232,7 +233,22 @@ func NewFileWriterWithOptions(options FileWriterOptions) *FileWriter {
 // caller's reuse of r. Record holds only immutable value types (strings + int),
 // so a shallow copy is sufficient and correct. (In sync mode writeOne runs to
 // completion before return, so no copy is needed.)
+// Name returns WriterNameFile.
+func (w *FileWriter) Name() string { return WriterNameFile }
+
+// Pause drops incoming records without removing the writer or closing the file.
+func (w *FileWriter) Pause() { w.paused.Store(true) }
+
+// Resume restores delivery after Pause.
+func (w *FileWriter) Resume() { w.paused.Store(false) }
+
+// Paused reports whether the writer is currently paused.
+func (w *FileWriter) Paused() bool { return w.paused.Load() }
+
 func (w *FileWriter) Write(r *Record) error {
+	if w.paused.Load() {
+		return nil
+	}
 	if r.level > w.level {
 		return nil
 	}

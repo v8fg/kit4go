@@ -390,6 +390,29 @@ type Stopper interface {
 	Stop()
 }
 
+// Pauser is implemented by writers that can be paused at runtime (Pause drops
+// incoming records without removing the writer or touching its connection/
+// daemon — useful to silence a noisy sink during an incident). Resume restores
+// delivery. Non-destructive, atomic, and safe under any load.
+type Pauser interface {
+	Pause()
+	Resume()
+	Paused() bool
+}
+
+// Named is implemented by writers that carry a stable name (WriterNameConsole,
+// etc.), enabling by-name control (Logger.PauseWriter(name), SetWriterLevel).
+type Named interface {
+	Name() string
+}
+
+// LevelSetter is implemented by writers whose level can be changed at runtime
+// (atomic, lock-free). Setting a writer's level to a high value effectively
+// silences it without removing it.
+type LevelSetter interface {
+	SetLevel(level int)
+}
+
 // RuntimeConfig is the hot, lock-free configuration surface of a Logger. Every
 // method takes effect on the next record via atomic loads on the delivery path —
 // no mutex, no stall — so any of them is safe to call at any time, including
@@ -556,6 +579,49 @@ func (l *Logger) registerOrFail(w Writer) error {
 // this view stays valid.
 func (l *Logger) snapshotWriters() []Writer {
 	return l.writers.Load().([]Writer)
+}
+
+// Writers returns a snapshot of the registered writers (copy-on-write, so the
+// slice stays valid for iteration). Use it for direct, typed control, e.g.
+// `for _, w := range log4go.Writers() { if p, ok := w.(log4go.Pauser); ok { p.Pause() } }`.
+func (l *Logger) Writers() []Writer { return l.snapshotWriters() }
+
+// findWriter returns the first registered writer with the given Name(), or nil.
+func (l *Logger) findWriter(name string) Writer {
+	for _, w := range l.snapshotWriters() {
+		if n, ok := w.(Named); ok && n.Name() == name {
+			return w
+		}
+	}
+	return nil
+}
+
+// PauseWriter pauses the named writer (drops its records without removing it or
+// touching its connection/daemon). Returns true if a writer was paused; false if
+// no such named writer exists or it is not pausable.
+func (l *Logger) PauseWriter(name string) bool {
+	if p, ok := l.findWriter(name).(Pauser); ok && p != nil {
+		p.Pause()
+		return true
+	}
+	return false
+}
+
+// ResumeWriter resumes the named writer. Returns true if a writer was resumed.
+func (l *Logger) ResumeWriter(name string) bool {
+	if p, ok := l.findWriter(name).(Pauser); ok && p != nil {
+		p.Resume()
+		return true
+	}
+	return false
+}
+
+// WriterPaused reports whether the named writer is paused.
+func (l *Logger) WriterPaused(name string) bool {
+	if p, ok := l.findWriter(name).(Pauser); ok && p != nil {
+		return p.Paused()
+	}
+	return false
 }
 
 // LoggerMetrics is a snapshot of per-level record counters for monitoring.
@@ -1248,6 +1314,20 @@ func SetLevel(lvl int) {
 // Runtime returns the hot, lock-free configuration surface (RuntimeConfig) of the
 // package singleton, for live non-destructive toggles under any load.
 func Runtime() RuntimeConfig { return defaultLogger().Runtime() }
+
+// Writers returns a snapshot of the writers registered on the package singleton.
+func Writers() []Writer { return defaultLogger().Writers() }
+
+// PauseWriter pauses the named writer on the package singleton (e.g.
+// log4go.PauseWriter(log4go.WriterNameKafka) to silence kafka during an incident).
+// Returns true if a writer was paused.
+func PauseWriter(name string) bool { return defaultLogger().PauseWriter(name) }
+
+// ResumeWriter resumes the named writer on the package singleton.
+func ResumeWriter(name string) bool { return defaultLogger().ResumeWriter(name) }
+
+// WriterPaused reports whether the named writer on the package singleton is paused.
+func WriterPaused(name string) bool { return defaultLogger().WriterPaused(name) }
 
 // SetFormat selects the record serialization format on the package singleton
 // (FormatText default, FormatJSON for structured/machine-readable logs). Should

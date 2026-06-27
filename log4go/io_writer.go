@@ -3,6 +3,7 @@ package log4go
 import (
 	"fmt"
 	"io"
+	"sync/atomic"
 )
 
 // IOWriter adapts any io.Writer (bytes.Buffer, *os.File, a network conn, an
@@ -20,9 +21,22 @@ import (
 // Typical use: testing (capture output into a bytes.Buffer), or wiring log4go
 // into an existing io.Writer-based sink owned by the application.
 type IOWriter struct {
-	w     io.Writer
-	level int
+	w      io.Writer
+	level  int
+	paused atomic.Bool
 }
+
+// Name returns WriterNameIO.
+func (i *IOWriter) Name() string { return WriterNameIO }
+
+// Pause drops incoming records without removing the writer.
+func (i *IOWriter) Pause() { i.paused.Store(true) }
+
+// Resume restores delivery after Pause.
+func (i *IOWriter) Resume() { i.paused.Store(false) }
+
+// Paused reports whether the writer is currently paused.
+func (i *IOWriter) Paused() bool { return i.paused.Load() }
 
 // NewIOWriter wraps w so records at or below level are written to it. The
 // caller retains ownership of w; IOWriter does not close it (closing is the
@@ -39,6 +53,9 @@ func (i *IOWriter) Init() error { return nil }
 // Logger's format: when r.formattedBytes is set (FormatJSON) the pre-serialized JSON
 // is written verbatim, otherwise the text String() form is written.
 func (i *IOWriter) Write(r *Record) error {
+	if i.paused.Load() {
+		return nil
+	}
 	if r.level > i.level {
 		return nil
 	}
