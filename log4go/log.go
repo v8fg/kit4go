@@ -603,26 +603,6 @@ func (l *Logger) Close() {
 // (SetLevel / WithCaller / SetBaseField / ...). See RuntimeConfig.
 func (l *Logger) Runtime() RuntimeConfig { return l }
 
-// inheritRuntimeState copies non-config runtime state from prev into l: base
-// fields, the caller/func-name toggles, and the time layout. These are not part
-// of LogConfig, so Reload carries them over rather than resetting them —
-// init-time base fields (hostname, env, instance id) and any live debugging
-// toggles survive a config reload. The writer set, level, format and full-path
-// are NOT inherited; applyConfig reapplies them from LogConfig.
-func (l *Logger) inheritRuntimeState(prev *Logger) {
-	if prev == nil {
-		return
-	}
-	if p := prev.baseFields.v.Load(); p != nil {
-		cp := make([]field, len(*p))
-		copy(cp, *p)
-		l.baseFields.v.Store(&cp)
-	}
-	l.hasCaller.Store(prev.hasCaller.Load())
-	l.withFuncName.Store(prev.withFuncName.Load())
-	l.layout.Store(prev.layout.Load())
-}
-
 // SetLayout set the logger time layout
 func (l *Logger) SetLayout(layout string) {
 	v := layout
