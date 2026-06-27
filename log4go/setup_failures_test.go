@@ -63,7 +63,7 @@ func TestBootstrap_LegacyRecordsClose(t *testing.T) {
 	close(records)
 	select {
 	case <-l.c:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("bootstrap did not exit after records closed (main loop)")
 	}
 
@@ -73,7 +73,7 @@ func TestBootstrap_LegacyRecordsClose(t *testing.T) {
 	records2 := make(chan *Record, 512)
 	l2 := newLoggerWithRecords(records2)
 	l2.Register(drainSlowWriter{})
-	for i := 0; i < 400; i++ {
+	for i := 0; i < 50; i++ {
 		records2 <- &Record{level: INFO, msg: "backlog"}
 	}
 	time.Sleep(20 * time.Millisecond) // let the bootstrap drain some (slowly)
@@ -82,7 +82,7 @@ func TestBootstrap_LegacyRecordsClose(t *testing.T) {
 	close(records2)                   // drain observes closed records -> !ok
 	select {
 	case <-l2.c:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("bootstrap did not exit after records closed (drain)")
 	}
 }

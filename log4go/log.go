@@ -463,13 +463,14 @@ type Logger struct {
 	// retires every child. records is NEVER closed.
 	quit chan struct{}
 
-	layout         atomic.Pointer[string]
-	level          atomic.Int32
-	format         atomic.Int32       // LogFormat (FormatText/FormatJSON); atomic for lock-free hot-path read
-	recordsByLevel *[TRACE + 1]uint64 // per-level record counters (monitoring); pointer so child Loggers share the root's counters
-	fullPath       atomic.Bool        // show full path, default only show file:line_number
-	withFuncName   atomic.Bool        // show caller func name
-	hasCaller      atomic.Bool        // capture caller (file:line); disable for max throughput
+	layout          atomic.Pointer[string]
+	level           atomic.Int32
+	format          atomic.Int32       // LogFormat (FormatText/FormatJSON); atomic for lock-free hot-path read
+	recordsByLevel  *[TRACE + 1]uint64 // per-level Written counters (post-sample, incremented in bootstrap); shared pointer
+	occurredByLevel *[TRACE + 1]uint64 // per-level Occurred counters (every log call, pre-filter); shared pointer
+	fullPath        atomic.Bool        // show full path, default only show file:line_number
+	withFuncName    atomic.Bool        // show caller func name
+	hasCaller       atomic.Bool        // capture caller (file:line); disable for max throughput
 
 	// baseFields are global static fields registered once via SetBaseField(s)
 	// and carried by EVERY record — including those emitted by child Loggers
@@ -549,6 +550,7 @@ func newLoggerWithRecords(records chan *Record) *Logger {
 	l.c = make(chan bool, 1)
 	l.quit = make(chan struct{})
 	l.recordsByLevel = new([TRACE + 1]uint64)
+	l.occurredByLevel = new([TRACE + 1]uint64)
 	l.baseFields = &baseFieldsHolder{} // shared with every clone (see clone)
 	l.level.Store(int32(DEBUG))
 	lp := DefaultLayout
@@ -718,20 +720,26 @@ func (l *Logger) WriterPaused(name string) bool {
 
 // LoggerMetrics is a snapshot of per-level record counters for monitoring.
 type LoggerMetrics struct {
-	Records [TRACE + 1]uint64 // indexed by level (EMERGENCY..DEBUG)
+	Occurred [TRACE + 1]uint64 // every log call (pre-filter/pre-sample)
+	Records  [TRACE + 1]uint64 // Written = delivered (post-sample, from bootstrap)
+	Dropped  [TRACE + 1]uint64 // Occurred − Records (may briefly include in-flight)
 }
 
-// Metrics returns per-level record counters of this logger for monitoring.
-// Because child Loggers (from With/WithField/WithFields/WithSampling/WithContext)
-// share the root's counter array, Metrics on the root reflects records emitted
-// through any child — the typical monitoring setup reads the package singleton.
+// Metrics returns per-level counters of this logger for monitoring. Written
+// (Records) is counted in the bootstrap goroutine (single-writer, no caller
+// contention); Occurred is on the caller path. Dropped = Occurred − Records.
 func (l *Logger) Metrics() LoggerMetrics {
 	var m LoggerMetrics
-	if l.recordsByLevel == nil {
-		return m
-	}
-	for i := range m.Records {
-		m.Records[i] = atomic.LoadUint64(&l.recordsByLevel[i])
+	for i := 0; i <= TRACE; i++ {
+		if l.occurredByLevel != nil {
+			m.Occurred[i] = atomic.LoadUint64(&l.occurredByLevel[i])
+		}
+		if l.recordsByLevel != nil {
+			m.Records[i] = atomic.LoadUint64(&l.recordsByLevel[i])
+		}
+		if m.Occurred[i] >= m.Records[i] {
+			m.Dropped[i] = m.Occurred[i] - m.Records[i]
+		}
 	}
 	return m
 }
@@ -875,10 +883,11 @@ func (l *Logger) clone() *Logger {
 		flushTimer:      l.flushTimer,
 		rotateTimer:     l.rotateTimer,
 		c:               l.c,
-		quit:            l.quit,           // shared: retiring the root retires every child
-		fields:          l.fields,         // shared read-only; With copies before appending
-		recordsByLevel:  l.recordsByLevel, // shared pointer so children's emits count on the root
-		baseFields:      l.baseFields,     // shared pointer: SetBaseField on the root is live-visible to every child
+		quit:            l.quit,            // shared: retiring the root retires every child
+		fields:          l.fields,          // shared read-only; With copies before appending
+		recordsByLevel:  l.recordsByLevel,  // shared pointer so children's emits count on the root
+		occurredByLevel: l.occurredByLevel, // shared: Occurred counters propagate to children
+		baseFields:      l.baseFields,      // shared pointer: SetBaseField on the root is live-visible to every child
 	}
 	// copy current atomic knob values into the child
 	c.level.Store(l.level.Load())
@@ -1245,6 +1254,11 @@ func (l *Logger) Emergency(fmt string, args ...interface{}) {
 }
 
 func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{}) {
+	// Occurred: every log call, pre-filter/pre-sample (on the caller path). Written
+	// is counted later in the bootstrap goroutine (single-writer, no contention).
+	if l.occurredByLevel != nil {
+		atomic.AddUint64(&l.occurredByLevel[level], 1)
+	}
 	var msg string
 	var fileStr string
 
@@ -1263,9 +1277,8 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	if s := l.sampler.Load(); s != nil && !s.allow(level) {
 		return
 	}
-	if l.recordsByLevel != nil {
-		atomic.AddUint64(&l.recordsByLevel[level], 1)
-	}
+	// Written (recordsByLevel) is now incremented in the bootstrap goroutine
+	// (single-writer, no caller-path contention), not here.
 
 	msg = f
 	if sz := len(args); sz != 0 {
@@ -1367,6 +1380,12 @@ func bootstrapLogWriter(logger *Logger) {
 			if err := w.Write(r); err != nil {
 				log.Printf("%v\n", err)
 			}
+		}
+		// Written counter: incremented here (single-writer bootstrap goroutine)
+		// to avoid atomic contention on the caller hot path. Records that were
+		// filtered/sampled never reach here, so Written == actually delivered.
+		if logger.recordsByLevel != nil {
+			atomic.AddUint64(&logger.recordsByLevel[r.level], 1)
 		}
 		r.fields = nil
 		r.formattedBytes = nil

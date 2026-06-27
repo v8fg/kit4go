@@ -384,6 +384,40 @@ type customStrategy struct{}
 
 func (customStrategy) ShouldLog(string) bool { return true }
 
+// TestMetrics_Funnel: Occurred >= Records >= 0; Dropped = Occurred − Records;
+// level-filtered records count as Occurred but not Written (Dropped).
+func TestMetrics_Funnel(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 64))
+	cw := &captureWriter{}
+	root.Register(cw)
+	root.SetLevel(INFO) // DEBUG filtered
+
+	for i := 0; i < 10; i++ {
+		root.Info("info %d", i)
+	}
+	for i := 0; i < 5; i++ {
+		root.Debug("filtered %d", i) // dropped by level
+	}
+	root.Close() // drain → Written counted in bootstrap
+
+	m := root.Metrics()
+	var totalOcc, totalRec, totalDrop uint64
+	for i := 0; i <= TRACE; i++ {
+		totalOcc += m.Occurred[i]
+		totalRec += m.Records[i]
+		totalDrop += m.Dropped[i]
+	}
+	if totalOcc != 15 {
+		t.Errorf("Occurred total=%d want 15", totalOcc)
+	}
+	if totalRec != 10 {
+		t.Errorf("Records(Written) total=%d want 10", totalRec)
+	}
+	if totalDrop != 5 {
+		t.Errorf("Dropped total=%d want 5", totalDrop)
+	}
+}
+
 // TestMetricSnapshot covers each writer's Metrics() branch (and the nil case).
 func TestMetricSnapshot(t *testing.T) {
 	cases := []struct {
