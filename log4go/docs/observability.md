@@ -230,6 +230,25 @@ So: real-time collection (cheap, per-shard/bootstrap) + periodic aggregation +
 bounded cached snapshots for reads. No real-time push, no live-counter reads
 from outside.
 
+## Quality gates for the hot path (top-library parity)
+
+The design matches zap/zerolog/slog hallmarks (record pooling, append encoding,
+typed fields, atomic config, async bounded writers, sharding). P1 must add the
+quality gates that keep it that way:
+
+- **Allocation-budget test**: `b.ReportAllocs()` + assert the hot path is **0
+  alloc/op** (≤1 when there are format args) — zerolog's signature guarantee,
+  made a CI gate, not a claim.
+- **Benchmark regression gate**: CI benchmarks vs a baseline; throughput and
+  allocs on the hot path must not regress (catches slow drift).
+- **Encoding buffer pooling**: the JSON/logfmt serialization buffer is pooled
+  (zerolog-style reuse), not allocated per record.
+- **Histogram metrics**: the snapshot carries payload-size and write-latency
+  p50/p99/p999 (reuse the kit4go `latency` package) — standard in top libraries,
+  essential for ad-tech troubleshooting.
+- **Hot-path alloc audit**: `go test -bench -benchmem` per change to eliminate
+  hidden allocations (fmt, concatenation, interface boxing).
+
 ## Operations (dev vs prod, and the enabler)
 
 - **Dev/test**: `FullSampling` (default) — see everything, no surprises.
