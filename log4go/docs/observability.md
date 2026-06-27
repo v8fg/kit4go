@@ -124,6 +124,91 @@ distinct tracks, and log4go serves each differently:
   disk. (Contrast: the operational track's non-error logs may use the drop
   policy — those are loss-tolerant.)
 
+## Runtime control & introspection (ops surface)
+
+Default is **Full** (no sampling); a strategy is opt-in. Three operational needs:
+
+1. **Switch strategy live**: `SetSamplingStrategy(s)` (nil ⇒ Full).
+2. **Temporary sampling window** (time-bounded): enable a strategy for a fixed
+   duration, then auto-revert to the previous/Full — a debug/troubleshoot window.
+   `SetSamplingStrategyFor(s, duration)` returns a `stop()` for early cancel:
+   ```go
+   stop := log4go.SetSamplingStrategyFor(log4go.TraceIDRatioBased(0.1), 30*time.Minute)
+   defer stop() // or let it expire → reverts to Full
+   ```
+3. **Live status snapshot** — one call returns the active strategy (+ any
+   temporary-session deadline) and every writer's current state, for monitoring /
+   admin UIs:
+   ```go
+   type RuntimeStatus struct {
+       Sampling SamplingStatus  // strategy name/params + deadline if temporary
+       Writers  []WriterStatus  // Name, Type, Paused, Level, Metrics, QueueDepth
+   }
+   log4go.Status() RuntimeStatus
+   ```
+   Built from existing pieces — `Writers()`, each writer's `Paused()` (Phase C1)
+   and `Metrics()` (WriterMetrics), plus the current level for display — so it is
+   an aggregation, not new writer machinery.
+
+This surface serves three ops needs (log4go provides DATA + alert callbacks; it
+does NOT run an HTTP server, bundle a Prometheus client, or wire notification
+channels — those stay app-side or in an optional subpackage):
+
+- **Grafana / dashboards**: expose `Status()` (+ the existing `LoggerMetrics` /
+  `WriterMetrics` / `RuntimeStats`) as JSON at an app-owned `/metrics`-style
+  endpoint, or via an optional `log4go/prometheus` adapter subpackage. Grafana
+  scrapes it.
+- **Business reconciliation**: the same `Status()` snapshot lets the business
+  verify the live logger state (active strategy, writers, paused/level/metrics).
+- **Error-burst alerting**: `OnErrorBurst(window, threshold, fn)` wraps the
+  existing `RateAlerter` + the per-level ERROR counter — when the ERROR rate
+  exceeds threshold within the window, it invokes `fn` (the app forwards to
+  PagerDuty/Slack/DingTalk). Reuses `rate_alerter.go` and writers' `SetOnEvent`.
+
+### Metrics funnel (occurred / written / dropped, per-level + per-writer)
+
+The counters that make the logger observable end-to-end:
+
+- **Occurred** (per level): every log call, incremented at the top of delivery
+  (before level-filter and sampling) — the true event rate.
+- **Written** (per level): delivered to writers (post-sampling). This is the
+  existing `LoggerMetrics.Records[level]`, deliberately post-sample so it never
+  inflates the write rate.
+- **Dropped** (per level): `Occurred − Written`, ideally split by reason
+  (level-filtered / sampled-out / overflow) so ops see *where* loss happens.
+- **Per-writer**: `WriterMetrics` already carries Sent / Errored / Dropped /
+  Spilled / Queued / SpillLen per writer.
+
+So the funnel Occurred → Written + Dropped is visible at every level and every
+writer, feeding the Grafana dashboards and the error-burst alert above.
+
+### Counting without slowing the hot path (high-volume optimization)
+
+At 100K+/s, atomic-incrementing several counters per record on the (multi-
+goroutine) caller path causes cache-line contention. Optimizations:
+
+- **Count Written + per-writer metrics in the bootstrap goroutine.** Records
+  already flow serially through the bootstrap (it calls `w.Write` per record), so
+  it is a single writer — plain (non-atomic) increments, no contention. `Status()`
+  reads with an atomic load. This removes the hot-path atomic for the high-volume
+  Written counter.
+- **Count Occurred per-shard.** Occurred must be counted on the caller path
+  (before drops). Leverage `ShardLogger` — each shard increments its own local
+  Occurred counter (no cross-core contention); `Status()` sums shards.
+- **Don't double-count.** On a no-drop track (the business track, full retention
+  ⇒ Occurred == Written), count once (Written, in the bootstrap), not again as
+  Occurred on the caller. Low-volume tracks (system: changes+errors) can count
+  Occurred on the caller cheaply.
+- **Count drops where they happen**, on the single-writer side where possible
+  (overflow in the writer/bootstrap; level-filter for low-volume tracks).
+- Last resort (ultra-high volume only): **sample the metrics themselves**
+  (count 1-in-N, scale) — trades accuracy for throughput; not needed when the
+  above suffice.
+
+Net: the caller hot path carries almost no atomic counting (business-track
+Written is in the bootstrap; Occurred is per-shard local), yet the full
+Occurred/Written/Dropped funnel stays observable.
+
 ## Operations (dev vs prod, and the enabler)
 
 - **Dev/test**: `FullSampling` (default) — see everything, no surprises.
