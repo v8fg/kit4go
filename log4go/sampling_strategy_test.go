@@ -307,3 +307,121 @@ func TestPackage_SetSamplingStrategyFor(t *testing.T) {
 		t.Error("package SetSamplingStrategyFor stop did not revert to saved")
 	}
 }
+
+// TestStatus: the runtime snapshot reports the active strategy + per-writer
+// name/paused/metrics.
+func TestStatus(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 4))
+	defer root.Close()
+	root.Register(&ConsoleWriter{level: DEBUG})
+	root.Register(&FileWriter{level: DEBUG})
+
+	// default: full strategy, 2 writers, neither paused.
+	st := root.Status()
+	if st.Sampling.Strategy != "full" {
+		t.Errorf("default strategy=%q want full", st.Sampling.Strategy)
+	}
+	if len(st.Writers) != 2 {
+		t.Fatalf("writers=%d want 2", len(st.Writers))
+	}
+	byName := map[string]WriterStatus{}
+	for _, w := range st.Writers {
+		byName[w.Name] = w
+	}
+	if byName[WriterNameConsole].Paused {
+		t.Error("console should not be paused")
+	}
+	if byName[WriterNameFile].Metrics == nil {
+		t.Error("file writer should expose Metrics")
+	}
+	if byName[WriterNameConsole].Metrics != nil {
+		t.Error("console writer has no Metrics (want nil)")
+	}
+
+	// install a strategy + pause console -> reflected.
+	root.SetSamplingStrategy(TraceIDRatioBased{Ratio: 0.1})
+	root.PauseWriter(WriterNameConsole)
+	st = root.Status()
+	if st.Sampling.Strategy != "trace_id_ratio:0.1" {
+		t.Errorf("strategy=%q want trace_id_ratio:0.1", st.Sampling.Strategy)
+	}
+	// re-snapshot to see paused.
+	for _, w := range st.Writers {
+		if w.Name == WriterNameConsole && !w.Paused {
+			t.Error("console should be paused after PauseWriter")
+		}
+	}
+}
+
+// TestDescribeStrategy covers the descriptor for each built-in (and nil/custom).
+func TestDescribeStrategy(t *testing.T) {
+	cases := []struct {
+		s    SamplingStrategy
+		want string
+	}{
+		{FullSampling{}, "full"},
+		{TraceIDRatioBased{Ratio: 0.25}, "trace_id_ratio:0.25"},
+		{TailDigitSampling{Modulus: 100, Keep: 5}, "tail_digit:100:5"},
+	}
+	for _, c := range cases {
+		s := c.s
+		if got := describeStrategy(&s); got != c.want {
+			t.Errorf("describeStrategy(%T)=%q want %q", c.s, got, c.want)
+		}
+	}
+	// nil -> full; custom -> its type name.
+	if got := describeStrategy(nil); got != "full" {
+		t.Errorf("nil strategy=%q want full", got)
+	}
+	var custom SamplingStrategy = customStrategy{}
+	if got := describeStrategy(&custom); got != "log4go.customStrategy" {
+		t.Errorf("custom strategy=%q want type name", got)
+	}
+}
+
+// customStrategy is a minimal custom strategy for the describe-default test.
+type customStrategy struct{}
+
+func (customStrategy) ShouldLog(string) bool { return true }
+
+// TestMetricSnapshot covers each writer's Metrics() branch (and the nil case).
+func TestMetricSnapshot(t *testing.T) {
+	cases := []struct {
+		name    string
+		w       Writer
+		wantNil bool
+	}{
+		{"file", &FileWriter{}, false},
+		{"kafka", &KafKaWriter{}, false},
+		{"net", &NetWriter{}, false},
+		{"webhook", &WebhookWriter{}, false},
+		{"console", &ConsoleWriter{}, true}, // no Metrics()
+		{"io", &IOWriter{}, true},
+	}
+	for _, c := range cases {
+		m := metricSnapshot(c.w)
+		if c.wantNil && m != nil {
+			t.Errorf("%s: metricSnapshot=%v, want nil", c.name, m)
+		}
+		if !c.wantNil && m == nil {
+			t.Errorf("%s: metricSnapshot=nil, want non-nil", c.name)
+		}
+	}
+}
+
+// TestPackage_Status covers the package-level Status() on the singleton.
+func TestPackage_Status(t *testing.T) {
+	defer Close()
+	Close()
+	if err := SetupLog(LogConfig{Level: "info", ConsoleWriter: ConsoleWriterOptions{Enable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	st := Status()
+	if st.Sampling.Strategy != "full" {
+		t.Errorf("package Status strategy=%q want full", st.Sampling.Strategy)
+	}
+	if len(st.Writers) != 1 {
+		t.Errorf("package Status writers=%d want 1", len(st.Writers))
+	}
+	Close()
+}

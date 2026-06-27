@@ -597,6 +597,87 @@ func (l *Logger) snapshotWriters() []Writer {
 // `for _, w := range log4go.Writers() { if p, ok := w.(log4go.Pauser); ok { p.Pause() } }`.
 func (l *Logger) Writers() []Writer { return l.snapshotWriters() }
 
+// SamplingStatus describes the active sampling strategy for ops display.
+type SamplingStatus struct {
+	Strategy string // "full" / "trace_id_ratio:0.10" / "tail_digit:10:3" / "<TypeName>"
+}
+
+// WriterStatus is a writer's runtime state for the Status snapshot.
+type WriterStatus struct {
+	Name   string
+	Paused bool
+	// Metrics is the writer's own Metrics() snapshot if it exposes one (per
+	// writer type — FileWriterMetrics, WriterMetrics, …); nil otherwise. Fetch
+	// a typed snapshot via the writer directly for full detail.
+	Metrics interface{}
+}
+
+// RuntimeStatus is a point-in-time snapshot of the logger's runtime state —
+// the active sampling strategy and every writer's name/paused/metrics. Designed
+// for monitoring / admin UIs / business reconciliation. Reading it does NOT touch
+// the delivery hot path (it reads copy-on-write snapshots + atomic loads).
+type RuntimeStatus struct {
+	Sampling SamplingStatus
+	Writers  []WriterStatus
+}
+
+// Status returns a runtime snapshot of this logger (active sampling strategy +
+// per-writer state). For per-writer metrics/level, type-assert from Writers().
+func (l *Logger) Status() RuntimeStatus {
+	ws := l.Writers()
+	out := RuntimeStatus{
+		Sampling: SamplingStatus{Strategy: describeStrategy(l.samplingStrategy.Load())},
+		Writers:  make([]WriterStatus, 0, len(ws)),
+	}
+	for _, w := range ws {
+		var s WriterStatus
+		if n, ok := w.(Named); ok {
+			s.Name = n.Name()
+		}
+		if p, ok := w.(Pauser); ok {
+			s.Paused = p.Paused()
+		}
+		s.Metrics = metricSnapshot(w)
+		out.Writers = append(out.Writers, s)
+	}
+	return out
+}
+
+// describeStrategy renders the active strategy for display. nil ⇒ "full"
+// (FullSampling / keep-all default).
+func describeStrategy(p *SamplingStrategy) string {
+	if p == nil {
+		return "full"
+	}
+	switch s := (*p).(type) {
+	case FullSampling:
+		return "full"
+	case TraceIDRatioBased:
+		return fmt.Sprintf("trace_id_ratio:%g", s.Ratio)
+	case TailDigitSampling:
+		return fmt.Sprintf("tail_digit:%d:%d", s.Modulus, s.Keep)
+	default:
+		return fmt.Sprintf("%T", s)
+	}
+}
+
+// metricSnapshot returns a writer's Metrics() if it exposes one. Each writer's
+// Metrics() returns its own concrete type, so we assert the known shapes rather
+// than require a shared interface (no writer changes needed); nil if none.
+func metricSnapshot(w Writer) interface{} {
+	switch v := w.(type) {
+	case interface{ Metrics() FileWriterMetrics }:
+		return v.Metrics()
+	case interface{ Metrics() WriterMetrics }: // KafKaWriter
+		return v.Metrics()
+	case interface{ Metrics() NetWriterMetrics }:
+		return v.Metrics()
+	case interface{ Metrics() WebhookWriterMetrics }:
+		return v.Metrics()
+	}
+	return nil
+}
+
 // findWriter returns the first registered writer with the given Name(), or nil.
 func (l *Logger) findWriter(name string) Writer {
 	for _, w := range l.snapshotWriters() {
@@ -1411,6 +1492,10 @@ func SetSamplingStrategy(s SamplingStrategy) { defaultLogger().SetSamplingStrate
 func SetSamplingStrategyFor(s SamplingStrategy, duration time.Duration) (stop func()) {
 	return defaultLogger().SetSamplingStrategyFor(s, duration)
 }
+
+// Status returns a runtime snapshot of the package singleton (active sampling
+// strategy + per-writer state). See Logger.Status.
+func Status() RuntimeStatus { return defaultLogger().Status() }
 
 // Writers returns a snapshot of the writers registered on the package singleton.
 func Writers() []Writer { return defaultLogger().Writers() }
