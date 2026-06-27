@@ -83,12 +83,16 @@ distinct tracks, and log4go serves each differently:
   (`TraceIDRatioBased`, …) are used only when you want *partial* non-error
   visibility for debugging (e.g. temporarily keep 10% of INFO). Normally you
   don't sample here because you only keep ERROR.
-- **Business / request tracking (1 record per request, low volume)**: a rich,
-  structured record accumulated across the request's stages, then emitted once,
-  shipped, and extracted downstream to follow "which step did this request reach,
-  did it finish." Low volume → **full retention, no sampling**. This is expressed
-  with existing log4go primitives — a request-scoped child logger that accumulates
-  `With` fields and emits one record at the end:
+- **Business / request tracking (1 record per request)**: a rich, structured
+  record accumulated across the request's stages, then emitted once, shipped, and
+  extracted downstream by a dedicated consumer to follow "which step did this
+  request reach, did it finish." Volume scales with QPS (100k QPS ⇒ ~100k small
+  records/sec) — not low in absolute terms, but each record is small and Kafka
+  handles it. Kept **full by design** (its purpose is to track every request);
+  sampling it would lose requests and defeats the purpose, so it is only sampled
+  (`TraceIDRatioBased`) as an explicit cost trade-off. Expressed with existing
+  log4go primitives — a request-scoped child logger that accumulates `With`
+  fields and emits one record at the end:
 
   ```go
   rs := log4go.WithContext(ctx).WithString("request_id", rid).WithString("device_id", did)
