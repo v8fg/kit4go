@@ -493,6 +493,17 @@ type Logger struct {
 	// which loads it once per record.
 	sampler atomic.Pointer[Sampler]
 
+	// samplingStrategy is the pluggable id-based sampling policy
+	// (TraceIDRatioBased / TailDigit / Full). nil ⇒ Full (keep all). It is
+	// evaluated ONCE per request at WithContext (decided from the correlation id
+	// in ctx) and the verdict cached in sampleDrop, so the per-record hot path
+	// pays only an atomic-bool load — the strategy itself never runs per record.
+	samplingStrategy atomic.Pointer[SamplingStrategy]
+	// sampleDrop is the cached per-request sampling verdict: true ⇒ drop records
+	// from this logger (set by WithContext when the strategy says "not sampled").
+	// Default false ⇒ keep. Read once per record on the hot path.
+	sampleDrop atomic.Bool
+
 	// ctxExtractor derives structured fields from a context.Context supplied via
 	// WithContext. nil (the zero atomic pointer) disables extraction. Held in an
 	// atomic.Pointer so it can be toggled live (SetContextExtractor) — e.g. turn
@@ -806,6 +817,13 @@ func (l *Logger) clone() *Logger {
 	if x := l.ctxExtractor.Load(); x != nil {
 		c.ctxExtractor.Store(x)
 	}
+	// samplingStrategy + the cached per-request sampleDrop verdict propagate to
+	// children, so a WithContext-decided "sampled" child keeps its verdict across
+	// further With calls.
+	if ss := l.samplingStrategy.Load(); ss != nil {
+		c.samplingStrategy.Store(ss)
+	}
+	c.sampleDrop.Store(l.sampleDrop.Load())
 	// share the writers snapshot (copy-on-write on Register applies to parent;
 	// child reads its own snapshot which is fine since Register on a child is
 	// unusual but supported).
@@ -966,7 +984,44 @@ func (l *Logger) SetContextExtractor(fn func(context.Context) map[string]interfa
 func (l *Logger) WithContext(ctx context.Context) *Logger {
 	c := l.clone()
 	c.attachContextFields(ctx)
+	// Evaluate the sampling strategy ONCE per request (cheap; not per record):
+	// decide from the correlation id in ctx and cache the verdict on the child as
+	// sampleDrop. The deliver hot path then reads only the atomic bool. A nil
+	// strategy (FullSampling) skips this — sampleDrop stays false (keep).
+	if ss := c.samplingStrategy.Load(); ss != nil {
+		id := correlationIDFromContext(ctx)
+		c.sampleDrop.Store(!(*ss).ShouldLog(id))
+	}
 	return c
+}
+
+// correlationIDFromContext returns the first correlation id found in ctx.Value
+// (in defaultContextTraceKeys order: trace_id first, then request/correlation,
+// then device). Empty when none is present. Used to make the per-request
+// sampling decision deterministic across services (all see the same id).
+func correlationIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	for _, k := range defaultContextTraceKeys {
+		if v := ctx.Value(k); v != nil {
+			return fmt.Sprintf("%v", v)
+		}
+	}
+	return ""
+}
+
+// SetSamplingStrategy installs an id-based sampling policy evaluated once per
+// request at WithContext (nil ⇒ FullSampling / keep all, the default). Because
+// the decision is a pure function of the correlation id, every service with the
+// same id keeps-or-drops the whole chain together — no fragmentation. Atomic +
+// lock-free; safe under any load.
+func (l *Logger) SetSamplingStrategy(s SamplingStrategy) {
+	if s == nil {
+		l.samplingStrategy.Store(nil)
+		return
+	}
+	l.samplingStrategy.Store(&s)
 }
 
 // attachContextFields extracts structured fields from ctx and appends them to
@@ -1087,6 +1142,11 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	var fileStr string
 
 	if level > int(l.level.Load()) {
+		return
+	}
+	// Per-request sampling verdict (cached at WithContext). A dropped request's
+	// records never reach the writers. Default false (keep).
+	if l.sampleDrop.Load() {
 		return
 	}
 	// Sampling runs before Metrics increment: a record dropped by the sampler
@@ -1315,6 +1375,10 @@ func SetLevel(lvl int) {
 // Runtime returns the hot, lock-free configuration surface (RuntimeConfig) of the
 // package singleton, for live non-destructive toggles under any load.
 func Runtime() RuntimeConfig { return defaultLogger().Runtime() }
+
+// SetSamplingStrategy installs an id-based sampling policy on the package
+// singleton (nil ⇒ FullSampling / keep all). See Logger.SetSamplingStrategy.
+func SetSamplingStrategy(s SamplingStrategy) { defaultLogger().SetSamplingStrategy(s) }
 
 // Writers returns a snapshot of the writers registered on the package singleton.
 func Writers() []Writer { return defaultLogger().Writers() }

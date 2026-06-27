@@ -1,9 +1,20 @@
 package log4go
 
 import (
+	"context"
 	"math/rand"
 	"testing"
+	"time"
 )
+
+// waitFor polls cond until it returns true or the deadline elapses.
+func waitFor(t *testing.T, cond func() bool, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) && !cond() {
+		time.Sleep(time.Millisecond)
+	}
+}
 
 // TestSampling_Full keeps everything.
 func TestSampling_Full(t *testing.T) {
@@ -150,5 +161,85 @@ func TestIDUint64_FNV(t *testing.T) {
 	c, _ := idUint64("request-abc")
 	if a == c {
 		t.Error("distinct ids should (almost surely) reduce to distinct uint64")
+	}
+}
+
+// TestSamplingStrategy_Wired: the strategy is evaluated once per request at
+// WithContext (cached as sampleDrop) and the deliver hot path honors it — a
+// dropped request's records never reach the writer.
+func TestSamplingStrategy_Wired(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 4))
+	defer root.Close()
+	cw := &captureWriter{}
+	root.Register(cw)
+	root.SetLevel(DEBUG)
+
+	ctx := context.WithValue(context.Background(), "trace_id", "4a3f0b1c2d3e4f60718293a4b5c6d7e8")
+
+	// ratio=0 -> drop all records from this trace.
+	root.SetSamplingStrategy(TraceIDRatioBased{Ratio: 0})
+	root.WithContext(ctx).Info("dropped-1")
+	root.WithContext(ctx).Info("dropped-2")
+	waitFor(t, func() bool { return cw.Len() == 0 }, time.Second) // let any straggler arrive
+	if cw.Len() != 0 {
+		t.Errorf("ratio=0: %d records delivered, want 0", cw.Len())
+	}
+
+	// ratio=1 -> kept.
+	root.SetSamplingStrategy(TraceIDRatioBased{Ratio: 1})
+	root.WithContext(ctx).Info("kept")
+	waitFor(t, func() bool { return cw.Len() >= 1 }, time.Second)
+	if cw.Len() < 1 {
+		t.Errorf("ratio=1: %d records delivered, want >=1", cw.Len())
+	}
+
+	// nil strategy -> default keep all (no per-request decision).
+	root.SetSamplingStrategy(nil)
+	root.Info("default-kept")
+	want := cw.Len() + 1
+	root.Info("default-kept-2")
+	waitFor(t, func() bool { return cw.Len() >= want }, time.Second)
+}
+
+// TestCorrelationIDFromContext: the first correlation key in ctx.Value wins
+// (trace_id before request_id/device_id).
+func TestCorrelationIDFromContext(t *testing.T) {
+	if got := correlationIDFromContext(nil); got != "" {
+		t.Errorf("nil ctx = %q, want empty", got)
+	}
+	ctx := context.WithValue(context.Background(), "trace_id", "tid-123")
+	if got := correlationIDFromContext(ctx); got != "tid-123" {
+		t.Errorf("trace_id = %q, want tid-123", got)
+	}
+	// request_id only (no trace_id).
+	ctx2 := context.WithValue(context.Background(), "request_id", "req-9")
+	if got := correlationIDFromContext(ctx2); got != "req-9" {
+		t.Errorf("request_id = %q, want req-9", got)
+	}
+	// non-string value formatted.
+	ctx3 := context.WithValue(context.Background(), "trace_id", 42)
+	if got := correlationIDFromContext(ctx3); got != "42" {
+		t.Errorf("int trace_id = %q, want 42", got)
+	}
+	// no correlation key present -> empty.
+	if got := correlationIDFromContext(context.Background()); got != "" {
+		t.Errorf("empty ctx = %q, want empty", got)
+	}
+}
+
+// TestPackage_SetSamplingStrategy covers the package-level installer on the
+// singleton (install + nil-clear), with save/restore.
+func TestPackage_SetSamplingStrategy(t *testing.T) {
+	dl := defaultLogger()
+	saved := dl.samplingStrategy.Load()
+	defer dl.samplingStrategy.Store(saved)
+
+	SetSamplingStrategy(TraceIDRatioBased{Ratio: 0.5})
+	if dl.samplingStrategy.Load() == nil {
+		t.Error("package SetSamplingStrategy did not install")
+	}
+	SetSamplingStrategy(nil)
+	if dl.samplingStrategy.Load() != nil {
+		t.Error("package SetSamplingStrategy(nil) did not clear")
 	}
 }
