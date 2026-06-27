@@ -303,7 +303,7 @@ func Test_LoggerWithSampling_Disable(t *testing.T) {
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
 	child := root.WithSampling(0, 0)
-	if child.sampler != nil {
+	if child.sampler.Load() != nil {
 		t.Fatal("WithSampling(0,0) must produce a nil sampler")
 	}
 }

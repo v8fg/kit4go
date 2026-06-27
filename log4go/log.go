@@ -394,12 +394,13 @@ type Stopper interface {
 // method takes effect on the next record via atomic loads on the delivery path —
 // no mutex, no stall — so any of them is safe to call at any time, including
 // under extreme throughput (millions of records/sec, as in real-time ad
-// serving). It is the runtime counterpart to SetupLog/Reload (which rebuild
-// writers from a full LogConfig).
+// serving). It is the runtime, non-destructive counterpart to SetupLog (which
+// builds writers once at startup).
 //
-// Use it for live, non-destructive toggles that must NOT reconfigure writers:
-// bump the level for debugging (SetLevel), switch text/JSON (SetFormat), enable
-// caller/func names (WithCaller/WithFuncName), or attach a static field
+// Use it for live toggles that must NOT reconfigure writers: bump the level for
+// debugging (SetLevel), switch text/JSON (SetFormat), enable caller/func names
+// (WithCaller/WithFuncName), adjust or disable sampling (SetSampling), toggle
+// trace/context capture (SetContextExtractor), or attach a static field
 // (SetBaseField). None of these touch writer goroutines or connections, so they
 // cost nothing on the hot path. *Logger satisfies this interface; obtain it via
 // Logger.Runtime or the package-level Runtime.
@@ -414,6 +415,8 @@ type RuntimeConfig interface {
 	WithCaller(enable bool)
 	WithFuncName(enable bool)
 	WithFullPath(enable bool)
+	SetSampling(initial, thereafter int)
+	SetContextExtractor(fn func(context.Context) map[string]interface{})
 	SetBaseField(key string, val interface{})
 	SetBaseFields(m map[string]interface{})
 }
@@ -462,14 +465,16 @@ type Logger struct {
 	fields []field
 
 	// sampler drops high-frequency records to prevent log storms. nil disables
-	// sampling (the default). See WithSampling. Read on the deliverRecordToWriter
-	// hot path; set once at construction and never mutated, so no lock needed.
-	sampler *Sampler
+	// sampling (the default). Held in an atomic.Pointer so it can be swapped at
+	// runtime (SetSampling) without racing the deliverRecordToWriter hot path,
+	// which loads it once per record.
+	sampler atomic.Pointer[Sampler]
 
-	// ctxExtractor derives structured fields from a context.Context supplied
-	// via WithContext. nil disables context extraction. Set once at construction.
-	// See WithContext / SetContextExtractor.
-	ctxExtractor func(context.Context) map[string]interface{}
+	// ctxExtractor derives structured fields from a context.Context supplied via
+	// WithContext. nil (the zero atomic pointer) disables extraction. Held in an
+	// atomic.Pointer so it can be toggled live (SetContextExtractor) — e.g. turn
+	// trace-context capture on only when investigating a distributed incident.
+	ctxExtractor atomic.Pointer[contextExtractor]
 
 	lock sync.RWMutex
 
@@ -486,6 +491,14 @@ type Logger struct {
 // fields affect the singleton and every child Logger, per the SetBaseField doc.
 type baseFieldsHolder struct {
 	v atomic.Pointer[[]field]
+}
+
+// contextExtractor wraps a context-field extractor so it can be held in an
+// atomic.Pointer[contextExtractor] and toggled live via SetContextExtractor (a
+// nil pointer disables extraction — the common case, so the hot path pays no map
+// allocation). Used for runtime trace/context-capture control.
+type contextExtractor struct {
+	fn func(context.Context) map[string]interface{}
 }
 
 // NewLogger create the logger
@@ -704,10 +717,8 @@ func (l *Logger) clone() *Logger {
 		flushTimer:      l.flushTimer,
 		rotateTimer:     l.rotateTimer,
 		c:               l.c,
-		quit:            l.quit,   // shared: retiring the root retires every child
-		fields:          l.fields, // shared read-only; With copies before appending
-		sampler:         l.sampler,
-		ctxExtractor:    l.ctxExtractor,
+		quit:            l.quit,           // shared: retiring the root retires every child
+		fields:          l.fields,         // shared read-only; With copies before appending
 		recordsByLevel:  l.recordsByLevel, // shared pointer so children's emits count on the root
 		baseFields:      l.baseFields,     // shared pointer: SetBaseField on the root is live-visible to every child
 	}
@@ -721,6 +732,14 @@ func (l *Logger) clone() *Logger {
 	c.fullPath.Store(l.fullPath.Load())
 	c.withFuncName.Store(l.withFuncName.Load())
 	c.hasCaller.Store(l.hasCaller.Load())
+	// sampler/ctxExtractor are atomic pointers — copy the current value (a child
+	// later changing them via SetSampling/SetContextExtractor only affects itself).
+	if s := l.sampler.Load(); s != nil {
+		c.sampler.Store(s)
+	}
+	if x := l.ctxExtractor.Load(); x != nil {
+		c.ctxExtractor.Store(x)
+	}
 	// share the writers snapshot (copy-on-write on Register applies to parent;
 	// child reads its own snapshot which is fine since Register on a child is
 	// unusual but supported).
@@ -821,7 +840,7 @@ func (l *Logger) WithError(key string, val error) *Logger    { return l.withFiel
 func (l *Logger) WithSampling(initial, thereafter int) *Logger {
 	c := l.clone()
 	if initial <= 0 && thereafter <= 0 {
-		c.sampler = nil
+		c.sampler.Store(nil)
 		return c
 	}
 	if initial < 0 {
@@ -830,22 +849,44 @@ func (l *Logger) WithSampling(initial, thereafter int) *Logger {
 	if thereafter <= 0 {
 		thereafter = 1
 	}
-	c.sampler = newSampler(initial, thereafter)
+	c.sampler.Store(newSampler(initial, thereafter))
 	return c
+}
+
+// SetSampling atomically applies sampling to this logger in place (unlike
+// WithSampling, which returns a child). The first `initial` records at each
+// level pass, then one every `thereafter`; initial/thereafter <= 0 disables
+// sampling. Safe to call concurrently with logging — the next record observes
+// the new policy via an atomic pointer load.
+func (l *Logger) SetSampling(initial, thereafter int) {
+	if initial <= 0 && thereafter <= 0 {
+		l.sampler.Store(nil)
+		return
+	}
+	if initial < 0 {
+		initial = 0
+	}
+	if thereafter <= 0 {
+		thereafter = 1
+	}
+	l.sampler.Store(newSampler(initial, thereafter))
 }
 
 // SetContextExtractor installs a function that derives structured fields from a
 // context.Context attached via WithContext. The returned map is merged onto the
-// record's fields at delivery time (after the logger's own With fields, so
-// explicit With fields take precedence on key collision in JSON only if the
-// context extractor doesn't also set the same key — last-writer-wins in the map).
-// Set nil to disable context extraction.
+// record's fields at delivery time. It is stored atomically, so it is safe to
+// swap at runtime under any load — e.g. install a trace-context extractor only
+// when an incident requires distributed-trace capture, and pass nil to clear the
+// per-logger override (the global extractor stack, if any, then runs).
 //
-// SetContextExtractor is intended to be called once at setup on a root logger
-// before any WithContext child is produced; the extractor is cloned into every
-// child.
+// The extractor is cloned into every child Logger produced after the call; a
+// child may override it independently.
 func (l *Logger) SetContextExtractor(fn func(context.Context) map[string]interface{}) {
-	l.ctxExtractor = fn
+	if fn == nil {
+		l.ctxExtractor.Store(nil)
+		return
+	}
+	l.ctxExtractor.Store(&contextExtractor{fn: fn})
 }
 
 // WithContext returns a child Logger that, on each emit, extracts structured
@@ -875,10 +916,10 @@ func (l *Logger) attachContextFields(ctx context.Context) {
 		return
 	}
 	var m map[string]interface{}
-	if l.ctxExtractor != nil {
+	if x := l.ctxExtractor.Load(); x != nil {
 		// per-logger override: run ONLY this extractor (not the global stack),
 		// so SetContextExtractor is a full replacement, not an addition.
-		m = l.ctxExtractor(ctx)
+		m = x.fn(ctx)
 	} else {
 		m = runContextExtractors(ctx)
 	}
@@ -985,7 +1026,7 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	// is never written and must not inflate the per-level counters (otherwise
 	// monitoring would report a write rate the writers never see). nil sampler
 	// is a no-op on the common path.
-	if l.sampler != nil && !l.sampler.allow(level) {
+	if s := l.sampler.Load(); s != nil && !s.allow(level) {
 		return
 	}
 	if l.recordsByLevel != nil {

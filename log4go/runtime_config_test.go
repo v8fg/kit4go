@@ -1,6 +1,7 @@
 package log4go
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -59,4 +60,69 @@ func TestRuntimeConfig_ConcurrentHotUpdateNoRace(t *testing.T) {
 	time.Sleep(100 * time.Millisecond) // let mutators + loggers overlap
 	stop.Store(true)
 	wg.Wait()
+}
+
+// TestRuntimeConfig_SetSampling covers SetSampling's enable and disable paths
+// (RuntimeConfig surface) applied in place on a logger.
+func TestRuntimeConfig_SetSampling(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 4))
+	defer root.Close()
+
+	root.SetSampling(10, 5)
+	s := root.sampler.Load()
+	if s == nil || s.Initial != 10 || s.Thereafter != 5 {
+		t.Fatalf("SetSampling(10,5) not applied: %+v", s)
+	}
+	root.SetSampling(0, 0) // disable
+	if s := root.sampler.Load(); s != nil {
+		t.Fatalf("SetSampling(0,0) should disable, got %+v", s)
+	}
+	// clamp branches: negative initial -> 0; thereafter <= 0 (with initial>0) -> 1
+	root.SetSampling(-1, 5)
+	if s := root.sampler.Load(); s.Initial != 0 || s.Thereafter != 5 {
+		t.Errorf("SetSampling(-1,5) clamp: Initial=%d Thereafter=%d want 0,5", s.Initial, s.Thereafter)
+	}
+	root.SetSampling(3, 0)
+	if s := root.sampler.Load(); s.Initial != 3 || s.Thereafter != 1 {
+		t.Errorf("SetSampling(3,0) clamp: Initial=%d Thereafter=%d want 3,1", s.Initial, s.Thereafter)
+	}
+}
+
+// TestRuntimeConfig_SetContextExtractor covers SetContextExtractor's set/clear
+// paths (RuntimeConfig) — the runtime trace/context-capture toggle.
+func TestRuntimeConfig_SetContextExtractor(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 4))
+	defer root.Close()
+
+	fn := func(context.Context) map[string]interface{} { return map[string]interface{}{"trace_id": "x"} }
+	root.SetContextExtractor(fn)
+	if root.ctxExtractor.Load() == nil {
+		t.Fatal("extractor not installed")
+	}
+	root.SetContextExtractor(nil) // clear -> falls back to global stack
+	if root.ctxExtractor.Load() != nil {
+		t.Fatal("extractor not cleared")
+	}
+}
+
+// TestClone_PreservesSamplerAndExtractor verifies clone() copies the current
+// sampler and context extractor into the child (the non-nil atomic store arms).
+func TestClone_PreservesSamplerAndExtractor(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 4))
+	defer root.Close()
+	root.SetSampling(7, 3)
+	root.SetContextExtractor(func(context.Context) map[string]interface{} { return nil })
+
+	child := root.With("k", "v") // triggers clone
+	if child.sampler.Load() == nil {
+		t.Error("child lost sampler on clone")
+	}
+	if child.ctxExtractor.Load() == nil {
+		t.Error("child lost context extractor on clone")
+	}
+	// child mutates its own copy without affecting the parent
+	child.SetSampling(0, 0)
+	if root.sampler.Load() == nil {
+		t.Error("child SetSampling leaked to parent")
+	}
 }

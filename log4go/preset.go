@@ -16,7 +16,7 @@ func NewProduction() *Logger {
 	l.SetLevel(INFO)
 	l.SetFormat(FormatJSON)
 	l.hasCaller.Store(true)
-	l.sampler = newSampler(100, 100)
+	l.SetSampling(100, 100)
 	l.Register(NewConsoleWriterWithOptions(ConsoleWriterOptions{
 		Enable: true,
 		Level:  LevelFlagInfo,

@@ -141,35 +141,37 @@ func TestCore_WithAttrs_Empty(t *testing.T) {
 // ===================== log.go: WithSampling clamp branches =====================
 
 func TestCore_WithSampling_InitialNegative(t *testing.T) {
-	// initial < 0 clamps to 0; thereafter > 0 stays (line 754-756)
+	// initial < 0 clamps to 0; thereafter > 0 stays.
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
 	child := root.WithSampling(-1, 5)
-	if child.sampler == nil {
+	s := child.sampler.Load()
+	if s == nil {
 		t.Fatal("sampler nil with negative initial + positive thereafter")
 	}
-	if child.sampler.Initial != 0 {
-		t.Errorf("Initial=%d want 0 (clamped)", child.sampler.Initial)
+	if s.Initial != 0 {
+		t.Errorf("Initial=%d want 0 (clamped)", s.Initial)
 	}
-	if child.sampler.Thereafter != 5 {
-		t.Errorf("Thereafter=%d want 5", child.sampler.Thereafter)
+	if s.Thereafter != 5 {
+		t.Errorf("Thereafter=%d want 5", s.Thereafter)
 	}
 }
 
 func TestCore_WithSampling_ThereafterNonPositive(t *testing.T) {
-	// initial > 0, thereafter <= 0 clamps thereafter to 1 (line 757-759)
+	// initial > 0, thereafter <= 0 clamps thereafter to 1.
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
 	for _, th := range []int{0, -3} {
 		child := root.WithSampling(3, th)
-		if child.sampler == nil {
+		s := child.sampler.Load()
+		if s == nil {
 			t.Fatalf("thereafter=%d: sampler nil", th)
 		}
-		if child.sampler.Initial != 3 {
-			t.Errorf("thereafter=%d: Initial=%d want 3", th, child.sampler.Initial)
+		if s.Initial != 3 {
+			t.Errorf("thereafter=%d: Initial=%d want 3", th, s.Initial)
 		}
-		if child.sampler.Thereafter != 1 {
-			t.Errorf("thereafter=%d: Thereafter=%d want 1 (clamped)", th, child.sampler.Thereafter)
+		if s.Thereafter != 1 {
+			t.Errorf("thereafter=%d: Thereafter=%d want 1 (clamped)", th, s.Thereafter)
 		}
 	}
 }
@@ -178,7 +180,7 @@ func TestCore_WithSampling_BothNonPositive(t *testing.T) {
 	// initial <= 0 && thereafter <= 0 -> nil sampler (disable path)
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
-	if child := root.WithSampling(0, 0); child.sampler != nil {
+	if child := root.WithSampling(0, 0); child.sampler.Load() != nil {
 		t.Error("both<=0 should disable sampling")
 	}
 }
