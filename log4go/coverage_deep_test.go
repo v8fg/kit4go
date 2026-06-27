@@ -222,28 +222,42 @@ func Test_NewRateAlerter_WindowUnderOneSecond(t *testing.T) {
 }
 
 // Test_RateAlerter_Advance_BackwardAndFullWindow drives the rarely-hit advance()
-// branches: backward clock (sec < base), full-window expiry (sec-base >= n), and
-// a sub-second forward step.
+// branches: backward clock (sec < base, must NOT destroy data), full-window
+// expiry (sec-base >= n), and a sub-second forward step.
 func Test_RateAlerter_Advance_BackwardAndFullWindow(t *testing.T) {
 	a := NewRateAlerter(3*time.Second, 1) // 3 buckets
 	now := time.Now().Unix()
 
-	// Backward clock: sec < base clears the TARGET slot (sec%n) and lowers sum.
-	// Seed exactly the slot that the backward advance will clear.
+	// reset clears all bucket state so each scenario is independent.
+	reset := func(base int64) {
+		for i := range a.counts {
+			a.counts[i] = 0
+		}
+		a.sum = 0
+		a.base = base
+	}
+
+	// Backward clock (sec < base): a stale/regressed second must NOT destroy live
+	// counts — clearing on a backward timestamp would under-count events (the
+	// alert might fail to fire). The window is left untouched (no clear, base
+	// unchanged).
 	back := now - 1
-	a.base = now
+	reset(now)
 	a.counts[back%3] = 5
 	a.sum = 5
-	a.advance(back)
-	if a.sum != 0 {
-		t.Errorf("after backward clock sum=%d want 0 (target slot cleared)", a.sum)
+	a.advance(back) // back < base -> no-op
+	if a.sum != 5 {
+		t.Errorf("after backward clock sum=%d want 5 (no data destruction)", a.sum)
 	}
-	if a.base != back {
-		t.Errorf("after backward clock base=%d want %d", a.base, back)
+	if a.base != now {
+		t.Errorf("after backward clock base=%d want %d (unchanged)", a.base, now)
+	}
+	if a.counts[back%3] != 5 {
+		t.Errorf("backward clock destroyed target slot: counts=%d want 5", a.counts[back%3])
 	}
 
 	// Jump forward a full window (sec-base >= n): every bucket expires.
-	a.base = now
+	reset(now)
 	a.counts[now%3] = 2
 	a.counts[(now+1)%3] = 3
 	a.sum = 5
@@ -259,7 +273,7 @@ func Test_RateAlerter_Advance_BackwardAndFullWindow(t *testing.T) {
 
 	// Sub-second forward step (sec-base == 1, < n): rolls exactly one bucket —
 	// the bucket at (base+1)%n is cleared.
-	a.base = now
+	reset(now)
 	target := now + 1
 	a.counts[target%3] = 4
 	a.sum = 4

@@ -69,11 +69,18 @@ func (a *RateAlerter) Count() int {
 // Allow records one event and reports whether the alert should fire now.
 // Thread-safe.
 func (a *RateAlerter) Allow() bool {
-	now := time.Now()
-	sec := now.Unix()
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// Read now UNDER the lock: a value read before acquiring the lock can be
+	// older than base (advanced by a concurrent caller while we waited), which
+	// would otherwise trip advance's backward path and silently destroy live
+	// counts — the alert could then fail to fire when it should.
+	now := time.Now()
+	sec := now.Unix()
 	a.advance(sec)
+	if sec < a.base {
+		sec = a.base // wall clock regressed: charge the current bucket
+	}
 	n := int64(len(a.counts))
 	a.counts[sec%n]++
 	a.sum++
@@ -90,14 +97,10 @@ func (a *RateAlerter) Allow() bool {
 func (a *RateAlerter) advance(sec int64) {
 	n := int64(len(a.counts))
 	if sec <= a.base {
-		// clock moved backward or same second: clear only the target slot so a
-		// reused second does not double-count across a window boundary.
-		if sec < a.base {
-			i := sec % n
-			a.sum -= a.counts[i]
-			a.counts[i] = 0
-			a.base = sec
-		}
+		// Stale read or wall-clock regression (NTP). Do NOT clear: destroying
+		// live counts on a backward timestamp would under-count events (the
+		// alert might fail to fire when it should). The caller clamps its write
+		// to base, so leave the window untouched.
 		return
 	}
 	if sec-a.base >= n {

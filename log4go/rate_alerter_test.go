@@ -97,6 +97,31 @@ func Test_RateAlerter_Concurrent(t *testing.T) {
 	}
 }
 
+// Test_RateAlerter_Concurrent_NoLoss hammers Allow under contention and asserts
+// no event count is lost. A long window (60s) plus a huge threshold means no
+// expiry and no firing, so the in-window count must equal the exact number of
+// Allow calls. This locks in the advance stale-sec fix (which used to silently
+// drop counts when a second read before the lock fell behind base).
+func Test_RateAlerter_Concurrent_NoLoss(t *testing.T) {
+	a := NewRateAlerter(time.Minute, 1<<30) // huge threshold: never fires
+	const goroutines = 16
+	const perG = 1000
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perG; i++ {
+				a.Allow()
+			}
+		}()
+	}
+	wg.Wait()
+	if want := goroutines * perG; a.Count() != want {
+		t.Fatalf("Count=%d want %d (events lost under contention)", a.Count(), want)
+	}
+}
+
 // allowAt / countAt / newRateAlerterAt are deterministic-time test seams for
 // RateAlerter (production uses time.Now via Allow/Count).
 func newRateAlerterAt(window time.Duration, threshold int, base time.Time) *RateAlerter {
@@ -118,6 +143,9 @@ func (a *RateAlerter) allowAt(now time.Time) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.advance(sec)
+	if sec < a.base {
+		sec = a.base // mirror Allow: a regressed second charges the current bucket
+	}
 	n := int64(len(a.counts))
 	a.counts[sec%n]++
 	a.sum++
