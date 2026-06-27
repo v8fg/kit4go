@@ -26,6 +26,26 @@ func hasFileWriter(l *Logger) bool {
 	return false
 }
 
+// hasConsoleWriter reports whether l currently has a *ConsoleWriter registered.
+func hasConsoleWriter(l *Logger) bool {
+	for _, w := range l.snapshotWriters() {
+		if _, ok := w.(*ConsoleWriter); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// baseFieldCount returns the number of base fields set on l (via SetBaseField).
+// Reload builds a fresh logger, so base fields — which are not part of LogConfig
+// — are reset to zero; this helper verifies that full-replace consequence.
+func baseFieldCount(l *Logger) int {
+	if p := l.baseFields.v.Load(); p != nil {
+		return len(*p)
+	}
+	return 0
+}
+
 // TestReload_SwapsAndStopsOld verifies Reload swaps in a fresh logger with the new
 // writer set, and that the previous logger's bootstrap + writers are stopped
 // (proven by goleak finding no survivors).
@@ -151,5 +171,68 @@ func TestReloadFile_AppliesAndRejectsBad(t *testing.T) {
 	}
 	if loggerDefault.Load() != before {
 		t.Fatal("ReloadFile failure swapped the singleton; the old logger should be retained")
+	}
+}
+
+// TestReload_FullReplace_NotAMerge proves Reload is a FULL replace of the writer
+// set, not a merge: reloading with a subset of writers removes the ones no longer
+// enabled and stops their daemons. (console+file) -> console-only must leave the
+// file writer gone and its daemon stopped (goleak), with console retained.
+func TestReload_FullReplace_NotAMerge(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	defer Close()
+	Close()
+
+	fwPath := filepath.Join(t.TempDir(), "full.log")
+	if err := SetupLog(LogConfig{
+		Level:         "info",
+		ConsoleWriter: ConsoleWriterOptions{Enable: true},
+		FileWriter:    FileWriterOptions{Enable: true, Filename: fwPath, Async: true, AsyncBufferSize: 8},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := loggerDefault.Load()
+	if !hasConsoleWriter(before) || !hasFileWriter(before) {
+		t.Fatal("setup: console+file expected")
+	}
+
+	// Reload with console ONLY — file must disappear (full replace, not merge).
+	if err := Reload(LogConfig{Level: "info", ConsoleWriter: ConsoleWriterOptions{Enable: true}}); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	cur := loggerDefault.Load()
+	if cur == before {
+		t.Fatal("Reload did not swap the singleton")
+	}
+	if !hasConsoleWriter(cur) {
+		t.Fatal("console writer missing after reload")
+	}
+	if hasFileWriter(cur) {
+		t.Fatal("Reload merged writers: file writer should be gone after a full replace")
+	}
+	// goleak (deferred) asserts the old file daemon was stopped, not orphaned.
+}
+
+// TestReload_ResetsRuntimeState proves Reload resets state that is NOT part of
+// LogConfig: base fields set via the API (SetBaseField) do not carry over to the
+// fresh logger. The host must re-apply them after Reload if still wanted.
+func TestReload_ResetsRuntimeState(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+	defer Close()
+	Close()
+
+	if err := SetupLog(LogConfig{Level: "info", ConsoleWriter: ConsoleWriterOptions{Enable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	SetBaseField("hostname", "host-1")
+	if got := baseFieldCount(loggerDefault.Load()); got != 1 {
+		t.Fatalf("base field not set: got %d want 1", got)
+	}
+
+	if err := Reload(LogConfig{Level: "info", ConsoleWriter: ConsoleWriterOptions{Enable: true}}); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if got := baseFieldCount(loggerDefault.Load()); got != 0 {
+		t.Fatalf("Reload must reset base fields (not in LogConfig): got %d want 0", got)
 	}
 }

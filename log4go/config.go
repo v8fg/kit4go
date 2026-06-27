@@ -129,9 +129,17 @@ func SetupLog(lc LogConfig) error {
 var reloadMu sync.Mutex
 
 // Reload atomically reconfigures the package singleton from lc. It builds a fresh
-// logger with the new config (all writers started) and only then swaps it in for
-// the current singleton; the previous singleton is then drained and stopped, so
-// in-flight records are not lost and no writer goroutine/handle/connection leaks.
+// logger with the new config and only then swaps it in for the current singleton;
+// the previous singleton is then drained and stopped, so in-flight records are
+// not lost and no writer goroutine/handle/connection leaks.
+//
+// Semantics: FULL REPLACE, not a merge. The new logger has EXACTLY the writers
+// enabled in lc — writers absent from the new config (including any registered
+// directly via Register) are stopped and dropped. Level, format, full-path and
+// GlobalLevel are re-applied from lc. State that is NOT part of LogConfig is
+// reset to defaults: base fields (SetBaseField/SetBaseFields) and the caller and
+// func-name toggles (WithCaller/WithFuncName) do not carry over — re-apply them
+// after Reload if still wanted.
 //
 // If any writer fails to start, the running logger is left untouched and the
 // error is returned — no partial swap, no log gap on success.

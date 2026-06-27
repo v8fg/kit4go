@@ -42,6 +42,33 @@
 // registered exactly once; but multi-shard fan-out, spill recovery, and Close
 // reuse are all now solid and safe.
 //
+// # Runtime reload (Reload / ReloadFile)
+//
+// The package singleton can be reconfigured at runtime without restarting the
+// process:
+//
+//   - Reload(LogConfig) applies a new config atomically: it builds a fresh logger
+//     with the new writers started and swaps it in for the singleton only on full
+//     success, then drains and stops the previous logger. In-flight records are
+//     not lost and no writer goroutine/handle/connection leaks. If any writer
+//     fails to start, the running logger is left untouched and the error is
+//     returned.
+//   - ReloadFile(path) reads and parses a JSON config file, then Reloads.
+//
+// Semantics: FULL REPLACE, not a merge. The new logger has EXACTLY the writers
+// enabled in the config; writers absent from the new config (including any
+// registered directly via Register) are stopped and dropped. State that is not
+// part of LogConfig is reset to defaults — base fields (SetBaseField) and the
+// caller/func-name toggles (WithCaller/WithFuncName) do not carry over; re-apply
+// them after Reload if still wanted.
+//
+// The library installs NO signal handler; signal ownership stays with the host
+// application. SIGHUP-triggered reload is three lines at the call site:
+//
+//	ch := make(chan os.Signal, 1)
+//	signal.Notify(ch, syscall.SIGHUP)
+//	go func() { for range ch { _ = log4go.ReloadFile("/etc/app/log.json") } }()
+//
 // # Structured logging (vs zap/zerolog parity)
 //
 // log4go now covers the structured-logging capabilities expected of a modern
