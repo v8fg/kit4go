@@ -2,9 +2,11 @@ package log4go
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
+	"sync"
 )
 
 // GlobalLevel global level
@@ -30,28 +32,29 @@ type LogConfig struct {
 	KafKaWriter   KafKaWriterOptions   `json:"kafka_writer" mapstructure:"kafka_writer"`
 }
 
-// SetupLog setup log
-func SetupLog(lc LogConfig) (err error) {
+// applyConfig configures l (level, format, full-path, writers) from lc. It is the
+// shared core of SetupLog and Reload. Writers are built and registered via
+// registerOrFail (no panic) so a failure is returned to the caller rather than
+// disturbing the live logger. GlobalLevel is committed only after every enabled
+// writer has started, so a mid-config failure leaves the package-level filter and
+// the running logger unchanged.
+func (l *Logger) applyConfig(lc LogConfig) error {
 	if !lc.Debug {
 		log.SetOutput(io.Discard)
 		defer log.SetOutput(os.Stdout)
 	}
 
-	// global config
-	GlobalLevel = getLevel(lc.Level)
-
-	// writer enable
-	// 1. if not set level, use global level;
-	// 2. if set level, use min level
+	// global + per-writer level aggregation.
+	newGlobal := getLevel(lc.Level)
 	validGlobalMinLevel := EMERGENCY // default max level
 	validGlobalMinLevelBy := "global"
 
-	fileWriterLevelDefault := GlobalLevel
-	consoleWriterLevelDefault := GlobalLevel
-	kafkaWriterLevelDefault := GlobalLevel
+	fileWriterLevelDefault := newGlobal
+	consoleWriterLevelDefault := newGlobal
+	kafkaWriterLevelDefault := newGlobal
 
 	if lc.ConsoleWriter.Enable {
-		consoleWriterLevelDefault = getLevelDefault(lc.ConsoleWriter.Level, GlobalLevel, WriterNameConsole)
+		consoleWriterLevelDefault = getLevelDefault(lc.ConsoleWriter.Level, newGlobal, WriterNameConsole)
 		validGlobalMinLevel = maxInt(consoleWriterLevelDefault, validGlobalMinLevel)
 		if validGlobalMinLevel == consoleWriterLevelDefault {
 			validGlobalMinLevelBy = WriterNameConsole
@@ -59,7 +62,7 @@ func SetupLog(lc LogConfig) (err error) {
 	}
 
 	if lc.FileWriter.Enable {
-		fileWriterLevelDefault = getLevelDefault(lc.FileWriter.Level, GlobalLevel, WriterNameFile)
+		fileWriterLevelDefault = getLevelDefault(lc.FileWriter.Level, newGlobal, WriterNameFile)
 		validGlobalMinLevel = maxInt(fileWriterLevelDefault, validGlobalMinLevel)
 		if validGlobalMinLevel == fileWriterLevelDefault {
 			validGlobalMinLevelBy = WriterNameFile
@@ -67,44 +70,106 @@ func SetupLog(lc LogConfig) (err error) {
 	}
 
 	if lc.KafKaWriter.Enable {
-		kafkaWriterLevelDefault = getLevelDefault(lc.KafKaWriter.Level, GlobalLevel, WriterNameKafka)
+		kafkaWriterLevelDefault = getLevelDefault(lc.KafKaWriter.Level, newGlobal, WriterNameKafka)
 		validGlobalMinLevel = maxInt(kafkaWriterLevelDefault, validGlobalMinLevel)
 		if validGlobalMinLevel == kafkaWriterLevelDefault {
 			validGlobalMinLevelBy = WriterNameKafka
 		}
 	}
 
-	fullPath := lc.FullPath
-	WithFullPath(fullPath)
-	SetLevel(validGlobalMinLevel)
+	l.WithFullPath(lc.FullPath)
+	l.SetLevel(validGlobalMinLevel)
 	// Apply the serialization format (text default, json for structured logs).
 	// Parsed here so a bad value is reported once at setup rather than per record.
-	SetFormat(ParseLogLogFormat(lc.Format))
+	l.SetFormat(ParseLogLogFormat(lc.Format))
 
 	if lc.ConsoleWriter.Enable {
 		w := NewConsoleWriterWithOptions(lc.ConsoleWriter)
 		w.level = consoleWriterLevelDefault
 		log.Print("[log4go] enable " + WriterNameConsole + " with level " + LevelFlags[consoleWriterLevelDefault])
-		Register(w)
+		// ConsoleWriter.Init is infallible, so Register cannot panic here; file
+		// and kafka below use registerOrFail because their Init can fail.
+		l.Register(w)
 	}
 
 	if lc.FileWriter.Enable {
 		w := NewFileWriterWithOptions(lc.FileWriter)
 		w.level = fileWriterLevelDefault
 		log.Print("[log4go] enable    " + WriterNameFile + " with level " + LevelFlags[fileWriterLevelDefault])
-		Register(w)
+		if err := l.registerOrFail(w); err != nil {
+			return fmt.Errorf("file writer init: %w", err)
+		}
 	}
 
 	if lc.KafKaWriter.Enable {
 		w := NewKafKaWriter(lc.KafKaWriter)
 		w.level = kafkaWriterLevelDefault
 		log.Print("[log4go] enable   " + WriterNameKafka + " with level " + LevelFlags[kafkaWriterLevelDefault])
-		Register(w)
+		if err := l.registerOrFail(w); err != nil {
+			return fmt.Errorf("kafka writer init: %w", err)
+		}
 	}
 
 	log.Printf("[log4go] valid global_level(min:%v, flag:%v, by:%v), default(%v, flag:%v)",
-		validGlobalMinLevel, LevelFlags[validGlobalMinLevel], validGlobalMinLevelBy, GlobalLevel, LevelFlags[GlobalLevel])
+		validGlobalMinLevel, LevelFlags[validGlobalMinLevel], validGlobalMinLevelBy, newGlobal, LevelFlags[newGlobal])
+
+	GlobalLevel = newGlobal // commit only after all enabled writers started
 	return nil
+}
+
+// SetupLog applies lc to the package singleton. It returns the first writer
+// initialization error (e.g. a kafka writer that cannot reach a broker) instead
+// of panicking; the writers that did start are registered.
+func SetupLog(lc LogConfig) error {
+	return defaultLogger().applyConfig(lc)
+}
+
+// reloadMu serializes Reload / ReloadFile so overlapping triggers (repeated
+// signals, concurrent callers) cannot interleave singleton swaps.
+var reloadMu sync.Mutex
+
+// Reload atomically reconfigures the package singleton from lc. It builds a fresh
+// logger with the new config (all writers started) and only then swaps it in for
+// the current singleton; the previous singleton is then drained and stopped, so
+// in-flight records are not lost and no writer goroutine/handle/connection leaks.
+//
+// If any writer fails to start, the running logger is left untouched and the
+// error is returned — no partial swap, no log gap on success.
+func Reload(lc LogConfig) error {
+	reloadMu.Lock()
+	defer reloadMu.Unlock()
+
+	fresh := newDefaultLoggerInstance()
+	if err := fresh.applyConfig(lc); err != nil {
+		fresh.Close() // stop any writers that did start; keep the current singleton
+		return fmt.Errorf("log4go Reload: %w", err)
+	}
+	if old := loggerDefault.Swap(fresh); old != nil {
+		old.Close() // drain in-flight records, then stop old writers
+	}
+	return nil
+}
+
+// ReloadFile reads and parses the JSON config at path, then Reloads. A read,
+// parse, or writer-start error leaves the running logger untouched.
+//
+// The library deliberately does NOT install a signal handler — signal ownership
+// belongs to the application. A host that wants SIGHUP-triggered reload wires it
+// in three lines:
+//
+//	ch := make(chan os.Signal, 1)
+//	signal.Notify(ch, syscall.SIGHUP)
+//	go func() { for range ch { _ = log4go.ReloadFile("/etc/app/log.json") } }()
+func ReloadFile(path string) error {
+	cnt, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("log4go ReloadFile: read %s: %w", path, err)
+	}
+	var lc LogConfig
+	if err := json.Unmarshal(cnt, &lc); err != nil {
+		return fmt.Errorf("log4go ReloadFile: parse %s: %w", path, err)
+	}
+	return Reload(lc)
 }
 
 // SetLogWithConf setup log with config file

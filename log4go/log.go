@@ -478,11 +478,20 @@ func newLoggerWithRecords(records chan *Record) *Logger {
 	return l
 }
 
-// Register register writer
-// the writer should be register once for writers by kind
+// Register registers a writer (calling Init to start its daemon). It panics on
+// Init failure; use registerOrFail for a non-panicking variant (Reload).
 func (l *Logger) Register(w Writer) {
-	if err := w.Init(); err != nil {
+	if err := l.registerOrFail(w); err != nil {
 		panic(err)
+	}
+}
+
+// registerOrFail is Register without the panic: it returns the Init error so a
+// caller that must not disturb the live logger (Reload) can fail gracefully. On
+// success the writer is appended copy-on-write to the bootstrap's writer list.
+func (l *Logger) registerOrFail(w Writer) error {
+	if err := w.Init(); err != nil {
+		return err
 	}
 
 	// copy-on-write so the bootstrap goroutine can read writers lock-free.
@@ -491,6 +500,7 @@ func (l *Logger) Register(w Writer) {
 	copy(next, cur)
 	next[len(cur)] = w
 	l.writers.Store(next)
+	return nil
 }
 
 // snapshotWriters returns the current writers slice for lock-free iteration
