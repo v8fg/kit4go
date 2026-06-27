@@ -1,7 +1,8 @@
 // Package log4go is a structured logging library with console, file and kafka writers.
 //
 // 中文文档 (Chinese docs): doc_zh.md. Performance: PERFORMANCE.md (中) /
-// PERFORMANCE.en.md (en).
+// PERFORMANCE.en.md (en). Distributed observability (trace correlation, source-side
+// tail sampling, cross-language interop): docs/observability.md.
 //
 // Origin: github.com/xwi88/log4go (originally licensed under GPLv3).
 // Integrated into kit4go by the original author (xwi88), who re-licenses this
