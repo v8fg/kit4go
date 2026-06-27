@@ -209,6 +209,27 @@ Net: the caller hot path carries almost no atomic counting (business-track
 Written is in the bootstrap; Occurred is per-shard local), yet the full
 Occurred/Written/Dropped funnel stays observable.
 
+### Exposure model: periodic snapshot + bounded cache (never real-time push)
+
+Counters update on the hot path, but log4go **never pushes or exposes them in
+real time** — that would contend with the hot path. Instead (the Dropwizard
+Metrics / Micrometer / Prometheus-client pattern):
+
+- A background goroutine takes a **snapshot every N seconds** (default ~10s,
+  configurable): it atomically reads the counters, aggregates across shards, and
+  computes interval rates — all off the hot path.
+- Snapshots go into a **bounded ring cache** (default ~last 10 min / 60 entries,
+  configurable) — a fixed-size structure, so memory is bounded regardless of
+  traffic. This is the "cache metrics for a period, control memory" requirement.
+- External consumers (`Status()` / an app-owned `/metrics` endpoint / Grafana)
+  read the **cached snapshot** — an O(1) cache hit that never touches live
+  counters and never blocks delivery. The snapshot goroutine starts/stops with
+  the logger lifecycle.
+
+So: real-time collection (cheap, per-shard/bootstrap) + periodic aggregation +
+bounded cached snapshots for reads. No real-time push, no live-counter reads
+from outside.
+
 ## Operations (dev vs prod, and the enabler)
 
 - **Dev/test**: `FullSampling` (default) — see everything, no surprises.
