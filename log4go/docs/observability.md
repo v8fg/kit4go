@@ -73,6 +73,44 @@ Defaults are generic and carry no business logic. A business installs its own
 verdict. Cross-language consistency: built-in deterministic strategies follow
 the OTel spec exactly, so Java/Python ports decide identically for the same id.
 
+## Two tracks in practice (high-volume op logs vs request-scoped business record)
+
+Real high-throughput systems (e.g. ad serving at 100K+ log lines/sec) run two
+distinct tracks, and log4go serves each differently:
+
+- **Operational logs (100K+/s)**: volume control is **level filtering** — persist
+  only ERROR (`SetLevel(ERROR)` drops INFO/DEBUG). Sampling strategies
+  (`TraceIDRatioBased`, …) are used only when you want *partial* non-error
+  visibility for debugging (e.g. temporarily keep 10% of INFO). Normally you
+  don't sample here because you only keep ERROR.
+- **Business / request tracking (1 record per request, low volume)**: a rich,
+  structured record accumulated across the request's stages, then emitted once,
+  shipped, and extracted downstream to follow "which step did this request reach,
+  did it finish." Low volume → **full retention, no sampling**. This is expressed
+  with existing log4go primitives — a request-scoped child logger that accumulates
+  `With` fields and emits one record at the end:
+
+  ```go
+  rs := log4go.WithContext(ctx).WithString("request_id", rid).WithString("device_id", did)
+  rs = rs.WithString("step", "bid_received").WithBool("matched", true).WithInt("price", p)
+  // ... each stage adds fields ...
+  rs.Info("request done")   // one JSON record carrying the whole trail
+  ```
+
+  That single record IS the "big struct"; log4go does not need a typed
+  accumulator primitive (that would push business-specific structure into the
+  library = over-engineering). Both tracks carry `request_id`/`trace_id`/
+  `device_id`, so the backend correlates them by id.
+
+  The record terminates with a business **error code** (the outcome / which step
+  it ended at). Error-code sets are environment-specific, and panics map to a
+  code+description too — so a request always produces a complete record. The
+  error-code system is **business-domain** (code sets, panic→code mapping,
+  semantics); log4go only (a) carries it as a normal field (`WithString(
+  "error_code", …)`) and (b) ensures a panic still emits the record via
+  `log4go.Recover` (log+stack at CRITICAL in the deferred handler, then the
+  business sets the code and the record ships). log4go does not define codes.
+
 ## Operations (dev vs prod, and the enabler)
 
 - **Dev/test**: `FullSampling` (default) — see everything, no surprises.
