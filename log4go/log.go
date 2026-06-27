@@ -390,6 +390,34 @@ type Stopper interface {
 	Stop()
 }
 
+// RuntimeConfig is the hot, lock-free configuration surface of a Logger. Every
+// method takes effect on the next record via atomic loads on the delivery path —
+// no mutex, no stall — so any of them is safe to call at any time, including
+// under extreme throughput (millions of records/sec, as in real-time ad
+// serving). It is the runtime counterpart to SetupLog/Reload (which rebuild
+// writers from a full LogConfig).
+//
+// Use it for live, non-destructive toggles that must NOT reconfigure writers:
+// bump the level for debugging (SetLevel), switch text/JSON (SetFormat), enable
+// caller/func names (WithCaller/WithFuncName), or attach a static field
+// (SetBaseField). None of these touch writer goroutines or connections, so they
+// cost nothing on the hot path. *Logger satisfies this interface; obtain it via
+// Logger.Runtime or the package-level Runtime.
+//
+// Note: SetBaseField/SetBaseFields use copy-on-write atomic swap — safe to call
+// concurrently with logging (no data race), but intended for infrequent updates
+// (startup env fields, occasional additions), not high-frequency mutation.
+type RuntimeConfig interface {
+	SetLevel(level int)
+	SetFormat(format LogFormat)
+	SetLayout(layout string)
+	WithCaller(enable bool)
+	WithFuncName(enable bool)
+	WithFullPath(enable bool)
+	SetBaseField(key string, val interface{})
+	SetBaseFields(m map[string]interface{})
+}
+
 // Logger logger define
 type Logger struct {
 	writers         atomic.Value // []Writer, copy-on-write for lock-free reads
@@ -402,6 +430,12 @@ type Logger struct {
 	rotateTimer time.Duration // timer to rotate logger record for writer
 
 	c chan bool
+
+	// quit is closed to retire the logger (Close/Reload). enqueue selects on it so
+	// a retiring logger drops in-flight records instead of racing a channel close.
+	// Shared by pointer-value across a clone tree (like c), so retiring the root
+	// retires every child. records is NEVER closed.
+	quit chan struct{}
 
 	layout         atomic.Pointer[string]
 	level          atomic.Int32
@@ -466,6 +500,7 @@ func newLoggerWithRecords(records chan *Record) *Logger {
 
 	l.records = records
 	l.c = make(chan bool, 1)
+	l.quit = make(chan struct{})
 	l.recordsByLevel = new([TRACE + 1]uint64)
 	l.baseFields = &baseFieldsHolder{} // shared with every clone (see clone)
 	l.level.Store(int32(DEBUG))
@@ -535,7 +570,11 @@ func Metrics() LoggerMetrics { return defaultLogger().Metrics() }
 
 // Close close logger
 func (l *Logger) Close() {
-	close(l.records)
+	// Retire the logger by closing quit (NOT records): concurrent senders select
+	// on quit and drop instead of racing a channel close, so Reload/Close under
+	// traffic is race-free and panic-free. The bootstrap drains in-flight records
+	// and exits; records is left open and GC'd with the logger.
+	close(l.quit)
 	<-l.c
 
 	for _, w := range l.snapshotWriters() {
@@ -558,6 +597,30 @@ func (l *Logger) Close() {
 			}
 		}
 	}
+}
+
+// Runtime returns the hot, lock-free configuration surface of this Logger
+// (SetLevel / WithCaller / SetBaseField / ...). See RuntimeConfig.
+func (l *Logger) Runtime() RuntimeConfig { return l }
+
+// inheritRuntimeState copies non-config runtime state from prev into l: base
+// fields, the caller/func-name toggles, and the time layout. These are not part
+// of LogConfig, so Reload carries them over rather than resetting them —
+// init-time base fields (hostname, env, instance id) and any live debugging
+// toggles survive a config reload. The writer set, level, format and full-path
+// are NOT inherited; applyConfig reapplies them from LogConfig.
+func (l *Logger) inheritRuntimeState(prev *Logger) {
+	if prev == nil {
+		return
+	}
+	if p := prev.baseFields.v.Load(); p != nil {
+		cp := make([]field, len(*p))
+		copy(cp, *p)
+		l.baseFields.v.Store(&cp)
+	}
+	l.hasCaller.Store(prev.hasCaller.Load())
+	l.withFuncName.Store(prev.withFuncName.Load())
+	l.layout.Store(prev.layout.Load())
 }
 
 // SetLayout set the logger time layout
@@ -661,6 +724,7 @@ func (l *Logger) clone() *Logger {
 		flushTimer:      l.flushTimer,
 		rotateTimer:     l.rotateTimer,
 		c:               l.c,
+		quit:            l.quit,   // shared: retiring the root retires every child
 		fields:          l.fields, // shared read-only; With copies before appending
 		sampler:         l.sampler,
 		ctxExtractor:    l.ctxExtractor,
@@ -1022,51 +1086,85 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 		r.formattedBytes = r.Logfmt()
 	}
 
-	l.records <- r
+	l.enqueue(r)
+}
+
+// enqueue delivers r to the bootstrap goroutine. The send is blocking under
+// normal load (plain back-pressure, identical to before), but it also selects on
+// quit: when the logger is retired (Close/Reload closes quit), the quit case is
+// ready and the record is dropped instead of racing a channel close. So a Reload
+// racing traffic can neither panic (records is never closed) nor deadlock (quit
+// always provides an exit), and is data-race-free. Lost records on retirement are
+// expected — the logger is going away and the new one handles new traffic.
+func (l *Logger) enqueue(r *Record) {
+	select {
+	case l.records <- r:
+	case <-l.quit:
+	}
 }
 
 func bootstrapLogWriter(logger *Logger) {
-	var (
-		r  *Record
-		ok bool
-	)
-
-	if r, ok = <-logger.records; !ok {
-		logger.c <- true
-		return
+	// deliver writes one record to every registered writer, then returns it to
+	// the pool with slice refs cleared so a long-lived fields slice or JSON buffer
+	// is not pinned by a pooled record.
+	deliver := func(r *Record) {
+		for _, w := range logger.snapshotWriters() {
+			if err := w.Write(r); err != nil {
+				log.Printf("%v\n", err)
+			}
+		}
+		r.fields = nil
+		r.formattedBytes = nil
+		recordPool.Put(r)
+	}
+	// drainAndExit reaps any records buffered at retirement so a Reload/shutdown
+	// does not lose in-flight records, then signals completion. New sends select
+	// on quit and drop, so this only reaps what is already buffered.
+	drainAndExit := func() {
+		for {
+			select {
+			case r, ok := <-logger.records:
+				if !ok {
+					logger.c <- true
+					return
+				}
+				deliver(r)
+			default:
+				logger.c <- true
+				return
+			}
+		}
 	}
 
-	for _, w := range logger.snapshotWriters() {
-		if err := w.Write(r); err != nil {
-			log.Printf("%v\n", err)
+	// Wait for the first record OR retirement (quit), so a logger retired before
+	// any record arrives exits promptly. Either way, buffered records are drained
+	// (never lost to a quit that races the first receive). (records may also be
+	// closed by a legacy caller; that path is preserved.)
+	select {
+	case r, ok := <-logger.records:
+		if !ok {
+			logger.c <- true
+			return
 		}
+		deliver(r)
+	case <-logger.quit:
+		drainAndExit()
+		return
 	}
 
 	flushTimer := time.NewTimer(logger.flushTimer)
 	rotateTimer := time.NewTimer(logger.rotateTimer)
+	defer flushTimer.Stop()
+	defer rotateTimer.Stop()
 
 	for {
 		select {
-		case r, ok = <-logger.records:
+		case r, ok := <-logger.records:
 			if !ok {
 				logger.c <- true
 				return
 			}
-
-			for _, w := range logger.snapshotWriters() {
-				if err := w.Write(r); err != nil {
-					log.Printf("%v\n", err)
-				}
-			}
-
-			// Drop the fields + formattedBytes references before returning to the pool
-			// so a logger's long-lived fields slice and the JSON buffer are not
-			// pinned by a pooled record. r.msg/time/file are scalars and
-			// overwritten on reuse, but r.fields/r.formattedBytes are slice headers
-			// that would otherwise leak stale data into the next record.
-			r.fields = nil
-			r.formattedBytes = nil
-			recordPool.Put(r)
+			deliver(r)
 
 		case <-flushTimer.C:
 			for _, w := range logger.snapshotWriters() {
@@ -1087,6 +1185,10 @@ func bootstrapLogWriter(logger *Logger) {
 				}
 			}
 			rotateTimer.Reset(logger.rotateTimer)
+
+		case <-logger.quit:
+			drainAndExit()
+			return
 		}
 	}
 }
@@ -1121,6 +1223,10 @@ func SetLayout(layout string) {
 func SetLevel(lvl int) {
 	defaultLogger().SetLevel(lvl)
 }
+
+// Runtime returns the hot, lock-free configuration surface (RuntimeConfig) of the
+// package singleton, for live non-destructive toggles under any load.
+func Runtime() RuntimeConfig { return defaultLogger().Runtime() }
 
 // SetFormat selects the record serialization format on the package singleton
 // (FormatText default, FormatJSON for structured/machine-readable logs). Should

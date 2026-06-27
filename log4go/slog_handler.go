@@ -77,7 +77,7 @@ func (h *SlogHandler) Handle(_ context.Context, sr slog.Record) error {
 		r.formattedBytes = r.Logfmt()
 	}
 
-	h.logger.records <- r
+	h.logger.enqueue(r)
 	return nil
 }
 

@@ -131,15 +131,24 @@ var reloadMu sync.Mutex
 // Reload atomically reconfigures the package singleton from lc. It builds a fresh
 // logger with the new config and only then swaps it in for the current singleton;
 // the previous singleton is then drained and stopped, so in-flight records are
-// not lost and no writer goroutine/handle/connection leaks.
+// not lost and no writer goroutine/handle/connection leaks. The swap itself is
+// an atomic pointer write; the delivery path reads writers lock-free, so logging
+// is never blocked — safe under extreme concurrency.
 //
-// Semantics: FULL REPLACE, not a merge. The new logger has EXACTLY the writers
-// enabled in lc — writers absent from the new config (including any registered
-// directly via Register) are stopped and dropped. Level, format, full-path and
-// GlobalLevel are re-applied from lc. State that is NOT part of LogConfig is
-// reset to defaults: base fields (SetBaseField/SetBaseFields) and the caller and
-// func-name toggles (WithCaller/WithFuncName) do not carry over — re-apply them
-// after Reload if still wanted.
+// Semantics: config-driven state is FULL-REPLACED (not merged) — the new logger
+// has EXACTLY the writers enabled in lc (writers absent from the new config,
+// including any registered directly via Register, are stopped and dropped), and
+// level, format, full-path and GlobalLevel are re-applied from lc.
+//
+// State NOT in LogConfig is PRESERVED from the previous logger, so init-time data
+// survives a reload: base fields (SetBaseField — hostname, env, instance id), the
+// caller/func-name toggles (WithCaller/WithFuncName), and the time layout are
+// carried over (inheritRuntimeState).
+//
+// For lightweight changes that should NOT reconfigure writers — bumping the level
+// to debug, toggling caller/func-name mid-traffic — prefer the RuntimeConfig
+// surface (Logger.Runtime / log4go.Runtime): SetLevel/WithCaller/WithFuncName/
+// SetBaseField apply instantly and atomically with no writer re-init.
 //
 // If any writer fails to start, the running logger is left untouched and the
 // error is returned — no partial swap, no log gap on success.
@@ -147,11 +156,13 @@ func Reload(lc LogConfig) error {
 	reloadMu.Lock()
 	defer reloadMu.Unlock()
 
+	prev := loggerDefault.Load()
 	fresh := newDefaultLoggerInstance()
 	if err := fresh.applyConfig(lc); err != nil {
 		fresh.Close() // stop any writers that did start; keep the current singleton
 		return fmt.Errorf("log4go Reload: %w", err)
 	}
+	fresh.inheritRuntimeState(prev) // carry over base fields + caller/func/layout
 	if old := loggerDefault.Swap(fresh); old != nil {
 		old.Close() // drain in-flight records, then stop old writers
 	}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"go.uber.org/goleak"
 )
@@ -213,10 +214,11 @@ func TestReload_FullReplace_NotAMerge(t *testing.T) {
 	// goleak (deferred) asserts the old file daemon was stopped, not orphaned.
 }
 
-// TestReload_ResetsRuntimeState proves Reload resets state that is NOT part of
-// LogConfig: base fields set via the API (SetBaseField) do not carry over to the
-// fresh logger. The host must re-apply them after Reload if still wanted.
-func TestReload_ResetsRuntimeState(t *testing.T) {
+// TestReload_PreservesRuntimeState proves Reload PRESERVES state that is NOT part
+// of LogConfig: base fields (SetBaseField) and the caller/func toggles set at init
+// or for debugging survive a config reload (inheritRuntimeState). Only the writer
+// set, level, format and full-path are re-applied from the config.
+func TestReload_PreservesRuntimeState(t *testing.T) {
 	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 	defer Close()
 	Close()
@@ -225,6 +227,7 @@ func TestReload_ResetsRuntimeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	SetBaseField("hostname", "host-1")
+	defaultLogger().WithCaller(false) // a throughput/debug toggle set at runtime
 	if got := baseFieldCount(loggerDefault.Load()); got != 1 {
 		t.Fatalf("base field not set: got %d want 1", got)
 	}
@@ -232,7 +235,48 @@ func TestReload_ResetsRuntimeState(t *testing.T) {
 	if err := Reload(LogConfig{Level: "info", ConsoleWriter: ConsoleWriterOptions{Enable: true}}); err != nil {
 		t.Fatalf("Reload: %v", err)
 	}
-	if got := baseFieldCount(loggerDefault.Load()); got != 0 {
-		t.Fatalf("Reload must reset base fields (not in LogConfig): got %d want 0", got)
+	cur := loggerDefault.Load()
+	if got := baseFieldCount(cur); got != 1 {
+		t.Fatalf("Reload must preserve base fields: got %d want 1", got)
+	}
+	if cur.hasCaller.Load() {
+		t.Fatal("Reload must preserve WithCaller(false)")
+	}
+}
+
+// TestBootstrap_LegacyRecordsClose covers the defensive `!ok` arms of
+// bootstrapLogWriter for an externally-closed records channel (records is never
+// closed by log4go itself — it retires via quit — but the arms guard legacy
+// callers). (a) main loop: records closed mid-stream. (b) drainAndExit: records
+// closed while the shutdown drain is reaping a backlog.
+func TestBootstrap_LegacyRecordsClose(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	// (a) main-loop !ok: close records while the bootstrap is running.
+	records := make(chan *Record, 4)
+	l := newLoggerWithRecords(records)
+	records <- &Record{level: INFO, msg: "x"}
+	time.Sleep(20 * time.Millisecond) // let the bootstrap enter the main loop
+	close(records)
+	select {
+	case <-l.c:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bootstrap did not exit after records closed (main loop)")
+	}
+
+	// (b) drainAndExit !ok: fill a backlog, retire via quit, then close records
+	// while the drain is reaping — the drain's receive observes the close.
+	records2 := make(chan *Record, 512)
+	l2 := newLoggerWithRecords(records2)
+	for i := 0; i < 400; i++ {
+		records2 <- &Record{level: INFO, msg: "backlog"}
+	}
+	time.Sleep(20 * time.Millisecond) // let the bootstrap drain some
+	close(l2.quit)                    // retire -> drainAndExit reaps the backlog
+	close(records2)                   // drain observes closed records -> !ok
+	select {
+	case <-l2.c:
+	case <-time.After(2 * time.Second):
+		t.Fatal("bootstrap did not exit after records closed (drain)")
 	}
 }
