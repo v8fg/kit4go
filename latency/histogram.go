@@ -77,10 +77,8 @@ func NewHistogram(opts Options) *Histogram {
 	if !validBoundaries(opts.Boundaries) {
 		return nil
 	}
+	// withDefaults (called above) guarantees Window >= 1s, so secs >= 1.
 	secs := int(opts.Window / time.Second)
-	if secs < 1 {
-		secs = 1
-	}
 	n := len(opts.Boundaries)
 	boundaries := make([]time.Duration, n)
 	copy(boundaries, opts.Boundaries)
@@ -275,10 +273,9 @@ func quantileFromMerged(boundaries []time.Duration, merged []int, total int, q f
 			lo := lowerBound(boundaries, i)
 			hi := boundaries[i]
 			inBucket := target - (running - c)
+			// inBucket is in [1, c] (the target-th sample is somewhere in this
+			// bucket), so frac lands in (0, 1) — interpolate at its midpoint.
 			frac := (float64(inBucket) - 0.5) / float64(c)
-			if frac < 0 {
-				frac = 0
-			}
 			return lo + time.Duration(float64(hi-lo)*frac)
 		}
 	}
