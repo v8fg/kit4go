@@ -2,14 +2,12 @@ package log4go
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"testing"
 	"time"
 
@@ -209,90 +207,6 @@ func Benchmark_FileWriter_AsyncSpill(b *testing.B) {
 // KafKaWriter (mock producer, no real broker)
 // ---------------------------------------------------------------------------
 
-// noopAsyncProducer is a no-op sarama.AsyncProducer for benchmarks/tests. It
-// discards every message on Input() and never produces a Success or Error, so
-// it drives the full KafKaWriter Write -> channel -> daemon -> producer.Input()
-// path WITHOUT a real broker and WITHOUT the sarama mock's expectation-matching
-// (the mock requires exact input counts, which is incompatible with b.N being
-// unknown until the benchmark loop starts). The KafKaWriter daemon drains
-// Successes()/Errors() in goroutines, so Close closes those channels (mirroring
-// the real producer) to let those drainers exit cleanly on Stop.
-type noopAsyncProducer struct {
-	input     chan kafka.Message
-	successes chan kafka.Message
-	errors    chan *sarama.ProducerError
-	quit      chan struct{}
-	closeOnce sync.Once
-}
-
-func newNoopAsyncProducer() *noopAsyncProducer {
-	p := &noopAsyncProducer{
-		input:     make(chan kafka.Message, 1<<16),
-		successes: make(chan kafka.Message, 1<<16),
-		errors:    make(chan *sarama.ProducerError, 1<<16),
-		quit:      make(chan struct{}),
-	}
-	// Drain Input() so the daemon's send never blocks. We deliberately do NOT
-	// re-queue onto Successes: the KafKaWriter daemon's success-drainer is a
-	// bare `for range Successes()` (no body), so it does not need deliveries to
-	// make progress — it just needs the channel closed on shutdown to exit.
-	// Re-queueing would race a Close (send-on-closed) for no benefit.
-	go func() {
-		for {
-			select {
-			case <-p.input:
-				// discard
-			case <-p.quit:
-				return
-			}
-		}
-	}()
-	return p
-}
-
-func (p *noopAsyncProducer) Input() chan<- kafka.Message     { return p.input }
-func (p *noopAsyncProducer) Successes() <-chan kafka.Message { return p.successes }
-func (p *noopAsyncProducer) Errors() <-chan *sarama.ProducerError      { return p.errors }
-
-// AsyncClose signals the Input drainer to stop and closes Successes/Errors so
-// the KafKaWriter daemon's range-loop drainers exit (the real producer does the
-// same on Close). Idempotent via closeOnce.
-func (p *noopAsyncProducer) AsyncClose() {
-	p.closeOnce.Do(func() {
-		close(p.quit)
-		close(p.successes)
-		close(p.errors)
-	})
-}
-
-func (p *noopAsyncProducer) Close() error { p.AsyncClose(); return nil }
-
-// Transaction methods are no-ops: KafKaWriter never uses the transactional API,
-// but sarama's AsyncProducer interface requires them. Each returns the safe
-// "not transactional" result so any accidental call fails loudly upstream.
-var errNoopProducerNotTxn = errors.New("noop producer: transactions not enabled")
-
-func (p *noopAsyncProducer) IsTransactional() bool                   { return false }
-func (p *noopAsyncProducer) TxnStatus() sarama.ProducerTxnStatusFlag { return 0 }
-func (p *noopAsyncProducer) BeginTxn() error                         { return errNoopProducerNotTxn }
-func (p *noopAsyncProducer) CommitTxn() error                        { return errNoopProducerNotTxn }
-func (p *noopAsyncProducer) AbortTxn() error                         { return errNoopProducerNotTxn }
-func (p *noopAsyncProducer) AddOffsetsToTxn(map[string][]*sarama.PartitionOffsetMetadata, string) error {
-	return errNoopProducerNotTxn
-}
-func (p *noopAsyncProducer) AddOffsetsToTxnWithGroupMetadata(map[string][]*sarama.PartitionOffsetMetadata, *sarama.ConsumerGroupMetadata) error {
-	return errNoopProducerNotTxn
-}
-func (p *noopAsyncProducer) AddMessageToTxn(*sarama.ConsumerMessage, string, *string) error {
-	return errNoopProducerNotTxn
-}
-func (p *noopAsyncProducer) AddMessageToTxnWithGroupMetadata(*sarama.ConsumerMessage, *sarama.ConsumerGroupMetadata, *string) error {
-	return errNoopProducerNotTxn
-}
-
-// compile-time: noopAsyncProducer is a sarama.AsyncProducer.
-var _ sarama.AsyncProducer = (*noopAsyncProducer)(nil)
-
 // Benchmark_KafKaWriter_WriteMock measures end-to-end KafKaWriter throughput
 // against a no-op sarama AsyncProducer (no real broker, no mock expectation
 // matching — b.N is unknown until the loop starts). Write builds the JSON
@@ -304,7 +218,7 @@ func Benchmark_KafKaWriter_WriteMock(b *testing.B) {
 		ProducerTopic: "bench", BufferSize: 1 << 14, Level: LevelFlagInfo,
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err != nil {
 		b.Fatal(err)
@@ -561,7 +475,7 @@ func memSinkFor(tb testing.TB, kind string) (Writer, func()) {
 	case "kafka-mock":
 		kw := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "mem", BufferSize: 1 << 14, Level: LevelFlagInfo})
 		kw.producerFactory = func() (kafka.Producer, error) {
-			return newNoopAsyncProducer(), nil
+			return newMockKafkaProducer(), nil
 		}
 		_ = kw.Start()
 		return kw, func() { kw.Stop() }

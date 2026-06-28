@@ -33,7 +33,7 @@ func (failCodec) Encode(_ kafka.Message) ([]byte, error) {
 }
 
 func (failCodec) Decode(_ []byte) (kafka.Message, error) {
-	return nil, errors.New("failCodec decode")
+	return kafka.Message{}, errors.New("failCodec decode")
 }
 
 // errWriter is an io.Writer that always returns an error — wired into a
@@ -255,7 +255,7 @@ func Test_decodeSpillFile_DecodeAndTruncatedBody(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatalf("decodeSpillFile want 1 valid record (bad+truncated skipped), got %d", len(out))
 	}
-	got, _ := out[0].Value.Encode()
+	got := out[0].Value
 	if string(got) != "ok" {
 		t.Errorf("decoded value=%q want %q", got, "ok")
 	}
@@ -439,9 +439,7 @@ func Test_KafKaWriter_send_SpillNilSpiller(t *testing.T) {
 // `if k.onEvent != nil { k.onEvent("error", 1) }` branch by driving a real
 // (mock) producer that fails every input, with an onEvent hook installed.
 func Test_KafKaWriter_daemon_ErrorOnEvent(t *testing.T) {
-	cfg := sarama.NewConfig()
-	cfg.Producer.Return.Successes = true
-	mp := newMockFailingProducer() // local failing producer (no broker)
+	mp := func() *mockKafkaProducer { m := newMockKafkaProducer(); m.fail = true; return m }() // local failing producer (no broker)
 
 	var mu sync.Mutex
 	seen := map[string]int64{}
@@ -493,84 +491,11 @@ func Test_KafKaWriter_daemon_ErrorOnEvent(t *testing.T) {
 	}
 }
 
-// mockFailingProducer is a minimal sarama.AsyncProducer that emits a
-// ProducerError for every message on Input(). No real broker. It exists purely
-// to drive the daemon's error-drainer + onEvent hook deterministically.
-type mockFailingProducer struct {
-	input     chan kafka.Message
-	successes chan kafka.Message
-	errors    chan *sarama.ProducerError
-	quit      chan struct{}
-	closeOnce sync.Once
-	wg        sync.WaitGroup
-}
-
-func newMockFailingProducer() *mockFailingProducer {
-	p := &mockFailingProducer{
-		input:     make(chan kafka.Message, 1<<12),
-		successes: make(chan kafka.Message, 1<<12),
-		errors:    make(chan *sarama.ProducerError, 1<<12),
-		quit:      make(chan struct{}),
-	}
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
-		for {
-			select {
-			case m := <-p.input:
-				select {
-				case p.errors <- &sarama.ProducerError{Msg: m, Err: errors.New("mock fail")}:
-				case <-p.quit:
-					return
-				}
-			case <-p.quit:
-				return
-			}
-		}
-	}()
-	return p
-}
-
-func (p *mockFailingProducer) Input() chan<- kafka.Message     { return p.input }
-func (p *mockFailingProducer) Successes() <-chan kafka.Message { return p.successes }
-func (p *mockFailingProducer) Errors() <-chan *sarama.ProducerError      { return p.errors }
-func (p *mockFailingProducer) Close() error {
-	p.closeOnce.Do(func() {
-		close(p.quit)
-		p.wg.Wait()
-		close(p.successes)
-		close(p.errors)
-	})
-	return nil
-}
-func (p *mockFailingProducer) AsyncClose()                             { _ = p.Close() }
-func (p *mockFailingProducer) IsTransactional() bool                   { return false }
-func (p *mockFailingProducer) TxnStatus() sarama.ProducerTxnStatusFlag { return 0 }
-func (p *mockFailingProducer) BeginTxn() error                         { return errNoopProducerNotTxn }
-func (p *mockFailingProducer) CommitTxn() error                        { return errNoopProducerNotTxn }
-func (p *mockFailingProducer) AbortTxn() error                         { return errNoopProducerNotTxn }
-func (p *mockFailingProducer) AddOffsetsToTxn(map[string][]*sarama.PartitionOffsetMetadata, string) error {
-	return errNoopProducerNotTxn
-}
-func (p *mockFailingProducer) AddOffsetsToTxnWithGroupMetadata(map[string][]*sarama.PartitionOffsetMetadata, *sarama.ConsumerGroupMetadata) error {
-	return errNoopProducerNotTxn
-}
-func (p *mockFailingProducer) AddMessageToTxn(*sarama.ConsumerMessage, string, *string) error {
-	return errNoopProducerNotTxn
-}
-func (p *mockFailingProducer) AddMessageToTxnWithGroupMetadata(*sarama.ConsumerMessage, *sarama.ConsumerGroupMetadata, *string) error {
-	return errNoopProducerNotTxn
-}
-
-// compile-time: mockFailingProducer is a sarama.AsyncProducer.
-var _ sarama.AsyncProducer = (*mockFailingProducer)(nil)
-
 // ===========================================================================
 // kafka_writer.go — Start branches: BufferSize default + spill chain fallbacks
 // ===========================================================================
 
 // Test_KafKaWriter_Start_ValidVersionOverride covers the SpecifyVersion success
-// branch: a sarama-parseable VersionStr sets cfg.Version to the parsed value
 // (sarama only accepts certain dotted forms; "0.10.0.1" is one that parses).
 func Test_KafKaWriter_Start_ValidVersionOverride(t *testing.T) {
 	w := NewKafKaWriter(KafKaWriterOptions{
@@ -579,7 +504,7 @@ func Test_KafKaWriter_Start_ValidVersionOverride(t *testing.T) {
 		SpecifyVersion: true, VersionStr: "0.10.0.1",
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -596,7 +521,7 @@ func Test_KafKaWriter_Start_BufferSizeDefault(t *testing.T) {
 		ProducerTopic: "cov", BufferSize: 0, // <= 1 -> default 1024
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -624,7 +549,7 @@ func Test_KafKaWriter_Start_SpillChain_FileErrorFallback(t *testing.T) {
 		SpillSize: 4, SpillDir: blocker + "/sub", // file spiller fails -> ring fallback
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -650,7 +575,7 @@ func Test_KafKaWriter_Start_SpillChain_NoDir(t *testing.T) {
 		SpillSize: 4, // no SpillDir -> ring only
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -700,7 +625,7 @@ func Test_KafKaWriter_Start_ResumeSpillFullChannel(t *testing.T) {
 			OverflowPolicy: "spill", SpillType: "file", SpillDir: sub, SpillMaxBytes: 1 << 20,
 		})
 		w.producerFactory = func() (kafka.Producer, error) {
-			return newNoopAsyncProducer(), nil
+			return newMockKafkaProducer(), nil
 		}
 		if err := w.Start(); err != nil {
 			t.Fatalf("Start: %v", err)
@@ -745,7 +670,7 @@ func Test_KafKaWriter_Start_ResumeSpillFullChannel(t *testing.T) {
 			SpillMaxBytes: int64(len(hdr) + len(oneRec)),
 		})
 		w.producerFactory = func() (kafka.Producer, error) {
-			return newNoopAsyncProducer(), nil
+			return newMockKafkaProducer(), nil
 		}
 		if err := w.Start(); err != nil {
 			t.Fatalf("Start: %v", err)
@@ -783,7 +708,7 @@ func Test_KafKaWriter_Stop_NilSpiller(t *testing.T) {
 		ProducerTopic: "cov", BufferSize: 8, OverflowPolicy: "drop",
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -816,20 +741,19 @@ func Test_KafKaWriter_Stop_ProducerCloseError(t *testing.T) {
 // closeErrorProducer is a no-op AsyncProducer whose Close always returns an
 // error, to drive the Stop producer.Close-error log branch.
 type closeErrorProducer struct {
-	*noopAsyncProducer
+	*mockKafkaProducer
 }
 
 func newCloseErrorProducer() *closeErrorProducer {
-	return &closeErrorProducer{noopAsyncProducer: newNoopAsyncProducer()}
+	return &closeErrorProducer{mockKafkaProducer: newMockKafkaProducer()}
 }
 
 func (p *closeErrorProducer) Close() error {
-	p.noopAsyncProducer.AsyncClose() // still drain so daemon exits cleanly
+	p.mockKafkaProducer.Close() // still drain so daemon exits cleanly
 	return errors.New("close failed")
 }
 
 // compile-time: closeErrorProducer is a sarama.AsyncProducer.
-var _ sarama.AsyncProducer = (*closeErrorProducer)(nil)
 
 // ===========================================================================
 // kafka_writer.go — Metrics with non-nil spiller

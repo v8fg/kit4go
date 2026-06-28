@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IBM/sarama"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 type errStr string
@@ -400,7 +400,7 @@ func Test_KafKaWriter_Init(t *testing.T) {
 		OverflowPolicy: "drop",
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Init(); err != nil {
 		t.Fatalf("Init: %v", err)

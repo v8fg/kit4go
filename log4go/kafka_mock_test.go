@@ -48,8 +48,8 @@ func (m *mockKafkaProducer) Metrics() kafka.ProducerMetrics {
 }
 
 func (m *mockKafkaProducer) SetOnEvent(fn func(kafka.ProducerEvent)) { m.onEvent = fn }
-func (m *mockKafkaProducer) Name() string                           { return "mock" }
-func (m *mockKafkaProducer) Backend() string                        { return "mock" }
+func (m *mockKafkaProducer) Name() string                            { return "mock" }
+func (m *mockKafkaProducer) Backend() string                         { return "mock" }
 
 func (m *mockKafkaProducer) Len() int {
 	m.mu.Lock()

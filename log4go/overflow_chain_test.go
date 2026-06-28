@@ -118,7 +118,7 @@ func Test_ProducerMsgCodec_RoundTrip(t *testing.T) {
 	if m2.Topic != m.Topic {
 		t.Errorf("topic %q vs %q", m2.Topic, m.Topic)
 	}
-	val, _ := m2.Value.Encode()
+	val := m2.Value
 	if string(val) != "payload" {
 		t.Errorf("value %q", val)
 	}

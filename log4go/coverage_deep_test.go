@@ -492,7 +492,7 @@ func Test_KafKaWriter_Write_EmptyAndLevelFiltered(t *testing.T) {
 // Test_KafKaWriter_drainSpillToProducer pushes spilled records straight to the
 // producer on shutdown via the no-op producer.
 func Test_KafKaWriter_drainSpillToProducer(t *testing.T) {
-	p := newNoopAsyncProducer()
+	p := newMockKafkaProducer()
 	defer p.Close()
 	w := &KafKaWriter{
 		policy:   OverflowSpill,
@@ -1013,8 +1013,8 @@ func Test_KafKaWriter_Start_SpillRingAndChain(t *testing.T) {
 		spill    string
 		wantType string
 	}{
-		{"ring", "ring", "*log4go.RingSpiller[*github.com/IBM/sarama.ProducerMessage]"},
-		{"chain", "", "*log4go.ChainedSpiller[*github.com/IBM/sarama.ProducerMessage]"},
+		{"ring", "ring", "*log4go.RingSpiller[github.com/v8fg/kit4go/kafka.Message]"},
+		{"chain", "", "*log4go.ChainedSpiller[github.com/v8fg/kit4go/kafka.Message]"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1025,7 +1025,7 @@ func Test_KafKaWriter_Start_SpillRingAndChain(t *testing.T) {
 				OverflowPolicy: "spill", SpillType: c.spill, SpillSize: 4, SpillDir: dir,
 			})
 			w.producerFactory = func() (kafka.Producer, error) {
-				return newNoopAsyncProducer(), nil
+				return newMockKafkaProducer(), nil
 			}
 			if err := w.Start(); err != nil {
 				t.Fatalf("Start: %v", err)
@@ -1047,7 +1047,7 @@ func Test_KafKaWriter_Start_VersionOverride(t *testing.T) {
 		SpecifyVersion: true, VersionStr: "2.5.0.0",
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -1061,7 +1061,7 @@ func Test_KafKaWriter_Start_VersionOverride(t *testing.T) {
 		SpecifyVersion: true, VersionStr: "not-a-version",
 	})
 	w2.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w2.Start(); err != nil {
 		t.Fatalf("Start with bad version: %v", err)
@@ -1099,7 +1099,7 @@ func Test_KafKaWriter_Start_SpillFileError(t *testing.T) {
 		OverflowPolicy: "spill", SpillType: "file", SpillDir: blocker + "/sub",
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err == nil {
 		w.Stop()
@@ -1123,7 +1123,7 @@ func Test_KafKaWriter_Start_SpillResumeOnStartup(t *testing.T) {
 	// covered elsewhere. Here we just confirm Start with ring resume is a no-op
 	// when the spiller is empty (the common path).
 	w.producerFactory = func() (kafka.Producer, error) {
-		return newNoopAsyncProducer(), nil
+		return newMockKafkaProducer(), nil
 	}
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -1200,10 +1200,10 @@ func Test_AppendLogfmtValue_Escapes(t *testing.T) {
 // Decode round-trip including Timestamp reconstruction.
 func Test_ProducerMsgCodec_FullRoundTrip(t *testing.T) {
 	ts := time.Unix(1700000000, 123456789)
-	in := &sarama.ProducerMessage{
+	in := kafka.Message{
 		Topic:     "full",
-		Key:       sarama.StringEncoder("my-key"),
-		Value:     sarama.StringEncoder("my-value"),
+		Key:       []byte("my-key"),
+		Value:     []byte("my-value"),
 		Timestamp: ts,
 	}
 	b, err := ProducerMsgCodec.Encode(in)
@@ -1217,11 +1217,11 @@ func Test_ProducerMsgCodec_FullRoundTrip(t *testing.T) {
 	if out.Topic != "full" {
 		t.Errorf("Topic=%q want full", out.Topic)
 	}
-	kb, _ := out.Key.Encode()
+	kb := out.Key
 	if string(kb) != "my-key" {
 		t.Errorf("Key=%q want my-key", kb)
 	}
-	vb, _ := out.Value.Encode()
+	vb := out.Value
 	if string(vb) != "my-value" {
 		t.Errorf("Value=%q want my-value", vb)
 	}
@@ -1238,12 +1238,12 @@ func Test_ProducerMsgCodec_DecodeBadJSON(t *testing.T) {
 }
 
 // Test_ProducerMsgCodec_Encode_KeyEncodeError covers the branch where
-// msg.Key.Encode() returns an error (Key is silently dropped).
+// msg.Key returns an error (Key is silently dropped).
 func Test_ProducerMsgCodec_Encode_KeyEncodeError(t *testing.T) {
 	// A sarama.Encoder returning an error is hard to construct without a custom
 	// type; instead cover the nil-Key + nil-Value + zero-Timestamp minimal path,
 	// which exercises all three "skip" branches at once.
-	in := &sarama.ProducerMessage{Topic: "min"}
+	in := kafka.Message{Topic: "min"}
 	b, err := ProducerMsgCodec.Encode(in)
 	if err != nil {
 		t.Fatalf("Encode minimal: %v", err)

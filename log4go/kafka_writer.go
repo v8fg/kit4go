@@ -3,6 +3,7 @@ package log4go
 import (
 	"context"
 	"log"
+	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -389,11 +390,34 @@ func (k *KafKaWriter) drainSpill() {
 	}
 }
 
+// producerNotNil reports whether the producer is set to a non-nil value,
+// guarding against the typed-nil-interface gotcha (a non-nil interface holding
+// a nil pointer).
+func (k *KafKaWriter) producerNotNil() bool {
+	return k.producer != nil && !reflect.ValueOf(k.producer).IsNil()
+}
+
 // daemon forwards channel messages to the producer and periodically drains the
 // spiller so recovered records get re-sent. Success/error accounting is via the
-// kafka.Producer OnEvent hook (installed in Start).
+// kafka.Producer OnEvent hook (installed at daemon start, below).
 func (k *KafKaWriter) daemon() {
 	k.run.Store(true)
+
+	// install the error-accounting hook (replaces the old sarama Errors() drain
+	// goroutine). Done here rather than Start() so any caller that runs the
+	// daemon (incl. tests that bypass Start) gets the hook wired. Guard against
+	// nil producer for test setups that exercise overflow without a real daemon.
+	if k.producerNotNil() {
+		k.producer.SetOnEvent(func(e kafka.ProducerEvent) {
+			if e.Name == "error" {
+				atomic.AddUint64(&k.errored, 1)
+				if k.onEvent != nil {
+					k.onEvent("error", 1)
+				}
+				log.Printf("[log4go] kafka producer err: %v", e.Err)
+			}
+		})
+	}
 
 	ticker := time.NewTicker(k.drainInterval)
 	defer ticker.Stop()
@@ -406,7 +430,9 @@ func (k *KafKaWriter) daemon() {
 				k.quit <- struct{}{}
 				return
 			}
-			_ = k.producer.Send(context.Background(), mes)
+			if k.producerNotNil() {
+				_ = k.producer.Send(context.Background(), mes)
+			}
 			atomic.AddUint64(&k.sent, 1)
 			if k.onEvent != nil {
 				k.onEvent("sent", 1)
@@ -450,18 +476,6 @@ func (k *KafKaWriter) Start() (err error) {
 		log.Printf("[log4go] kafka.NewProducer err, message=%s", err.Error())
 		return err
 	}
-
-	// install OnEvent for success/error accounting (replaces the sarama
-	// Successes()/Errors() drain goroutines).
-	k.producer.SetOnEvent(func(e kafka.ProducerEvent) {
-		if e.Name == "error" {
-			atomic.AddUint64(&k.errored, 1)
-			if k.onEvent != nil {
-				k.onEvent("error", 1)
-			}
-			log.Printf("[log4go] kafka producer err: %v", e.Err)
-		}
-	})
 
 	size := k.options.BufferSize
 	if size <= 1 {
@@ -518,8 +532,10 @@ func (k *KafKaWriter) Stop() {
 	}
 	close(k.messages)
 	<-k.quit
-	if err := k.producer.Close(); err != nil {
-		log.Printf("[log4go] kafkaWriter stop error: %v", err.Error())
+	if k.producerNotNil() {
+		if err := k.producer.Close(); err != nil {
+			log.Printf("[log4go] kafkaWriter stop error: %v", err.Error())
+		}
 	}
 	if k.spiller != nil {
 		_ = k.spiller.Close()

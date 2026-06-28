@@ -7,7 +7,7 @@ import (
 )
 
 func spillerMsg(topic, val string) kafka.Message {
-	return &sarama.ProducerMessage{Topic: topic, Value: sarama.StringEncoder(val)}
+	return kafka.Message{Topic: topic, Value: []byte(val)}
 }
 
 // Test_RingSpiller_PushDrain verifies FIFO ordering, overwrite-oldest when full,
@@ -27,7 +27,7 @@ func Test_RingSpiller_PushDrain(t *testing.T) {
 	// oldest two survivors are b,c,d in FIFO order
 	want := []string{"b", "c", "d"}
 	for i, w := range want {
-		got, _ := out[i].Value.Encode()
+		got := out[i].Value
 		if string(got) != w {
 			t.Errorf("out[%d]=%q want %q", i, got, w)
 		}
@@ -70,7 +70,7 @@ func Test_FileSpiller_PushDrain(t *testing.T) {
 	}
 	want := []string{"x", "y", "z"}
 	for i, w := range want {
-		got, _ := out[i].Value.Encode()
+		got := out[i].Value
 		if string(got) != w {
 			t.Errorf("out[%d]=%q want %q", i, got, w)
 		}

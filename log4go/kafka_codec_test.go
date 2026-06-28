@@ -4,8 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IBM/sarama"
-	"github.com/IBM/sarama/mocks"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 func TestKafkaCodec_JSON_Default(t *testing.T) {
@@ -64,13 +63,10 @@ func TestKafkaCodec_ContentTypes(t *testing.T) {
 // codec to each KafKaWriter (proto → JSON via nil), and skips non-Kafka writers
 // without panic. Uses a sarama mock producer so Register→Start needs no broker.
 func TestSetKafkaCodec_PackageLevel_AppliesToRegisteredWriters(t *testing.T) {
-	cfg := sarama.NewConfig()
-	cfg.Producer.Return.Successes = true
-	mp := mocks.NewAsyncProducer(t, cfg)
 
 	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	w.producerFactory = func() (kafka.Producer, error) {
-		return mp, nil
+		return newMockKafkaProducer(), nil
 	}
 
 	root := newLoggerWithRecords(make(chan *Record, 4))

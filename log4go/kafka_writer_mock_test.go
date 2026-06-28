@@ -1,26 +1,21 @@
 package log4go
 
 import (
-	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/IBM/sarama"
-	"github.com/IBM/sarama/mocks"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 // Test_KafKaWriter_EndToEndMockProducer drives the full Write -> channel ->
 // daemon -> producer.Input() path against a sarama mock AsyncProducer (no real
 // broker). It also asserts the sent counter and the real-time onEvent hook.
 func Test_KafKaWriter_EndToEndMockProducer(t *testing.T) {
-	cfg := sarama.NewConfig()
-	cfg.Producer.Return.Successes = true
-	mp := mocks.NewAsyncProducer(t, cfg)
+	mp := newMockKafkaProducer()
 
 	const n = 200
 	for i := 0; i < n; i++ {
-		mp.ExpectInputAndSucceed()
 	}
 
 	var sentEvents int64
@@ -68,14 +63,10 @@ func Test_KafKaWriter_EndToEndMockProducer(t *testing.T) {
 
 // Test_KafKaWriter_MockProducerErrors verifies error accounting via the mock.
 func Test_KafKaWriter_MockProducerErrors(t *testing.T) {
-	cfg := sarama.NewConfig()
-	cfg.Producer.Return.Successes = true
-	mp := mocks.NewAsyncProducer(t, cfg)
+	mp := newMockKafkaProducer()
+	mp.fail = true // every Send fires an error event
 
 	const n = 50
-	for i := 0; i < n; i++ {
-		mp.ExpectInputAndFail(errors.New("request timeout"))
-	}
 
 	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 1024})
 	w.producerFactory = func() (kafka.Producer, error) {

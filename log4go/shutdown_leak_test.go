@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IBM/sarama"
 	"go.uber.org/goleak"
+
+	"github.com/v8fg/kit4go/kafka"
 )
 
 // This file rigorously verifies shutdown cleanliness: no goroutine, channel, or
@@ -24,7 +25,7 @@ func newStartedMockKafka(t *testing.T) *KafKaWriter {
 	t.Helper()
 	kw := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	kw.producerFactory = func() (kafka.Producer, error) {
-		return newMockFailingProducer(), nil
+		return func() *mockKafkaProducer { m := newMockKafkaProducer(); m.fail = true; return m }(), nil
 	}
 	if err := kw.Start(); err != nil {
 		t.Fatalf("kafka Start: %v", err)
