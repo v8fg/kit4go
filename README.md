@@ -23,8 +23,10 @@
 - [x] [file](file) base file ops.
 - [x] [ip](ip) parse, match, convert, info.
 - [x] [json](json) support multi json packages.
+- [x] [log4go](log4go) async structured logging: console/file/kafka/net/io writers, structured fields (With/WithField/WithFields), JSON format (FormatJSON), sampling, context binding (zerolog-style), request-id middleware, generic overflow (ring→file→drop), crash resume, metrics + webhook alerts, multi-core ShardLogger, switchable JSON codec (goccy/std/sonic), ~1M qps/core (no-caller). See [log4go/PERFORMANCE.md](log4go/PERFORMANCE.md).
 - [x] [number](number) round, bytes convert.
 - [x] [otp](otp) `TOTP`, `HOTP`.
+- [x] [postgres](postgres) pgx pool wrapper (pure Go, cross-platform).
 - [x] [random](random) rand, random.
 - [x] [str](str) common string utils.
 - [x] [uuid](uuid) requestID, go.uuid, ksuid, xid.
@@ -37,6 +39,12 @@
 ## Notes
 
 > If test failed, maybe effected by the inline, you can try: `go test -v -gcflags=all=-l xxx_test.go`.
+
+> Error-path tests use injectable interfaces (e.g. `file.FS`, `otp.RandomReader`,
+> `ip.AddrLookup`, `random.CryptoSource`) with [mockery](https://github.com/vektra/mockery)
+> mocks instead of runtime monkey-patching. Regenerate mocks with
+> `go generate ./...` (mockery v2) after editing those interfaces. Each interface
+> has a `//go:generate mockery ...` directive and a committed `mock_*.go`.
 
 ## CMD
 
