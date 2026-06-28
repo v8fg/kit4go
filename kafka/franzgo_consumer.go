@@ -47,7 +47,7 @@ func (s *franzConsumerGroup) Consume(ctx context.Context, topics []string, handl
 		}
 		s.cl = cl
 	}
-	for {
+	for i := 0; ; i++ {
 		if ctxDone(ctx) {
 			return ctx.Err()
 		}
@@ -165,7 +165,7 @@ func (s *franzPartitionConsumer) Messages() <-chan Message {
 }
 
 func (s *franzPartitionConsumer) pump(ctx context.Context, handler MessageHandler, out chan Message) error {
-	for {
+	for i := 0; ; i++ {
 		if ctxDone(ctx) {
 			return ctx.Err()
 		}

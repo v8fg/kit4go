@@ -34,6 +34,8 @@ func offsetToKgo(o int64) kgo.Offset {
 func kgoProducerOpts(o Options) []kgo.Opt {
 	return []kgo.Opt{
 		kgo.SeedBrokers(o.Brokers...),
+		kgo.AllowAutoTopicCreation(),
+		kgo.RecordRetries(5), // retry on UNKNOWN_TOPIC_OR_PART (auto-create race)
 	}
 }
 
@@ -54,6 +56,7 @@ func kgoConsumerGroupOpts(o Options) []kgo.Opt {
 		kgo.ConsumerGroup(o.GroupID),
 		kgo.AutoCommitMarks(),
 		kgo.ConsumeResetOffset(reset),
+		kgo.AllowAutoTopicCreation(),
 	}
 }
 

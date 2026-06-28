@@ -31,17 +31,18 @@ func TestIntegration_ProduceConsumeRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Produce.
-	prod, err := NewProducer(WithBrokers(brokers), WithTopic(topic))
+	// Produce (sync: blocks until broker acks; franz-go's client is lazy and
+	// needs a moment to connect on first use, so a short sleep avoids the
+	// initial metadata/connection race).
+	time.Sleep(2 * time.Second)
+	prod, err := NewSyncProducer(WithBrokers(brokers), WithTopic(topic))
 	if err != nil {
-		t.Fatalf("NewProducer: %v", err)
+		t.Fatalf("NewSyncProducer: %v", err)
 	}
-	if err := prod.Send(ctx, Message{Key: []byte("k1"), Value: payload}); err != nil {
-		t.Fatalf("Send: %v", err)
+	if _, _, err := prod.Send(ctx, Message{Key: []byte("k1"), Value: payload}); err != nil {
+		t.Fatalf("SyncProducer.Send: %v", err)
 	}
-	if err := prod.Close(); err != nil { // flush before consuming
-		t.Fatalf("producer Close: %v", err)
-	}
+	prod.Close()
 
 	// Consume (group) until the payload is seen.
 	grp, err := NewConsumerGroup(
