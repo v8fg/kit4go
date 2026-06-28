@@ -93,7 +93,9 @@ func (s *franzConsumerGroup) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	s.cl.Close()
+	if s.cl != nil {
+		s.cl.Close()
+	}
 	s.fire(ConsumerEvent{Name: "close"})
 	return nil
 }

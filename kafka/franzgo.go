@@ -32,11 +32,24 @@ func offsetToKgo(o int64) kgo.Offset {
 // kgoProducerOpts builds kgo client options for a producer. franz-go's default
 // acks is all-ISR; no explicit RequiredAcks needed.
 func kgoProducerOpts(o Options) []kgo.Opt {
-	return []kgo.Opt{
+	opts := []kgo.Opt{
 		kgo.SeedBrokers(o.Brokers...),
 		kgo.AllowAutoTopicCreation(),
 		kgo.RecordRetries(5), // retry on UNKNOWN_TOPIC_OR_PART (auto-create race)
 	}
+	// Batch tuning: ProducerLinger accumulates records before flush (higher
+	// throughput, added latency). MaxBufferedRecords bounds memory. BatchMaxBytes
+	// caps a single batch's byte size.
+	if o.ProducerLinger > 0 {
+		opts = append(opts, kgo.ProducerLinger(o.ProducerLinger))
+	}
+	if o.MaxBufferedRecords > 0 {
+		opts = append(opts, kgo.MaxBufferedRecords(o.MaxBufferedRecords))
+	}
+	if o.BatchMaxBytes > 0 {
+		opts = append(opts, kgo.ProducerBatchMaxBytes(int32(o.BatchMaxBytes)))
+	}
+	return opts
 }
 
 // kgoConsumerGroupOpts builds kgo client options for a consumer group.

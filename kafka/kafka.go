@@ -92,6 +92,14 @@ type Producer interface {
 	// codec encode error). Broker-level delivery is reported asynchronously
 	// via Metrics.Failed / the OnError hook.
 	Send(ctx context.Context, msg Message) error
+	// SendBatch enqueues multiple messages in one call. Both backends benefit:
+	// sarama pushes them to Input() (internal batching via Flush.Frequency);
+	// franz-go calls Produce N times in a tight loop (internal batching via
+	// ProducerLinger accumulates them into fewer, larger requests).
+	//
+	// Use with WithProducerLinger for maximum throughput at the cost of latency.
+	// See SendBatch scenarios and tradeoffs in doc.go.
+	SendBatch(ctx context.Context, msgs []Message) error
 	// Close drains in-flight messages and releases resources. Idempotent.
 	Close() error
 	// Metrics returns a consistent snapshot of the producer counters.
@@ -158,10 +166,23 @@ type PartitionConsumer interface {
 
 // ProducerMetrics is a snapshot of async/sync producer counters.
 type ProducerMetrics struct {
-	Enqueued uint64 // messages handed to the underlying client (Input/SendMessage)
-	Success  uint64 // broker-acked
-	Failed   uint64 // errors drained from the underlying client
-	Bytes    uint64 // bytes acked (sum of Value lengths on success)
+	Enqueued   uint64 // messages handed to the underlying client (Input/SendMessage)
+	Success    uint64 // broker-acked
+	Failed     uint64 // errors drained from the underlying client
+	Bytes      uint64 // bytes acked (sum of Value lengths on success)
+	BatchCount uint64 // SendBatch call count (0 = only Send used, no batching)
+	BatchMax   uint64 // largest single SendBatch size (batch size upper bound)
+	InFlight   uint64 // current in-flight (Enqueued - Success - Failed) — linger backlog / memory
+}
+
+// ComputeInFlight returns Enqueued - Success - Failed, clamped to 0.
+// Exported so callers building custom Metrics snapshots can reuse the formula.
+func ComputeInFlight(enqueued, success, failed uint64) uint64 {
+	inFlight := enqueued - success - failed
+	if success+failed > enqueued {
+		inFlight = 0 // guard against counter skew
+	}
+	return inFlight
 }
 
 // ConsumerMetrics is a snapshot of consumer counters.

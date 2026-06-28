@@ -51,6 +51,13 @@ func (m *mockKafkaProducer) SetOnEvent(fn func(kafka.ProducerEvent)) { m.onEvent
 func (m *mockKafkaProducer) Name() string                            { return "mock" }
 func (m *mockKafkaProducer) Backend() string                         { return "mock" }
 
+func (m *mockKafkaProducer) SendBatch(_ context.Context, msgs []kafka.Message) error {
+	m.mu.Lock()
+	m.sent = append(m.sent, msgs...)
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *mockKafkaProducer) Len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

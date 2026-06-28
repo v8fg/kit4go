@@ -68,6 +68,30 @@ type Options struct {
 	// 256. When full, Send blocks (backpressure); configure up for bursty load.
 	ChannelBufferSize int `json:"channel_buffer_size" mapstructure:"channel_buffer_size"`
 
+	// ProducerLinger is how long the backend waits before flushing a partial
+	// batch. 0 (default) = flush immediately (current behavior, lowest latency).
+	// >0 (e.g. 1ms) = accumulate records for up to this duration before flushing
+	// → larger batches → fewer RPCs → higher throughput, at the cost of added
+	// latency per record. Typical: 1-10ms for high-throughput pipelines.
+	// Pairs with SendBatch for maximum effect. Memory impact: see Metrics.InFlight.
+	//
+	// DATA-LOSS RISK: records buffered during the linger window are lost if the
+	// process crashes before Close() flushes them. Keep linger small (≤10ms) and
+	// always defer Close() on shutdown. Monitor Metrics.InFlight for buffer depth.
+	ProducerLinger time.Duration `json:"producer_linger" mapstructure:"producer_linger"`
+
+	// MaxBufferedRecords caps the number of records buffered in the backend's
+	// internal accumulator before backpressure kicks in (Send/SendBatch blocks).
+	// 0 = use the backend's default (sarama: unlimited via channel buffer;
+	// franz-go: 10,000). Lower this to bound memory; raise it for bursty loads.
+	// Memory bound: MaxBufferedRecords × avg_msg_size.
+	MaxBufferedRecords int `json:"max_buffered_records" mapstructure:"max_buffered_records"`
+
+	// BatchMaxBytes caps a single batch's byte size. 0 = backend default
+	// (sarama: 1MB via MaxMessageBytes; franz-go: 1MB via ProducerBatchMaxBytes).
+	// Larger batches amortize RPC overhead but increase memory per batch.
+	BatchMaxBytes int `json:"batch_max_bytes" mapstructure:"batch_max_bytes"`
+
 	// --- consumer tuning ---
 
 	// ConsumerOffsetInitial is the group's Offsets.Initial (OffsetNewest /
@@ -143,6 +167,15 @@ func WithRetryMax(n int) Option { return func(o *Options) { o.RetryMax = n } }
 
 // WithChannelBufferSize sets the async producer Input() buffer size.
 func WithChannelBufferSize(n int) Option { return func(o *Options) { o.ChannelBufferSize = n } }
+
+// WithProducerLinger sets the batch flush delay (0 = off; 1-10ms typical).
+func WithProducerLinger(d time.Duration) Option { return func(o *Options) { o.ProducerLinger = d } }
+
+// WithMaxBufferedRecords caps the in-flight record count (memory bound).
+func WithMaxBufferedRecords(n int) Option { return func(o *Options) { o.MaxBufferedRecords = n } }
+
+// WithBatchMaxBytes caps a single batch's byte size.
+func WithBatchMaxBytes(n int) Option { return func(o *Options) { o.BatchMaxBytes = n } }
 
 // WithCodec installs a value (de)serialiser.
 func WithCodec(c Codec) Option { return func(o *Options) { o.Codec = c } }

@@ -96,12 +96,35 @@ func (s *saramaSyncProducer) Close() error {
 	return err
 }
 
+func (s *saramaSyncProducer) SendBatch(ctx context.Context, msgs []Message) error {
+	// SyncProducer has no batch advantage (each SendMessage blocks for an ack),
+	// but we implement it for interface conformance — it's just Send in a loop.
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return ErrProducerClosed
+	}
+	for _, msg := range msgs {
+		pm := toSaramaProducerMessage(msg, s.topic)
+		s.enqueued.Add(1)
+		if _, _, err := s.p.SendMessage(pm); err != nil {
+			s.failed.Add(1)
+			return err
+		}
+		s.success.Add(1)
+		s.bytes.Add(uint64(len(msg.Value)))
+	}
+	return nil
+}
+
 func (s *saramaSyncProducer) Metrics() ProducerMetrics {
+	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
 	return ProducerMetrics{
-		Enqueued: s.enqueued.Load(),
-		Success:  s.success.Load(),
-		Failed:   s.failed.Load(),
+		Enqueued: e,
+		Success:  su,
+		Failed:   f,
 		Bytes:    s.bytes.Load(),
+		InFlight: ComputeInFlight(e, su, f),
 	}
 }
 

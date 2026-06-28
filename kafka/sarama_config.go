@@ -43,6 +43,19 @@ func buildSaramaConfig(o Options) (*sarama.Config, error) {
 	// sensible default for request-scoped ordering.
 	cfg.Producer.Partitioner = sarama.NewHashPartitioner
 
+	// batch tuning: linger triggers periodic flush; messages/bytes trigger
+	// immediate flush at thresholds. All default 0 (off) — only set when
+	// ProducerLinger > 0 (the caller explicitly opted into batching).
+	if o.ProducerLinger > 0 {
+		cfg.Producer.Flush.Frequency = o.ProducerLinger
+	}
+	if o.MaxBufferedRecords > 0 {
+		cfg.Producer.Flush.Messages = o.MaxBufferedRecords
+	}
+	if o.BatchMaxBytes > 0 {
+		cfg.Producer.Flush.Bytes = o.BatchMaxBytes
+	}
+
 	// consumer
 	cfg.Consumer.Return.Errors = o.ReturnErrors
 	cfg.Consumer.Fetch.Min = int32(o.FetchMin)

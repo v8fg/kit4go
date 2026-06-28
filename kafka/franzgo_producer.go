@@ -16,11 +16,13 @@ type franzProducer struct {
 	opts Options
 	cl   *kgo.Client
 
-	closed   atomic.Bool
-	enqueued atomic.Uint64
-	success  atomic.Uint64
-	failed   atomic.Uint64
-	bytes    atomic.Uint64
+	closed     atomic.Bool
+	enqueued   atomic.Uint64
+	success    atomic.Uint64
+	failed     atomic.Uint64
+	bytes      atomic.Uint64
+	batchCount atomic.Uint64
+	batchMax   atomic.Uint64
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -49,6 +51,32 @@ func (s *franzProducer) Send(ctx context.Context, msg Message) error {
 	return nil
 }
 
+func (s *franzProducer) SendBatch(ctx context.Context, msgs []Message) error {
+	if s.closed.Load() {
+		return ErrProducerClosed
+	}
+	n := uint64(len(msgs))
+	s.batchCount.Add(1)
+	for cur := n; cur > s.batchMax.Load(); s.batchMax.Store(cur) {
+	}
+	for _, msg := range msgs {
+		r := toKgoRecord(msg, s.opts.Topic)
+		s.cl.Produce(ctx, r, func(rec *kgo.Record, err error) {
+			if err != nil {
+				s.failed.Add(1)
+				s.fire(ProducerEvent{Name: "error", Topic: r.Topic, Err: err})
+				return
+			}
+			s.success.Add(1)
+			nn := uint64(len(rec.Value))
+			s.bytes.Add(nn)
+			s.fire(ProducerEvent{Name: "success", Topic: rec.Topic, Partition: rec.Partition, Offset: rec.Offset, Bytes: int(nn)})
+		})
+	}
+	s.enqueued.Add(n)
+	return nil
+}
+
 func (s *franzProducer) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
@@ -59,11 +87,15 @@ func (s *franzProducer) Close() error {
 }
 
 func (s *franzProducer) Metrics() ProducerMetrics {
+	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
 	return ProducerMetrics{
-		Enqueued: s.enqueued.Load(),
-		Success:  s.success.Load(),
-		Failed:   s.failed.Load(),
-		Bytes:    s.bytes.Load(),
+		Enqueued:   e,
+		Success:    su,
+		Failed:     f,
+		Bytes:      s.bytes.Load(),
+		BatchCount: s.batchCount.Load(),
+		BatchMax:   s.batchMax.Load(),
+		InFlight:   ComputeInFlight(e, su, f),
 	}
 }
 
@@ -128,12 +160,34 @@ func (s *franzSyncProducer) Close() error {
 	return nil
 }
 
+func (s *franzSyncProducer) SendBatch(ctx context.Context, msgs []Message) error {
+	if s.closed.Load() {
+		return ErrProducerClosed
+	}
+	for _, msg := range msgs {
+		r := toKgoRecord(msg, s.opts.Topic)
+		s.enqueued.Add(1)
+		res := s.cl.ProduceSync(ctx, r)
+		pr, perr := res.First()
+		if perr != nil {
+			s.failed.Add(1)
+			return perr
+		}
+		s.success.Add(1)
+		s.bytes.Add(uint64(len(msg.Value)))
+		_ = pr
+	}
+	return nil
+}
+
 func (s *franzSyncProducer) Metrics() ProducerMetrics {
+	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
 	return ProducerMetrics{
-		Enqueued: s.enqueued.Load(),
-		Success:  s.success.Load(),
-		Failed:   s.failed.Load(),
+		Enqueued: e,
+		Success:  su,
+		Failed:   f,
 		Bytes:    s.bytes.Load(),
+		InFlight: ComputeInFlight(e, su, f),
 	}
 }
 

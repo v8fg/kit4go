@@ -30,10 +30,12 @@ type saramaProducer struct {
 	mu     sync.RWMutex
 	closed bool
 
-	enqueued atomic.Uint64
-	success  atomic.Uint64
-	failed   atomic.Uint64
-	bytes    atomic.Uint64
+	enqueued   atomic.Uint64
+	success    atomic.Uint64
+	failed     atomic.Uint64
+	bytes      atomic.Uint64
+	batchCount atomic.Uint64
+	batchMax   atomic.Uint64
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -125,12 +127,39 @@ func (s *saramaProducer) Close() error {
 	return err
 }
 
+func (s *saramaProducer) SendBatch(ctx context.Context, msgs []Message) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return ErrProducerClosed
+	}
+	n := uint64(len(msgs))
+	s.batchCount.Add(1)
+	for cur := n; cur > s.batchMax.Load(); s.batchMax.Store(cur) {
+	} // CAS-free max update (single-writer Send path under RLock)
+	for _, msg := range msgs {
+		pm := toSaramaProducerMessage(msg, s.topic)
+		select {
+		case s.p.Input() <- pm:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	s.enqueued.Add(n)
+	s.fire(ProducerEvent{Name: "send", Topic: s.topic, Bytes: 0})
+	return nil
+}
+
 func (s *saramaProducer) Metrics() ProducerMetrics {
+	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
 	return ProducerMetrics{
-		Enqueued: s.enqueued.Load(),
-		Success:  s.success.Load(),
-		Failed:   s.failed.Load(),
-		Bytes:    s.bytes.Load(),
+		Enqueued:   e,
+		Success:    su,
+		Failed:     f,
+		Bytes:      s.bytes.Load(),
+		BatchCount: s.batchCount.Load(),
+		BatchMax:   s.batchMax.Load(),
+		InFlight:   ComputeInFlight(e, su, f),
 	}
 }
 
