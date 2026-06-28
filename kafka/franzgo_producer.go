@@ -164,20 +164,30 @@ func (s *franzSyncProducer) SendBatch(ctx context.Context, msgs []Message) error
 	if s.closed.Load() {
 		return ErrProducerClosed
 	}
-	for _, msg := range msgs {
-		r := toKgoRecord(msg, s.opts.Topic)
-		s.enqueued.Add(1)
-		res := s.cl.ProduceSync(ctx, r)
-		pr, perr := res.First()
-		if perr != nil {
-			s.failed.Add(1)
-			return perr
-		}
-		s.success.Add(1)
-		s.bytes.Add(uint64(len(msg.Value)))
-		_ = pr
+	n := len(msgs)
+	// franz-go's ProduceSync accepts variadic records → ONE FetchRecords request
+	// to the broker for ALL records (real sync batching, unlike sarama's
+	// one-at-a-time SendMessage). This is the sync batch advantage.
+	records := make([]*kgo.Record, n)
+	for i, msg := range msgs {
+		records[i] = toKgoRecord(msg, s.opts.Topic)
 	}
-	return nil
+	s.enqueued.Add(uint64(n))
+	res := s.cl.ProduceSync(ctx, records...)
+	// Count per-record success/failure from ProduceResults.
+	var firstErr error
+	for i, pr := range res {
+		if pr.Err != nil {
+			s.failed.Add(1)
+			if firstErr == nil {
+				firstErr = pr.Err
+			}
+		} else {
+			s.success.Add(1)
+			s.bytes.Add(uint64(len(msgs[i].Value)))
+		}
+	}
+	return firstErr // nil if all succeeded
 }
 
 func (s *franzSyncProducer) Metrics() ProducerMetrics {
