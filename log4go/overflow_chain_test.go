@@ -3,19 +3,19 @@ package log4go
 import (
 	"testing"
 
-	"github.com/IBM/sarama"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 // Test_ChainedSpiller_RingThenFile verifies ring fills first, then overflows
 // to file without dropping, and Drain recovers from both levels.
 func Test_ChainedSpiller_RingThenFile(t *testing.T) {
 	dir := t.TempDir()
-	ring := NewRingSpiller[*sarama.ProducerMessage](2) // ring cap 2
-	file, err := NewFileSpiller[*sarama.ProducerMessage](dir, 1<<20, ProducerMsgCodec)
+	ring := NewRingSpiller[kafka.Message](2) // ring cap 2
+	file, err := NewFileSpiller[kafka.Message](dir, 1<<20, ProducerMsgCodec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := NewChainedSpiller[*sarama.ProducerMessage](ring, file)
+	c := NewChainedSpiller[kafka.Message](ring, file)
 	defer c.Close()
 
 	// push 5: ring holds 2 (a,b), file holds c,d,e — no drop
@@ -37,9 +37,9 @@ func Test_ChainedSpiller_RingThenFile(t *testing.T) {
 // returns false (drop) — total space is bounded.
 func Test_ChainedSpiller_FileCapDrop(t *testing.T) {
 	dir := t.TempDir()
-	ring := NewRingSpiller[*sarama.ProducerMessage](2)
-	file, _ := NewFileSpiller[*sarama.ProducerMessage](dir, 80, ProducerMsgCodec) // tiny file cap
-	c := NewChainedSpiller[*sarama.ProducerMessage](ring, file)
+	ring := NewRingSpiller[kafka.Message](2)
+	file, _ := NewFileSpiller[kafka.Message](dir, 80, ProducerMsgCodec) // tiny file cap
+	c := NewChainedSpiller[kafka.Message](ring, file)
 	defer c.Close()
 
 	accepted := 0
@@ -63,7 +63,7 @@ func Test_FileSpiller_RecoverAcrossInstances(t *testing.T) {
 	dir := t.TempDir()
 
 	// instance A: push, then close without drain (persist spill.log on disk)
-	a, err := NewFileSpiller[*sarama.ProducerMessage](dir, 1<<20, ProducerMsgCodec)
+	a, err := NewFileSpiller[kafka.Message](dir, 1<<20, ProducerMsgCodec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func Test_FileSpiller_RecoverAcrossInstances(t *testing.T) {
 	}
 
 	// instance B (same dir, e.g. after restart): Drain recovers persisted records
-	b, err := NewFileSpiller[*sarama.ProducerMessage](dir, 1<<20, ProducerMsgCodec)
+	b, err := NewFileSpiller[kafka.Message](dir, 1<<20, ProducerMsgCodec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func Test_RecordCodec_RoundTrip(t *testing.T) {
 	}
 }
 
-// Test_ProducerMsgCodec_RoundTrip verifies the *sarama.ProducerMessage codec.
+// Test_ProducerMsgCodec_RoundTrip verifies the kafka.Message codec.
 func Test_ProducerMsgCodec_RoundTrip(t *testing.T) {
 	m := spillerMsg("topic-x", "payload")
 	b, err := ProducerMsgCodec.Encode(m)

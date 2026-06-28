@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IBM/sarama"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 // errDeep is a test error type. (The package already defines `errStr` in
@@ -316,7 +316,7 @@ func Test_OverflowPolicy_String_AllValues(t *testing.T) {
 // Test_NewRingSpiller_NonPositive covers the capacity<=0 default (->1024).
 func Test_NewRingSpiller_NonPositive(t *testing.T) {
 	for _, capv := range []int{0, -1, -100} {
-		r := NewRingSpiller[*sarama.ProducerMessage](capv)
+		r := NewRingSpiller[kafka.Message](capv)
 		if r.capv != 1024 {
 			t.Errorf("capacity=%d -> capv=%d want 1024", capv, r.capv)
 		}
@@ -343,7 +343,7 @@ func Test_NewFileSpiller_MkdirError(t *testing.T) {
 		t.Fatalf("seed file: %v", err)
 	}
 	// MkdirAll on a path under a regular file fails.
-	_, err := NewFileSpiller[*sarama.ProducerMessage](filePath+"/sub", 1<<16, ProducerMsgCodec)
+	_, err := NewFileSpiller[kafka.Message](filePath+"/sub", 1<<16, ProducerMsgCodec)
 	if err == nil {
 		t.Fatal("NewFileSpiller under a file succeeded; want MkdirAll error")
 	}
@@ -423,8 +423,8 @@ func Test_AppendJSONStringContent_MultiByteUTF8(t *testing.T) {
 func Test_KafKaWriter_drainSpill_ReinjectAndBackpressure(t *testing.T) {
 	w := &KafKaWriter{
 		policy:   OverflowSpill,
-		spiller:  NewRingSpiller[*sarama.ProducerMessage](4),
-		messages: make(chan *sarama.ProducerMessage, 1),
+		spiller:  NewRingSpiller[kafka.Message](4),
+		messages: make(chan kafka.Message, 1),
 	}
 	// Fill the channel so re-inject cannot succeed.
 	w.messages <- spillerMsg("t", "in-chan")
@@ -449,13 +449,13 @@ func Test_KafKaWriter_drainSpill_ReinjectAndBackpressure(t *testing.T) {
 // Test_KafKaWriter_drainSpill_EmptyAndNil covers the two early-return guards.
 func Test_KafKaWriter_drainSpill_EmptyAndNil(t *testing.T) {
 	// nil spiller -> no-op.
-	w := &KafKaWriter{messages: make(chan *sarama.ProducerMessage, 1)}
+	w := &KafKaWriter{messages: make(chan kafka.Message, 1)}
 	w.drainSpill() // must not panic
 
 	// non-nil but empty spiller -> no-op.
 	w2 := &KafKaWriter{
-		spiller:  NewRingSpiller[*sarama.ProducerMessage](2),
-		messages: make(chan *sarama.ProducerMessage, 1),
+		spiller:  NewRingSpiller[kafka.Message](2),
+		messages: make(chan kafka.Message, 1),
 	}
 	w2.drainSpill()
 	if w2.spiller.Len() != 0 {
@@ -469,7 +469,7 @@ func Test_KafKaWriter_Write_EmptyAndLevelFiltered(t *testing.T) {
 	w := &KafKaWriter{
 		level:    INFO,
 		policy:   OverflowDrop,
-		messages: make(chan *sarama.ProducerMessage, 4),
+		messages: make(chan kafka.Message, 4),
 		options:  KafKaWriterOptions{ProducerTopic: "t"},
 	}
 	// Empty message -> nil, nothing enqueued.
@@ -496,8 +496,8 @@ func Test_KafKaWriter_drainSpillToProducer(t *testing.T) {
 	defer p.Close()
 	w := &KafKaWriter{
 		policy:   OverflowSpill,
-		spiller:  NewRingSpiller[*sarama.ProducerMessage](4),
-		messages: make(chan *sarama.ProducerMessage, 1),
+		spiller:  NewRingSpiller[kafka.Message](4),
+		messages: make(chan kafka.Message, 1),
 		producer: p,
 	}
 	w.spiller.Push(spillerMsg("t", "a"))
@@ -1024,7 +1024,7 @@ func Test_KafKaWriter_Start_SpillRingAndChain(t *testing.T) {
 				ProducerTopic: "cov", BufferSize: 16,
 				OverflowPolicy: "spill", SpillType: c.spill, SpillSize: 4, SpillDir: dir,
 			})
-			w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+			w.producerFactory = func() (kafka.Producer, error) {
 				return newNoopAsyncProducer(), nil
 			}
 			if err := w.Start(); err != nil {
@@ -1046,7 +1046,7 @@ func Test_KafKaWriter_Start_VersionOverride(t *testing.T) {
 		ProducerTopic: "cov", BufferSize: 16,
 		SpecifyVersion: true, VersionStr: "2.5.0.0",
 	})
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return newNoopAsyncProducer(), nil
 	}
 	if err := w.Start(); err != nil {
@@ -1060,7 +1060,7 @@ func Test_KafKaWriter_Start_VersionOverride(t *testing.T) {
 		ProducerTopic: "cov", BufferSize: 16,
 		SpecifyVersion: true, VersionStr: "not-a-version",
 	})
-	w2.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w2.producerFactory = func() (kafka.Producer, error) {
 		return newNoopAsyncProducer(), nil
 	}
 	if err := w2.Start(); err != nil {
@@ -1077,7 +1077,7 @@ func Test_KafKaWriter_Start_ProducerError(t *testing.T) {
 		ProducerTopic: "cov", BufferSize: 16,
 	})
 	boom := errDeep("dial failed")
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return nil, boom
 	}
 	if err := w.Start(); err != boom {
@@ -1098,7 +1098,7 @@ func Test_KafKaWriter_Start_SpillFileError(t *testing.T) {
 		ProducerTopic: "cov", BufferSize: 16,
 		OverflowPolicy: "spill", SpillType: "file", SpillDir: blocker + "/sub",
 	})
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return newNoopAsyncProducer(), nil
 	}
 	if err := w.Start(); err == nil {
@@ -1122,7 +1122,7 @@ func Test_KafKaWriter_Start_SpillResumeOnStartup(t *testing.T) {
 	// file path persists; use a file spiller pre-seeded via DrainFileRecover is
 	// covered elsewhere. Here we just confirm Start with ring resume is a no-op
 	// when the spiller is empty (the common path).
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return newNoopAsyncProducer(), nil
 	}
 	if err := w.Start(); err != nil {
@@ -1286,7 +1286,7 @@ func Test_DrainFileRecover_Success(t *testing.T) {
 	dir := t.TempDir()
 	// Seed a spill.log via a real FileSpiller, then close it so the file is
 	// flushed to disk.
-	fs, err := NewFileSpiller[*sarama.ProducerMessage](dir, 1<<16, ProducerMsgCodec)
+	fs, err := NewFileSpiller[kafka.Message](dir, 1<<16, ProducerMsgCodec)
 	if err != nil {
 		t.Fatalf("NewFileSpiller: %v", err)
 	}
@@ -1295,12 +1295,12 @@ func Test_DrainFileRecover_Success(t *testing.T) {
 	_ = fs.Close()
 
 	// DrainFileRecover reads spill.log, moves it aside, decodes, removes.
-	out := DrainFileRecover[*sarama.ProducerMessage](dir, ProducerMsgCodec)
+	out := DrainFileRecover[kafka.Message](dir, ProducerMsgCodec)
 	if len(out) != 2 {
 		t.Fatalf("recovered=%d want 2", len(out))
 	}
 	// A second call finds no spill.log -> nil.
-	if again := DrainFileRecover[*sarama.ProducerMessage](dir, ProducerMsgCodec); again != nil {
+	if again := DrainFileRecover[kafka.Message](dir, ProducerMsgCodec); again != nil {
 		t.Errorf("second recover should be nil, got %d", len(again))
 	}
 }
@@ -1309,7 +1309,7 @@ func Test_DrainFileRecover_Success(t *testing.T) {
 // is absent so Stat fails first -> returns nil before Rename).
 func Test_DrainFileRecover_StatFailure(t *testing.T) {
 	dir := t.TempDir()
-	if out := DrainFileRecover[*sarama.ProducerMessage](dir, ProducerMsgCodec); out != nil {
+	if out := DrainFileRecover[kafka.Message](dir, ProducerMsgCodec); out != nil {
 		t.Errorf("absent spill.log should return nil, got %d", len(out))
 	}
 }

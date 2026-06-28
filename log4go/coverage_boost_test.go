@@ -399,7 +399,7 @@ func Test_KafKaWriter_Init(t *testing.T) {
 		BufferSize:     1024,
 		OverflowPolicy: "drop",
 	})
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return newNoopAsyncProducer(), nil
 	}
 	if err := w.Init(); err != nil {

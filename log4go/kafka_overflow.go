@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/IBM/sarama"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 // OverflowPolicy controls what Write does when the async send channel is full.
@@ -413,17 +413,13 @@ type spillRecord struct {
 
 type producerMsgCodec struct{}
 
-func (producerMsgCodec) Encode(msg *sarama.ProducerMessage) ([]byte, error) {
+func (producerMsgCodec) Encode(msg kafka.Message) ([]byte, error) {
 	rec := spillRecord{Topic: msg.Topic}
-	if msg.Key != nil {
-		if b, e := msg.Key.Encode(); e == nil {
-			rec.Key = b
-		}
+	if len(msg.Key) > 0 {
+		rec.Key = msg.Key
 	}
-	if msg.Value != nil {
-		if b, e := msg.Value.Encode(); e == nil {
-			rec.Value = b
-		}
+	if len(msg.Value) > 0 {
+		rec.Value = msg.Value
 	}
 	if !msg.Timestamp.IsZero() {
 		rec.Timestamp = msg.Timestamp.UnixNano()
@@ -431,26 +427,20 @@ func (producerMsgCodec) Encode(msg *sarama.ProducerMessage) ([]byte, error) {
 	return json.Marshal(rec)
 }
 
-func (producerMsgCodec) Decode(b []byte) (*sarama.ProducerMessage, error) {
+func (producerMsgCodec) Decode(b []byte) (kafka.Message, error) {
 	var rec spillRecord
 	if err := json.Unmarshal(b, &rec); err != nil {
-		return nil, err
+		return kafka.Message{}, err
 	}
-	msg := &sarama.ProducerMessage{Topic: rec.Topic}
-	if len(rec.Key) > 0 {
-		msg.Key = sarama.ByteEncoder(rec.Key)
-	}
-	if len(rec.Value) > 0 {
-		msg.Value = sarama.ByteEncoder(rec.Value)
-	}
+	msg := kafka.Message{Topic: rec.Topic, Key: rec.Key, Value: rec.Value}
 	if rec.Timestamp != 0 {
 		msg.Timestamp = time.Unix(0, rec.Timestamp)
 	}
 	return msg, nil
 }
 
-// ProducerMsgCodec is the shared codec for *sarama.ProducerMessage spill.
-var ProducerMsgCodec SpillCodec[*sarama.ProducerMessage] = producerMsgCodec{}
+// ProducerMsgCodec is the shared codec for kafka.Message spill.
+var ProducerMsgCodec SpillCodec[kafka.Message] = producerMsgCodec{}
 
 type spillRecordData struct {
 	Level int    `json:"level"`

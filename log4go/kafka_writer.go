@@ -1,13 +1,14 @@
 package log4go
 
 import (
+	"context"
 	"log"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/IBM/sarama"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 // KafKaMSGFields holds the legacy Kafka→ES message fields.
@@ -83,19 +84,19 @@ type KafKaWriterOptions struct {
 type KafKaWriter struct {
 	level    int
 	paused   atomic.Bool
-	producer sarama.AsyncProducer
-	messages chan *sarama.ProducerMessage
+	producer kafka.Producer
+	messages chan kafka.Message
 	options  KafKaWriterOptions
 
 	policy  OverflowPolicy
-	spiller Spiller[*sarama.ProducerMessage]
+	spiller Spiller[kafka.Message]
 	stats   OverflowStats
 	sent    uint64
 	errored uint64
 	// onEvent is an optional real-time metric hook (reserved for monitoring
 	// integration). Nil disables it. Must be non-blocking.
 	onEvent         func(name string, delta int64)
-	producerFactory func(brokers []string, cfg *sarama.Config) (sarama.AsyncProducer, error)
+	producerFactory func() (kafka.Producer, error)
 	drainInterval   time.Duration
 	wg              sync.WaitGroup
 	codecMu         sync.RWMutex
@@ -336,10 +337,10 @@ func (k *KafKaWriter) Write(r *Record) error {
 	// nil-guard was unreachable dead code — removed during coverage hardening.
 	payload := k.buildPayload(r)
 	key := k.options.Key
-	msg := &sarama.ProducerMessage{
+	msg := kafka.Message{
 		Topic: k.options.ProducerTopic,
-		Key:   sarama.ByteEncoder(key),
-		Value: sarama.ByteEncoder(payload),
+		Key:   []byte(key),
+		Value: payload,
 	}
 	if k.options.Debug {
 		log.Printf("[log4go] msg [topic: %v, brokers: %v]\nvalue: %s\n", msg.Topic, k.options.Brokers, payload)
@@ -349,7 +350,7 @@ func (k *KafKaWriter) Write(r *Record) error {
 }
 
 // send delivers msg under the overflow policy (drop / block / spill).
-func (k *KafKaWriter) send(msg *sarama.ProducerMessage) {
+func (k *KafKaWriter) send(msg kafka.Message) {
 	switch k.policy {
 	case OverflowBlock:
 		k.messages <- msg
@@ -388,29 +389,11 @@ func (k *KafKaWriter) drainSpill() {
 	}
 }
 
-// daemon forwards channel messages to the async producer and periodically
-// drains the spiller so recovered records get re-sent.
+// daemon forwards channel messages to the producer and periodically drains the
+// spiller so recovered records get re-sent. Success/error accounting is via the
+// kafka.Producer OnEvent hook (installed in Start).
 func (k *KafKaWriter) daemon() {
 	k.run.Store(true)
-
-	// drain successes (required when Producer.Return.Successes = true)
-	k.wg.Add(2)
-	go func() {
-		defer k.wg.Done()
-		for range k.producer.Successes() {
-		}
-	}()
-	// drain errors
-	go func() {
-		defer k.wg.Done()
-		for pe := range k.producer.Errors() {
-			atomic.AddUint64(&k.errored, 1)
-			if k.onEvent != nil {
-				k.onEvent("error", 1)
-			}
-			log.Printf("[log4go] kafka producer err: %v", pe.Error())
-		}
-	}()
 
 	ticker := time.NewTicker(k.drainInterval)
 	defer ticker.Stop()
@@ -423,7 +406,7 @@ func (k *KafKaWriter) daemon() {
 				k.quit <- struct{}{}
 				return
 			}
-			k.producer.Input() <- mes
+			_ = k.producer.Send(context.Background(), mes)
 			atomic.AddUint64(&k.sent, 1)
 			if k.onEvent != nil {
 				k.onEvent("sent", 1)
@@ -440,60 +423,67 @@ func (k *KafKaWriter) drainSpillToProducer() {
 		return
 	}
 	for _, msg := range k.spiller.Drain() {
-		k.producer.Input() <- msg
+		_ = k.producer.Send(context.Background(), msg)
 	}
 }
 
 // Start start the kafka writer
 func (k *KafKaWriter) Start() (err error) {
 	log.Printf("[log4go] kafka writer starting (policy=%s)", k.policy)
-	cfg := sarama.NewConfig()
-	// AsyncProducer requires Successes handling when Return.Successes is true.
-	cfg.Producer.Return.Successes = true
-	cfg.Producer.Return.Errors = true
-	cfg.Producer.Timeout = k.options.ProducerTimeout
 
-	// default to V2_5_0; allow override via SpecifyVersion + VersionStr.
-	kafkaVer := sarama.V2_5_0_0
-	if k.options.SpecifyVersion && k.options.VersionStr != "" {
-		if v, e := sarama.ParseKafkaVersion(k.options.VersionStr); e == nil {
-			kafkaVer = v
-		}
-	}
-	cfg.Version = kafkaVer
-	cfg.Producer.Partitioner = sarama.NewRoundRobinPartitioner
-
-	factory := sarama.NewAsyncProducer
+	// create the producer via the kafka package (sarama default, franz-go via
+	// -tags franzgo — the build tag selects the backend, log4go is agnostic).
 	if k.producerFactory != nil {
-		factory = k.producerFactory
+		k.producer, err = k.producerFactory()
+	} else {
+		opts := []kafka.Option{
+			kafka.WithBrokers(k.options.Brokers...),
+			kafka.WithTopic(k.options.ProducerTopic),
+			kafka.WithReturnSuccesses(true),
+		}
+		if k.options.SpecifyVersion && k.options.VersionStr != "" {
+			opts = append(opts, kafka.WithVersion(k.options.VersionStr))
+		}
+		k.producer, err = kafka.NewProducer(opts...)
 	}
-	k.producer, err = factory(k.options.Brokers, cfg)
 	if err != nil {
-		log.Printf("[log4go] sarama.NewAsyncProducer err, message=%s", err.Error())
+		log.Printf("[log4go] kafka.NewProducer err, message=%s", err.Error())
 		return err
 	}
+
+	// install OnEvent for success/error accounting (replaces the sarama
+	// Successes()/Errors() drain goroutines).
+	k.producer.SetOnEvent(func(e kafka.ProducerEvent) {
+		if e.Name == "error" {
+			atomic.AddUint64(&k.errored, 1)
+			if k.onEvent != nil {
+				k.onEvent("error", 1)
+			}
+			log.Printf("[log4go] kafka producer err: %v", e.Err)
+		}
+	})
 
 	size := k.options.BufferSize
 	if size <= 1 {
 		size = 1024
 	}
-	k.messages = make(chan *sarama.ProducerMessage, size)
+	k.messages = make(chan kafka.Message, size)
 
 	// init the recovery store for spill policy.
 	if k.policy == OverflowSpill {
 		switch k.options.SpillType {
 		case "file":
-			k.spiller, err = NewFileSpiller[*sarama.ProducerMessage](k.options.SpillDir, k.options.SpillMaxBytes, ProducerMsgCodec)
+			k.spiller, err = NewFileSpiller[kafka.Message](k.options.SpillDir, k.options.SpillMaxBytes, ProducerMsgCodec)
 			if err != nil {
 				return err
 			}
 		case "ring":
-			k.spiller = NewRingSpiller[*sarama.ProducerMessage](k.options.SpillSize)
+			k.spiller = NewRingSpiller[kafka.Message](k.options.SpillSize)
 		default: // "" or "chain": ring (hot) -> file (cold, persistent)
-			ring := NewRingSpiller[*sarama.ProducerMessage](k.options.SpillSize)
+			ring := NewRingSpiller[kafka.Message](k.options.SpillSize)
 			if k.options.SpillDir != "" {
-				if file, ferr := NewFileSpiller[*sarama.ProducerMessage](k.options.SpillDir, k.options.SpillMaxBytes, ProducerMsgCodec); ferr == nil {
-					k.spiller = NewChainedSpiller[*sarama.ProducerMessage](ring, file)
+				if file, ferr := NewFileSpiller[kafka.Message](k.options.SpillDir, k.options.SpillMaxBytes, ProducerMsgCodec); ferr == nil {
+					k.spiller = NewChainedSpiller[kafka.Message](ring, file)
 				} else {
 					k.spiller = ring
 				}
@@ -531,7 +521,6 @@ func (k *KafKaWriter) Stop() {
 	if err := k.producer.Close(); err != nil {
 		log.Printf("[log4go] kafkaWriter stop error: %v", err.Error())
 	}
-	k.wg.Wait() // ensure all success/error accounting completes before returning
 	if k.spiller != nil {
 		_ = k.spiller.Close()
 	}

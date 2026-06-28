@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IBM/sarama"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 // Test_KafKaWriter_SendDrop verifies that drop policy discards when full and
 // counts the drop (never blocks the caller, never spawns a goroutine).
 func Test_KafKaWriter_SendDrop(t *testing.T) {
-	w := &KafKaWriter{policy: OverflowDrop, messages: make(chan *sarama.ProducerMessage, 1)}
+	w := &KafKaWriter{policy: OverflowDrop, messages: make(chan kafka.Message, 1)}
 	w.messages <- spillerMsg("t", "1") // fill the single-slot channel
 
 	w.send(spillerMsg("t", "2")) // must drop, not block
@@ -25,8 +25,8 @@ func Test_KafKaWriter_SendDrop(t *testing.T) {
 func Test_KafKaWriter_SendSpillRing(t *testing.T) {
 	w := &KafKaWriter{
 		policy:   OverflowSpill,
-		spiller:  NewRingSpiller[*sarama.ProducerMessage](8),
-		messages: make(chan *sarama.ProducerMessage, 1),
+		spiller:  NewRingSpiller[kafka.Message](8),
+		messages: make(chan kafka.Message, 1),
 	}
 	w.messages <- spillerMsg("t", "1") // full
 
@@ -47,7 +47,7 @@ func Test_KafKaWriter_SendSpillRing(t *testing.T) {
 // dropping/spilling. We assert it by filling the channel and confirming the
 // next value is still pending (no drop counter increment).
 func Test_KafKaWriter_SendBlock(t *testing.T) {
-	w := &KafKaWriter{policy: OverflowBlock, messages: make(chan *sarama.ProducerMessage, 1)}
+	w := &KafKaWriter{policy: OverflowBlock, messages: make(chan kafka.Message, 1)}
 	w.messages <- spillerMsg("t", "1") // full
 
 	done := make(chan struct{})
@@ -72,7 +72,7 @@ func Test_KafKaWriter_WriteNoGoroutineBurst(t *testing.T) {
 	w := &KafKaWriter{
 		level:    INFO,
 		policy:   OverflowDrop,
-		messages: make(chan *sarama.ProducerMessage, 1000),
+		messages: make(chan kafka.Message, 1000),
 		options:  KafKaWriterOptions{ProducerTopic: "t"},
 	}
 	before := runtime.NumGoroutine()

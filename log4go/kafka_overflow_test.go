@@ -3,17 +3,17 @@ package log4go
 import (
 	"testing"
 
-	"github.com/IBM/sarama"
+	"github.com/v8fg/kit4go/kafka"
 )
 
-func spillerMsg(topic, val string) *sarama.ProducerMessage {
+func spillerMsg(topic, val string) kafka.Message {
 	return &sarama.ProducerMessage{Topic: topic, Value: sarama.StringEncoder(val)}
 }
 
 // Test_RingSpiller_PushDrain verifies FIFO ordering, overwrite-oldest when full,
 // and that Drain clears the ring.
 func Test_RingSpiller_PushDrain(t *testing.T) {
-	r := NewRingSpiller[*sarama.ProducerMessage](3)
+	r := NewRingSpiller[kafka.Message](3)
 	for _, v := range []string{"a", "b", "c", "d"} { // "d" overwrites oldest "a"
 		r.Push(spillerMsg("t", v))
 	}
@@ -39,7 +39,7 @@ func Test_RingSpiller_PushDrain(t *testing.T) {
 
 // Test_RingSpiller_BoundedMemory verifies the ring never grows beyond capacity.
 func Test_RingSpiller_BoundedMemory(t *testing.T) {
-	r := NewRingSpiller[*sarama.ProducerMessage](16)
+	r := NewRingSpiller[kafka.Message](16)
 	for i := 0; i < 100000; i++ {
 		r.Push(spillerMsg("t", "x"))
 	}
@@ -51,7 +51,7 @@ func Test_RingSpiller_BoundedMemory(t *testing.T) {
 // Test_FileSpiller_PushDrain verifies disk persistence + recovery.
 func Test_FileSpiller_PushDrain(t *testing.T) {
 	dir := t.TempDir()
-	f, err := NewFileSpiller[*sarama.ProducerMessage](dir, 1<<20, ProducerMsgCodec)
+	f, err := NewFileSpiller[kafka.Message](dir, 1<<20, ProducerMsgCodec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func Test_FileSpiller_PushDrain(t *testing.T) {
 // Test_FileSpiller_MaxBytes verifies the byte cap stops Push (no unbounded disk).
 func Test_FileSpiller_MaxBytes(t *testing.T) {
 	dir := t.TempDir()
-	f, err := NewFileSpiller[*sarama.ProducerMessage](dir, 50, ProducerMsgCodec) // tiny cap
+	f, err := NewFileSpiller[kafka.Message](dir, 50, ProducerMsgCodec) // tiny cap
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func Test_ParseOverflowPolicy(t *testing.T) {
 
 // Benchmark_RingSpiller_Push measures spill-store throughput.
 func Benchmark_RingSpiller_Push(b *testing.B) {
-	r := NewRingSpiller[*sarama.ProducerMessage](1024)
+	r := NewRingSpiller[kafka.Message](1024)
 	m := spillerMsg("t", "x")
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -144,7 +144,7 @@ func Benchmark_RingSpiller_Push(b *testing.B) {
 
 // Benchmark_FileSpiller_Push measures disk spill throughput.
 func Benchmark_FileSpiller_Push(b *testing.B) {
-	f, err := NewFileSpiller[*sarama.ProducerMessage](b.TempDir(), 1<<30, ProducerMsgCodec)
+	f, err := NewFileSpiller[kafka.Message](b.TempDir(), 1<<30, ProducerMsgCodec)
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -23,7 +23,7 @@ import (
 func newStartedMockKafka(t *testing.T) *KafKaWriter {
 	t.Helper()
 	kw := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
-	kw.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	kw.producerFactory = func() (kafka.Producer, error) {
 		return newMockFailingProducer(), nil
 	}
 	if err := kw.Start(); err != nil {

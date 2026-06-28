@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IBM/sarama"
+	"github.com/v8fg/kit4go/kafka"
 )
 
 func benchRecord() *Record {
@@ -218,8 +218,8 @@ func Benchmark_FileWriter_AsyncSpill(b *testing.B) {
 // Successes()/Errors() in goroutines, so Close closes those channels (mirroring
 // the real producer) to let those drainers exit cleanly on Stop.
 type noopAsyncProducer struct {
-	input     chan *sarama.ProducerMessage
-	successes chan *sarama.ProducerMessage
+	input     chan kafka.Message
+	successes chan kafka.Message
 	errors    chan *sarama.ProducerError
 	quit      chan struct{}
 	closeOnce sync.Once
@@ -227,8 +227,8 @@ type noopAsyncProducer struct {
 
 func newNoopAsyncProducer() *noopAsyncProducer {
 	p := &noopAsyncProducer{
-		input:     make(chan *sarama.ProducerMessage, 1<<16),
-		successes: make(chan *sarama.ProducerMessage, 1<<16),
+		input:     make(chan kafka.Message, 1<<16),
+		successes: make(chan kafka.Message, 1<<16),
 		errors:    make(chan *sarama.ProducerError, 1<<16),
 		quit:      make(chan struct{}),
 	}
@@ -250,8 +250,8 @@ func newNoopAsyncProducer() *noopAsyncProducer {
 	return p
 }
 
-func (p *noopAsyncProducer) Input() chan<- *sarama.ProducerMessage     { return p.input }
-func (p *noopAsyncProducer) Successes() <-chan *sarama.ProducerMessage { return p.successes }
+func (p *noopAsyncProducer) Input() chan<- kafka.Message     { return p.input }
+func (p *noopAsyncProducer) Successes() <-chan kafka.Message { return p.successes }
 func (p *noopAsyncProducer) Errors() <-chan *sarama.ProducerError      { return p.errors }
 
 // AsyncClose signals the Input drainer to stop and closes Successes/Errors so
@@ -303,7 +303,7 @@ func Benchmark_KafKaWriter_WriteMock(b *testing.B) {
 	w := NewKafKaWriter(KafKaWriterOptions{
 		ProducerTopic: "bench", BufferSize: 1 << 14, Level: LevelFlagInfo,
 	})
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return newNoopAsyncProducer(), nil
 	}
 	if err := w.Start(); err != nil {
@@ -560,7 +560,7 @@ func memSinkFor(tb testing.TB, kind string) (Writer, func()) {
 		return fw, func() { fw.Stop() }
 	case "kafka-mock":
 		kw := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "mem", BufferSize: 1 << 14, Level: LevelFlagInfo})
-		kw.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+		kw.producerFactory = func() (kafka.Producer, error) {
 			return newNoopAsyncProducer(), nil
 		}
 		_ = kw.Start()

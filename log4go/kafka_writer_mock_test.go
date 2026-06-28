@@ -31,7 +31,7 @@ func Test_KafKaWriter_EndToEndMockProducer(t *testing.T) {
 		}
 	})
 	// inject the mock producer (no real broker connection).
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return mp, nil
 	}
 
@@ -78,7 +78,7 @@ func Test_KafKaWriter_MockProducerErrors(t *testing.T) {
 	}
 
 	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 1024})
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return mp, nil
 	}
 	if err := w.Start(); err != nil {

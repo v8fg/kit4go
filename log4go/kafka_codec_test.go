@@ -69,7 +69,7 @@ func TestSetKafkaCodec_PackageLevel_AppliesToRegisteredWriters(t *testing.T) {
 	mp := mocks.NewAsyncProducer(t, cfg)
 
 	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
-	w.producerFactory = func([]string, *sarama.Config) (sarama.AsyncProducer, error) {
+	w.producerFactory = func() (kafka.Producer, error) {
 		return mp, nil
 	}
 
