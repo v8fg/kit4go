@@ -1,10 +1,13 @@
+//go:build !franzgo
+
 package kafka
 
 import (
 	"context"
 	"testing"
-	"github.com/IBM/sarama/mocks"
+
 	"github.com/IBM/sarama"
+	"github.com/IBM/sarama/mocks"
 )
 
 func TestSendBatch_MetricsTrackRealRecords(t *testing.T) {
