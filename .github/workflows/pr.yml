@@ -95,14 +95,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Install only; the repo is multi-module, so we run golangci-lint once per
-      # module (./... does not cross go.mod boundaries). The v2 config at the
-      # repo root is auto-discovered from each sub-module dir.
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v2.11.4
-          install-only: true
+      # Install via the official script (golangci-lint v2 needs
+      # golangci-lint-action v7; the direct install avoids action-version churn).
+      # The repo is multi-module, so golangci-lint runs once per module (./...
+      # does not cross go.mod boundaries); the v2 config at the repo root is
+      # auto-discovered from each sub-module dir.
+      - name: Install golangci-lint v2
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.11.4
+          golangci-lint version
 
       - name: golangci-lint (all modules)
         run: |
