@@ -131,11 +131,11 @@ func Test_SetupLog_AllWriters(t *testing.T) {
 	resetDefaultForTest(t)
 	dir := t.TempDir()
 	err := SetupLog(LogConfig{
-		Level:          LevelFlagDebug,
-		Format:         "json",
-		ConsoleWriter:  ConsoleWriterOptions{Enable: true, Level: LevelFlagInfo},
-		FileWriter:     FileWriterOptions{Enable: true, Level: LevelFlagInfo, Filename: dir + "/t-%Y%M%D.log", Rotate: true, Daily: true, Async: true, AsyncBufferSize: 128, OverflowPolicy: "drop"},
-		KafKaWriter:    KafKaWriterOptions{Enable: false},
+		Level:         LevelFlagDebug,
+		Format:        "json",
+		ConsoleWriter: ConsoleWriterOptions{Enable: true, Level: LevelFlagInfo},
+		FileWriter:    FileWriterOptions{Enable: true, Level: LevelFlagInfo, Filename: dir + "/t-%Y%M%D.log", Rotate: true, Daily: true, Async: true, AsyncBufferSize: 128, OverflowPolicy: "drop"},
+		KafKaWriter:   KafKaWriterOptions{Enable: false},
 	})
 	if err != nil {
 		t.Fatalf("SetupLog: %v", err)

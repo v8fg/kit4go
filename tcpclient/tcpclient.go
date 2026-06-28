@@ -217,6 +217,7 @@ func (c *Client) fireEvent(name string, bytes, attempt int) {
 func (c *Client) observe(start time.Time) {
 	c.opts.Latency.Observe(time.Since(start))
 }
+
 // package defaults and wiring up a connection pool sized by PoolSize. The
 // returned client is safe for concurrent use and ready to serve traffic.
 func NewClient(opts ClientOptions) *Client {

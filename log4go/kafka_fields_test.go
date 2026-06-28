@@ -66,7 +66,7 @@ func Test_KafKaWriter_Payload_BaseFieldPriority(t *testing.T) {
 	}
 	m := decodeNumber(t, b)
 	cases := []struct{ k, want string }{
-		{"server_ip", "from-base"},  // base field overrides MSG.ServerIP
+		{"server_ip", "from-base"},   // base field overrides MSG.ServerIP
 		{"es_index", "from-msg-idx"}, // no base field -> MSG fallback
 		{"trace_id", "t1"},
 		{"message", "hi"},

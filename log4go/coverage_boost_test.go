@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"runtime"
 	"strings"
-	"os"
 	"testing"
 	"time"
 
@@ -102,7 +102,8 @@ func Test_PackageLevel_Panic(t *testing.T) {
 func Test_Logger_SetBaseField(t *testing.T) {
 	lg := newLoggerWithRecords(make(chan *Record, 4))
 	defer lg.Close()
-	lg.SetBaseField("a", 1); lg.SetBaseField("b", "x")
+	lg.SetBaseField("a", 1)
+	lg.SetBaseField("b", "x")
 	lg.SetLevel(DEBUG)
 	cw := &captureWriter{}
 	lg.Register(cw)
@@ -416,7 +417,8 @@ func Test_NetWriter_String(t *testing.T) {
 
 func Test_PackageLevel_SetBaseField(t *testing.T) {
 	SetBaseField("pkg_key", "pkg_val")
-	SetBaseField("pk1", 1); SetBaseField("pk2", "v")
+	SetBaseField("pk1", 1)
+	SetBaseField("pk2", "v")
 }
 
 // ===================== NetWriter String() =====================
@@ -466,7 +468,7 @@ func Test_PackageLevel_Panic_Safe(t *testing.T) {
 	// Replace singleton with our own logger, capture the panic
 	lg := newLoggerWithRecords(make(chan *Record, 4))
 	lg.SetLevel(EMERGENCY)
-	loggerDefault.Store(lg) // overwrite, don't save old — Panic kills the logger
+	loggerDefault.Store(lg)                   // overwrite, don't save old — Panic kills the logger
 	defer loggerDefault.Store((*Logger)(nil)) // force rebuild on next use
 	func() {
 		defer func() {

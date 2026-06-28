@@ -207,10 +207,10 @@ func Test_Format_InheritedByChild(t *testing.T) {
 func Test_ConsoleWriter_JSONFastPath(t *testing.T) {
 	w := &ConsoleWriter{color: true, fullColor: true} // color must be IGNORED for JSON
 	r := &Record{
-		level:     INFO,
-		time:      "t",
-		file:      "f",
-		msg:       "m",
+		level:          INFO,
+		time:           "t",
+		file:           "f",
+		msg:            "m",
 		formattedBytes: []byte(`{"time":"t","level":"INFO","msg":"m"}` + "\n"),
 	}
 	// Write goes to os.Stdout; we can't easily capture it, but the contract is
@@ -238,10 +238,10 @@ func Test_FileWriter_JSONFastPath(t *testing.T) {
 	defer w.Stop()
 
 	r := &Record{
-		level:     INFO,
-		time:      "2026/06/25 10:00:00",
-		file:      "svc.go:1",
-		msg:       "json msg",
+		level:          INFO,
+		time:           "2026/06/25 10:00:00",
+		file:           "svc.go:1",
+		msg:            "json msg",
 		formattedBytes: []byte(`{"time":"2026-06-25T10:00:00.000+0800","level":"INFO","msg":"json msg"}` + "\n"),
 	}
 	if err := w.writeSync(r); err != nil {

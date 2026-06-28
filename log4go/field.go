@@ -14,16 +14,16 @@ type fieldKind uint8
 
 const (
 	kindString   fieldKind = iota
-	kindInt      // int (stored in i; value() -> int)
-	kindInt64    // int64 (stored in i; value() -> int64)
-	kindUint     // uint64 (stored in i as int64)
-	kindFloat64  // float64 bits stored in i
-	kindBool     // 0/1 stored in i
-	kindDuration // int64 nanos stored in i
-	kindTime     // int64 unix-nanos stored in i
-	kindError    // error stored in any
-	kindBytes    // []byte base64-encoded into str (JSON convention)
-	kindAny      // arbitrary value stored in any (rendered via the active codec)
+	kindInt                // int (stored in i; value() -> int)
+	kindInt64              // int64 (stored in i; value() -> int64)
+	kindUint               // uint64 (stored in i as int64)
+	kindFloat64            // float64 bits stored in i
+	kindBool               // 0/1 stored in i
+	kindDuration           // int64 nanos stored in i
+	kindTime               // int64 unix-nanos stored in i
+	kindError              // error stored in any
+	kindBytes              // []byte base64-encoded into str (JSON convention)
+	kindAny                // arbitrary value stored in any (rendered via the active codec)
 )
 
 // field is the internal structured key/value pair. The value is stored unboxed
@@ -40,22 +40,26 @@ type field struct {
 
 // --- internal constructors (zero boxing for scalars) ---
 
-func strField(k, v string) field             { return field{key: k, kind: kindString, str: v} }
-func intField(k string, v int) field         { return field{key: k, kind: kindInt, i: int64(v)} }
-func int64Field(k string, v int64) field     { return field{key: k, kind: kindInt64, i: v} }
-func uint64Field(k string, v uint64) field   { return field{key: k, kind: kindUint, i: int64(v)} }
+func strField(k, v string) field           { return field{key: k, kind: kindString, str: v} }
+func intField(k string, v int) field       { return field{key: k, kind: kindInt, i: int64(v)} }
+func int64Field(k string, v int64) field   { return field{key: k, kind: kindInt64, i: v} }
+func uint64Field(k string, v uint64) field { return field{key: k, kind: kindUint, i: int64(v)} }
 func boolField(k string, v bool) field {
 	if v {
 		return field{key: k, kind: kindBool, i: 1}
 	}
 	return field{key: k, kind: kindBool, i: 0}
 }
-func floatField(k string, v float64) field      { return field{key: k, kind: kindFloat64, i: int64(math.Float64bits(v))} }
-func durField(k string, v time.Duration) field  { return field{key: k, kind: kindDuration, i: int64(v)} }
-func timeField(k string, v time.Time) field     { return field{key: k, kind: kindTime, i: v.UnixNano()} }
-func errField(k string, v error) field       { return field{key: k, kind: kindError, any: v} }
-func bytesField(k string, v []byte) field     { return field{key: k, kind: kindBytes, str: base64.StdEncoding.EncodeToString(v)} }
-func anyField(k string, v interface{}) field  { return field{key: k, kind: kindAny, any: v} }
+func floatField(k string, v float64) field {
+	return field{key: k, kind: kindFloat64, i: int64(math.Float64bits(v))}
+}
+func durField(k string, v time.Duration) field { return field{key: k, kind: kindDuration, i: int64(v)} }
+func timeField(k string, v time.Time) field    { return field{key: k, kind: kindTime, i: v.UnixNano()} }
+func errField(k string, v error) field         { return field{key: k, kind: kindError, any: v} }
+func bytesField(k string, v []byte) field {
+	return field{key: k, kind: kindBytes, str: base64.StdEncoding.EncodeToString(v)}
+}
+func anyField(k string, v interface{}) field { return field{key: k, kind: kindAny, any: v} }
 
 // fieldOf builds a typed field from an interface{} value, mapping the common
 // scalar types to their unboxed kind and falling back to kindAny for the rest.
@@ -169,17 +173,19 @@ type Field struct{ f field }
 
 // String/Int/... field constructors return a Field for use with WithAttrs and
 // slog interop. They never box scalars.
-func String(k, v string) Field            { return Field{strField(k, v)} }
-func Int(k string, v int) Field           { return Field{intField(k, v)} }
-func Int64(k string, v int64) Field       { return Field{int64Field(k, v)} }
-func Uint64(k string, v uint64) Field     { return Field{uint64Field(k, v)} }
-func Bool(k string, v bool) Field         { return Field{boolField(k, v)} }
-func Float64(k string, v float64) Field   { return Field{floatField(k, v)} }
+func String(k, v string) Field                 { return Field{strField(k, v)} }
+func Int(k string, v int) Field                { return Field{intField(k, v)} }
+func Int64(k string, v int64) Field            { return Field{int64Field(k, v)} }
+func Uint64(k string, v uint64) Field          { return Field{uint64Field(k, v)} }
+func Bool(k string, v bool) Field              { return Field{boolField(k, v)} }
+func Float64(k string, v float64) Field        { return Field{floatField(k, v)} }
 func Duration(k string, v time.Duration) Field { return Field{durField(k, v)} }
 func Time(k string, v time.Time) Field         { return Field{timeField(k, v)} }
 func Bytes(k string, v []byte) Field           { return Field{bytesField(k, v)} }
 func Complex128(k string, v complex128) Field  { return Field{strField(k, complex128ToString(v))} }
-func Complex64(k string, v complex64) Field    { return Field{strField(k, complex128ToString(complex128(v)))} }
+func Complex64(k string, v complex64) Field {
+	return Field{strField(k, complex128ToString(complex128(v)))}
+}
 
 // ErrorField constructs an error-typed field. (Named ErrorField because Error
 // is already the package-level ERROR log helper.)

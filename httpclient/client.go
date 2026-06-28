@@ -170,6 +170,7 @@ func (c *Client) fireEvent(name, method, url string, status, attempt int) {
 func (c *Client) observe(start time.Time) {
 	c.opts.Latency.Observe(time.Since(start))
 }
+
 // package defaults. It builds a single shared [http.Transport] sized by the
 // connection-pool options and wires the connect timeout into the dialer.
 //
@@ -366,7 +367,7 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request) (*http.Resp
 				req.Body = newBody
 			}
 		}
-			req = req.WithContext(ctx) // shallow copy, cheap
+		req = req.WithContext(ctx) // shallow copy, cheap
 
 		resp, err = c.httpCli.Do(req)
 

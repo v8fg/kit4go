@@ -146,6 +146,7 @@ func TestWithTimeout(t *testing.T) {
 //   - minWait<=0 or maxWait<=0 → 0 (immediate retry, backoff disabled);
 //   - normal exponential growth capped at maxWait;
 //   - overflow clamp (minWait<<attempt wraps) clamps to maxWait.
+//
 // All cases also assert the jitter band [0.5*base, base).
 func TestRetryDelay(t *testing.T) {
 	t.Run("zero_waits_disable_backoff", func(t *testing.T) {

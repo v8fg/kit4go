@@ -28,19 +28,19 @@ type fakeConn struct {
 	mu sync.Mutex
 
 	// Configuration knobs (set before use).
-	writeDeadlineErr error // returned by SetWriteDeadline
-	readDeadlineErr  error // returned by SetReadDeadline
-	writeErr         error // returned by Write after writing writeN bytes
-	writeN           int   // bytes Write reports as written (<= len(data))
+	writeDeadlineErr error  // returned by SetWriteDeadline
+	readDeadlineErr  error  // returned by SetReadDeadline
+	writeErr         error  // returned by Write after writing writeN bytes
+	writeN           int    // bytes Write reports as written (<= len(data))
 	readData         []byte // bytes Read returns (one shot, then readErr)
 	readErr          error  // returned by Read after exhausting readData
 
 	// Counters (read-only via atomic).
-	closes      atomic.Int64
-	writeCalls  atomic.Int64
-	readCalls   atomic.Int64
-	deadlinesW  atomic.Int64
-	deadlinesR  atomic.Int64
+	closes     atomic.Int64
+	writeCalls atomic.Int64
+	readCalls  atomic.Int64
+	deadlinesW atomic.Int64
+	deadlinesR atomic.Int64
 }
 
 func (f *fakeConn) Read(p []byte) (int, error) {
@@ -82,9 +82,9 @@ func (f *fakeConn) SetReadDeadline(t time.Time) error {
 	f.deadlinesR.Add(1)
 	return f.readDeadlineErr
 }
-func (f *fakeConn) LocalAddr() net.Addr                { return nil }
-func (f *fakeConn) RemoteAddr() net.Addr               { return nil }
-func (f *fakeConn) SetDeadline(time.Time) error        { return nil }
+func (f *fakeConn) LocalAddr() net.Addr         { return nil }
+func (f *fakeConn) RemoteAddr() net.Addr        { return nil }
+func (f *fakeConn) SetDeadline(time.Time) error { return nil }
 
 // newClientWithFakeConn builds a Client whose pool is pre-seeded with fc so
 // the first checkout returns fc (no dial). IdleTimeout=0 disables eviction so
@@ -468,7 +468,7 @@ func TestWriteOnce_ShortWrite(t *testing.T) {
 func TestWriteReadAll_ReadDeadlineError(t *testing.T) {
 	rdErr := errors.New("read setdeadline boom")
 	fc := &fakeConn{
-		writeN:        64, // accept any write
+		writeN:          64, // accept any write
 		readDeadlineErr: rdErr,
 	}
 	c := newClientWithFakeConn(t, fc, ClientOptions{
@@ -549,7 +549,7 @@ func TestWriteReadAll_ReadTimeoutZeroClearsDeadline(t *testing.T) {
 func TestWriteReadLine_ReadDeadlineError(t *testing.T) {
 	rdErr := errors.New("line read setdeadline boom")
 	fc := &fakeConn{
-		writeN:        64,
+		writeN:          64,
 		readDeadlineErr: rdErr,
 	}
 	c := newClientWithFakeConn(t, fc, ClientOptions{
@@ -740,7 +740,7 @@ func TestWithDefaults_NegativeRetryMax(t *testing.T) {
 // shift overflows — exercising the overflow clamp to maxWait.
 func TestRetryDelay_OverflowGuard(t *testing.T) {
 	minWait := time.Duration(int64(1) << 60) // 1<<60, positive, large
-	maxWait := time.Duration(maxInt64)        // huge cap so the loop runs to overflow
+	maxWait := time.Duration(maxInt64)       // huge cap so the loop runs to overflow
 	// attempt >= 3 so the doubling loop iterates enough to overflow.
 	for i := 0; i < 50; i++ {
 		d := retryDelay(3, minWait, maxWait)
@@ -780,12 +780,12 @@ func TestWithConn_CtxCancelSurfacesCtxErr(t *testing.T) {
 	}()
 
 	c := NewClient(ClientOptions{
-		Address:       ln.Addr().String(),
+		Address:        ln.Addr().String(),
 		ConnectTimeout: 200 * time.Millisecond,
-		ReadTimeout:   0, // rely on ctx; the read must truly block
-		WriteTimeout:  200 * time.Millisecond,
-		RetryMax:      0,
-		IdleTimeout:   0,
+		ReadTimeout:    0, // rely on ctx; the read must truly block
+		WriteTimeout:   200 * time.Millisecond,
+		RetryMax:       0,
+		IdleTimeout:    0,
 	})
 	defer c.Close()
 

@@ -229,4 +229,5 @@
 //
 // SPDX-License-Identifier: MIT
 package log4go
+
 // verified

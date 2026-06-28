@@ -24,10 +24,10 @@ type RateAlerter struct {
 	threshold int
 	cooldown  time.Duration
 
-	mu      sync.Mutex
-	counts  []int   // ring of per-second counters; len == window seconds
-	base    int64   // unix second of the newest bucket advanced to
-	sum     int     // sum of all live buckets (the current in-window count)
+	mu       sync.Mutex
+	counts   []int // ring of per-second counters; len == window seconds
+	base     int64 // unix second of the newest bucket advanced to
+	sum      int   // sum of all live buckets (the current in-window count)
 	lastFire time.Time
 }
 

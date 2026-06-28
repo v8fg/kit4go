@@ -83,10 +83,10 @@ func TestNewClient_EnableHTTP2_ConfiguresTransport(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(ClientOptions{
-		EnableHTTP2:     true,
-		RequestTimeout:  2 * time.Second,
-		ConnectTimeout:  time.Second,
-		RetryMax:        0,
+		EnableHTTP2:    true,
+		RequestTimeout: 2 * time.Second,
+		ConnectTimeout: time.Second,
+		RetryMax:       0,
 	})
 	// http2.ConfigureTransport installs a TLSClientConfig on the transport.
 	tr, ok := c.httpCli.Transport.(*http.Transport)
@@ -156,7 +156,7 @@ func TestDo_TransportErrorDrainsAttachedBody(t *testing.T) {
 		RetryMax:       5,
 		RetryWaitMin:   50 * time.Millisecond, // long enough to sleep inside select
 		RetryWaitMax:   200 * time.Millisecond,
-		RequestTimeout: 0,                     // rely on caller ctx
+		RequestTimeout: 0, // rely on caller ctx
 	}
 	c := NewClient(opts)
 
@@ -412,8 +412,8 @@ func TestShouldRetry_OpErrorWrappingCtxCanceled(t *testing.T) {
 // build an OpError that carries a context error without being one directly.
 type contextCanceledWrap struct{}
 
-func (contextCanceledWrap) Error() string   { return "op failed" }
-func (contextCanceledWrap) Unwrap() error   { return context.Canceled }
+func (contextCanceledWrap) Error() string { return "op failed" }
+func (contextCanceledWrap) Unwrap() error { return context.Canceled }
 
 // --- retryDelay: overflow guard --------------------------------------------
 

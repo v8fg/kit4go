@@ -23,7 +23,11 @@ func Benchmark_MultiCore_A_Discard(b *testing.B) {
 	defer lg.Close()
 	b.ReportAllocs()
 	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) { for pb.Next() { lg.Info("x") } })
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			lg.Info("x")
+		}
+	})
 }
 
 func Benchmark_MultiCore_D4_Discard(b *testing.B) {
@@ -35,7 +39,11 @@ func Benchmark_MultiCore_D4_Discard(b *testing.B) {
 	s.Register(discardWriter{})
 	b.ReportAllocs()
 	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) { for pb.Next() { s.Info("x") } })
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			s.Info("x")
+		}
+	})
 }
 
 func Benchmark_MultiCore_A_Slow(b *testing.B) {
@@ -45,7 +53,11 @@ func Benchmark_MultiCore_A_Slow(b *testing.B) {
 	defer lg.Close()
 	b.ReportAllocs()
 	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) { for pb.Next() { lg.Info("x") } })
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			lg.Info("x")
+		}
+	})
 }
 
 func Benchmark_MultiCore_D4_Slow(b *testing.B) {
@@ -57,5 +69,9 @@ func Benchmark_MultiCore_D4_Slow(b *testing.B) {
 	s.Register(slowWriter{work: 2000})
 	b.ReportAllocs()
 	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) { for pb.Next() { s.Info("x") } })
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			s.Info("x")
+		}
+	})
 }

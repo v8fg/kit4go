@@ -7,7 +7,8 @@ import (
 
 // Test_Integration_NewPingClose exercises the real success path against a live
 // Postgres. Skipped under -short and when PG_HOST is unset. Run locally with:
-//   PG_HOST=localhost PG_USER=postgres PG_PASS=postgres PG_DB=test go test ./postgres/
+//
+//	PG_HOST=localhost PG_USER=postgres PG_PASS=postgres PG_DB=test go test ./postgres/
 func Test_Integration_NewPingClose(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

@@ -26,11 +26,11 @@ func TestBucketIndex(t *testing.T) {
 		{101 * time.Microsecond, 1},
 		{500 * time.Microsecond, 1}, // == boundaries[1]
 		{time.Millisecond, 2},
-		{5 * time.Millisecond, 5},    // == boundaries[5]
-		{49 * time.Millisecond, 10},  // (30ms, 50ms]
-		{50 * time.Millisecond, 10},  // == boundaries[10]
-		{time.Hour, last},            // overflow -> last bucket
-		{-time.Millisecond, 0},       // negative -> bucket 0
+		{5 * time.Millisecond, 5},   // == boundaries[5]
+		{49 * time.Millisecond, 10}, // (30ms, 50ms]
+		{50 * time.Millisecond, 10}, // == boundaries[10]
+		{time.Hour, last},           // overflow -> last bucket
+		{-time.Millisecond, 0},      // negative -> bucket 0
 	}
 	for _, c := range cases {
 		if got := bucketIndex(b, c.v); got != c.exp {
@@ -56,10 +56,10 @@ func TestValidBoundaries(t *testing.T) {
 	for _, bad := range [][]time.Duration{
 		nil,
 		{},
-		{time.Millisecond, 0},                                  // contains <=0
-		{-time.Millisecond, time.Millisecond},                  // negative
-		{2 * time.Millisecond, time.Millisecond},               // decreasing
-		{time.Millisecond, time.Millisecond},                   // equal (not strict)
+		{time.Millisecond, 0},                    // contains <=0
+		{-time.Millisecond, time.Millisecond},    // negative
+		{2 * time.Millisecond, time.Millisecond}, // decreasing
+		{time.Millisecond, time.Millisecond},     // equal (not strict)
 	} {
 		if validBoundaries(bad) {
 			t.Errorf("validBoundaries(%v) = true, want false", bad)

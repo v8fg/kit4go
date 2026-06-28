@@ -799,7 +799,7 @@ func Test_KafKaWriter_buildPayload_BothSources(t *testing.T) {
 func Test_KafKaWriter_buildPayload_ExtraOnly(t *testing.T) {
 	w := &KafKaWriter{options: KafKaWriterOptions{
 		ProducerTopic: "t",
-		MSG: KafKaMSGFields{ExtraFields: map[string]interface{}{"k": "v"}},
+		MSG:           KafKaMSGFields{ExtraFields: map[string]interface{}{"k": "v"}},
 	}}
 	b := w.buildPayload(&Record{level: INFO, msg: "m"})
 	s := string(b)
@@ -991,10 +991,10 @@ type failFlusherWriter struct {
 	closed bool
 }
 
-func (f *failFlusherWriter) Init() error { return nil }
+func (f *failFlusherWriter) Init() error           { return nil }
 func (f *failFlusherWriter) Write(r *Record) error { return nil }
-func (f *failFlusherWriter) Flush() error { return errDeep("flush failed") }
-func (f *failFlusherWriter) Close() error { return errDeep("close failed") }
+func (f *failFlusherWriter) Flush() error          { return errDeep("flush failed") }
+func (f *failFlusherWriter) Close() error          { return errDeep("close failed") }
 
 // Test_Logger_Close_FlusherAndCloserErrors covers the two error branches in
 // (*Logger).Close: a Flusher whose Flush() errors, and an io.Closer whose

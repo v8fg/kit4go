@@ -21,11 +21,11 @@ type Options struct {
 	DBName   string
 	SSLMode  string // disable|require|verify-ca|verify-full; empty -> disable
 
-	MaxConns          int           // <=0 -> 10
-	MinConns          int           // <=0 -> 2
-	MaxConnLifetime   time.Duration // <=0 -> 30m
-	MaxConnIdleTime   time.Duration // <=0 -> 5m
-	ConnectTimeout    time.Duration // <=0 -> 5s
+	MaxConns        int           // <=0 -> 10
+	MinConns        int           // <=0 -> 2
+	MaxConnLifetime time.Duration // <=0 -> 30m
+	MaxConnIdleTime time.Duration // <=0 -> 5m
+	ConnectTimeout  time.Duration // <=0 -> 5s
 }
 
 // Client wraps a pgx connection pool.

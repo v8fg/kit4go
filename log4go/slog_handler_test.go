@@ -14,7 +14,7 @@ func Test_SlogHandler_LevelMapping(t *testing.T) {
 		sl   slog.Level
 		want int
 	}{
-		{slog.LevelDebug - 4, TRACE},   // below slog Debug -> log4go TRACE
+		{slog.LevelDebug - 4, TRACE}, // below slog Debug -> log4go TRACE
 		{slog.LevelDebug, DEBUG},
 		{slog.LevelInfo, INFO},
 		{slog.LevelWarn, WARNING},

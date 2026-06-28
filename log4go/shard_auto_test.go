@@ -13,15 +13,15 @@ func Test_AutoShardCount(t *testing.T) {
 		procs int
 		want  int
 	}{
-		{1, 2},   // tiny VM / single-core container -> floor 2
-		{2, 2},   // 2-core -> 2
-		{4, 2},   // 4-core (common cloud) -> 2
-		{6, 3},   // -> 3
-		{8, 4},   // 8-core -> 4
-		{10, 5},  // 10-core (this M5) -> 5
-		{16, 8},  // 16-core -> 8 (no cap; scales with cores)
-		{32, 16}, // 32-core -> 16 (scales, not capped at 8)
-		{64, 32}, // 64-core host -> 32 (big machine gets more consumers)
+		{1, 2},    // tiny VM / single-core container -> floor 2
+		{2, 2},    // 2-core -> 2
+		{4, 2},    // 4-core (common cloud) -> 2
+		{6, 3},    // -> 3
+		{8, 4},    // 8-core -> 4
+		{10, 5},   // 10-core (this M5) -> 5
+		{16, 8},   // 16-core -> 8 (no cap; scales with cores)
+		{32, 16},  // 32-core -> 16 (scales, not capped at 8)
+		{64, 32},  // 64-core host -> 32 (big machine gets more consumers)
 		{128, 64}, // 128-core -> 64
 	}
 	prev := runtime.GOMAXPROCS(0)

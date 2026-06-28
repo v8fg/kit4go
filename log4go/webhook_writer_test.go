@@ -66,8 +66,8 @@ func Test_WebhookWriter_Filter(t *testing.T) {
 		Filter: func(r *Record) bool { return strings.Contains(r.msg, "pay") },
 	})
 
-	_ = w.Write(&Record{level: ERROR, msg: "db timeout"})     // filtered out
-	_ = w.Write(&Record{level: ERROR, msg: "payment failed"}) // passes
+	_ = w.Write(&Record{level: ERROR, msg: "db timeout"})       // filtered out
+	_ = w.Write(&Record{level: ERROR, msg: "payment failed"})   // passes
 	_ = w.Write(&Record{level: ERROR, msg: "pay channel down"}) // passes
 
 	got := sink.snapshot()

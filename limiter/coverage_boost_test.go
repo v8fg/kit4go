@@ -205,7 +205,7 @@ func TestTokenBucket_NextAvailableDelay_Branches(t *testing.T) {
 	t.Run("deficit over 1ms clamped down to 1ms", func(t *testing.T) {
 		// Low rate so the natural wait exceeds 1ms; must clamp to 1ms.
 		// lastTime in the future => refill exactly 0, deficit deterministic.
-		tb := newTokenBucket(2, 1) // 0.5s per token
+		tb := newTokenBucket(2, 1)              // 0.5s per token
 		tb.tokens.Store(float64BitsStable(0.0)) // deficit 1 => ~0.5s
 		tb.lastTime.Store(time.Now().Add(time.Second).UnixNano())
 		d := tb.nextAvailableDelay()

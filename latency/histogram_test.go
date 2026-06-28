@@ -47,10 +47,10 @@ func TestNewHistogram_CustomBoundaries(t *testing.T) {
 
 func TestNewHistogram_InvalidBoundaries(t *testing.T) {
 	for _, bad := range [][]time.Duration{
-		{2 * time.Millisecond, time.Millisecond},        // decreasing
-		{0, time.Millisecond},                           // <= 0
-		{time.Millisecond, time.Millisecond},            // not strictly increasing
-		{-time.Millisecond, time.Millisecond},           // negative
+		{2 * time.Millisecond, time.Millisecond}, // decreasing
+		{0, time.Millisecond},                    // <= 0
+		{time.Millisecond, time.Millisecond},     // not strictly increasing
+		{-time.Millisecond, time.Millisecond},    // negative
 	} {
 		if latency.NewHistogram(latency.Options{Boundaries: bad}) != nil {
 			t.Errorf("NewHistogram(%v) = non-nil, want nil", bad)
