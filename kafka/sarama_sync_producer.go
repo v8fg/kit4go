@@ -79,7 +79,7 @@ func (s *saramaSyncProducer) Send(ctx context.Context, msg Message) (int32, int6
 	}
 	s.success.Add(1)
 	s.bytes.Add(uint64(len(msg.Value)))
-	s.fire(ProducerEvent{Name: "success", Topic: pm.Topic, Bytes: len(msg.Value)})
+	s.fire(ProducerEvent{Name: "success", Topic: pm.Topic, Partition: partition, Offset: offset, Bytes: len(msg.Value)})
 	return partition, offset, nil
 }
 

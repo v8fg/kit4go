@@ -44,7 +44,7 @@ func (s *franzProducer) Send(ctx context.Context, msg Message) error {
 		s.success.Add(1)
 		n := uint64(len(rec.Value))
 		s.bytes.Add(n)
-		s.fire(ProducerEvent{Name: "success", Topic: rec.Topic, Bytes: int(n)})
+		s.fire(ProducerEvent{Name: "success", Topic: rec.Topic, Partition: rec.Partition, Offset: rec.Offset, Bytes: int(n)})
 	})
 	return nil
 }
@@ -115,7 +115,7 @@ func (s *franzSyncProducer) Send(ctx context.Context, msg Message) (int32, int64
 	}
 	s.success.Add(1)
 	s.bytes.Add(uint64(len(msg.Value)))
-	s.fire(ProducerEvent{Name: "success", Topic: r.Topic, Bytes: len(msg.Value)})
+	s.fire(ProducerEvent{Name: "success", Topic: r.Topic, Partition: pr.Partition, Offset: pr.Offset, Bytes: len(msg.Value)})
 	return pr.Partition, pr.Offset, nil
 }
 

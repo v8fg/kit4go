@@ -75,7 +75,7 @@ func (s *saramaProducer) startDrains() {
 			s.success.Add(1)
 			n := uint64(encLen(pm.Value))
 			s.bytes.Add(n)
-			s.fire(ProducerEvent{Name: "success", Topic: pm.Topic, Bytes: int(n)})
+			s.fire(ProducerEvent{Name: "success", Topic: pm.Topic, Partition: pm.Partition, Offset: pm.Offset, Bytes: int(n)})
 		}
 	}()
 	go func() {

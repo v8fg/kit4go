@@ -174,12 +174,16 @@ type ConsumerMetrics struct {
 }
 
 // ProducerEvent feeds Producer.SetOnEvent. Name is one of "send","success",
-// "error","close".
+// "error","close". On "success", Partition/Offset carry the broker-assigned
+// location of the ack'd message (so the async path surfaces the same info a
+// sarama Successes() channel would); they are zero for the other event names.
 type ProducerEvent struct {
-	Name  string
-	Topic string
-	Bytes int
-	Err   error
+	Name      string
+	Topic     string
+	Partition int32
+	Offset    int64
+	Bytes     int
+	Err       error
 }
 
 // ConsumerEvent feeds ConsumerGroup.SetOnEvent. Name is one of "message",

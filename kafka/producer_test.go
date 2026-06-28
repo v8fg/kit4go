@@ -109,6 +109,54 @@ func TestProducer_Async_SendAfterClose(t *testing.T) {
 	}
 }
 
+// TestProducer_Async_SuccessEvent_HasPartitionOffset verifies the async success
+// event surfaces the broker-assigned Partition/Offset (the info a sarama
+// Successes() channel would give), so the async path loses nothing.
+func TestProducer_Async_SuccessEvent_HasPartitionOffset(t *testing.T) {
+	mp := mocks.NewAsyncProducer(t, mockAsyncCfg())
+	mp.ExpectInputAndSucceed()
+	mp.ExpectInputAndSucceed()
+	p, _ := newSaramaProducer(Options{Brokers: []string{"x"}, Topic: "t"}.withDefaults(),
+		func([]string, *sarama.Config) (sarama.AsyncProducer, error) { return mp, nil })
+
+	var mu sync.Mutex
+	var successes []ProducerEvent
+	p.SetOnEvent(func(e ProducerEvent) {
+		if e.Name == "success" {
+			mu.Lock()
+			successes = append(successes, e)
+			mu.Unlock()
+		}
+	})
+	_ = p.Send(context.Background(), Message{Value: []byte("a")})
+	_ = p.Send(context.Background(), Message{Value: []byte("bb")})
+	waitUntil(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(successes) == 2
+	}, "2 successes")
+	_ = p.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(successes) != 2 {
+		t.Fatalf("got %d successes want 2", len(successes))
+	}
+	// the mock assigns partition (via partitioner) + incrementing offset
+	for _, e := range successes {
+		if e.Offset < 0 {
+			t.Errorf("success event Offset<0: %+v", e)
+		}
+		if e.Bytes == 0 {
+			t.Errorf("success event Bytes=0: %+v", e)
+		}
+	}
+	// two messages -> two distinct offsets (mock increments)
+	if successes[0].Offset == successes[1].Offset {
+		t.Errorf("offsets not distinct: %d == %d", successes[0].Offset, successes[1].Offset)
+	}
+}
+
 func TestProducer_ValidateNoBrokers(t *testing.T) {
 	if _, err := NewProducer(); err == nil {
 		t.Error("NewProducer with no brokers should error")
