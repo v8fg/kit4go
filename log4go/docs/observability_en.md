@@ -471,10 +471,37 @@ stop := log4go.SetSamplingStrategyFor(
 |----------|------------------|-----|
 | **Dev / debug / small volume** | JSON | human-readable, ES native |
 | **Ad-tech 1M+ QPS (production)** | **Protobuf** | 3× smaller bandwidth, cross-language .proto |
-| **Big-data (Spark/Flink/Hive)** | **Avro** | Hadoop ecosystem native, Schema Registry |
-| **Gaming events (zero-copy read)** | **FlatBuffers** | consumer reads selective fields without full parse |
-| **Financial audit (schema strict)** | Protobuf / Avro | strict schema, field-level evolution |
+| **Big-data (Spark/Flink/Hive)** | **Protobuf** | Spark 3.x `from_protobuf()` — Avro not required |
+| **Gaming events (zero-copy read)** | **FlatBuffers** (future) | consumer reads selective fields without full parse |
+| **Financial audit (schema strict)** | Protobuf | strict schema, field-level evolution, .proto in git |
 | **Cross-language (Java/Python/Go)** | Protobuf | most universal IDL + type safety |
+
+### Avro assessment: not recommended for log4go | Avro 评估：不建议
+
+**Avro's 25% size advantage over Protobuf is not worth the cost:**
+
+| Cost | Detail |
+|------|--------|
+| Binary size | +38% (hamba/avro ~8000 lines) |
+| Infrastructure | Requires Confluent Schema Registry server (new ops burden) |
+| Can't hand-roll | Avro binary encoding is complex (unions + type-dependent encoding) |
+| ES incompatible | ES reads JSON only; Avro needs decode → JSON (extra consumer) |
+| CVE surface | Follow hamba/avro upstream security patches |
+| go.mod bloat | +~30 lines transitive dependencies |
+
+**Why Protobuf is sufficient (Avro's advantages have eroded):**
+- Spark 3.x has `from_protobuf()` — Avro's "native Spark" advantage is gone.
+- Log record schemas rarely change — Schema Registry's central management is overkill
+  for logging (a .proto file in git is sufficient).
+- 25B/rec difference (95B → 70B) is marginal at Kafka scale (95 MB/s → 70 MB/s on a
+  cluster handling hundreds of MB/s).
+
+**Decision: JSON + Protobuf only. Avro is available via the open KafkaCodec interface
+if a future Spark/Flink + Schema Registry pipeline genuinely needs it.**
+
+Avro 评估：**不推荐引入 log4go**。相比 Protobuf 只省 25% 体积，代价是 +38% binary +
+Schema Registry 基础设施 + 重依赖。Spark 3.x 已支持 Protobuf，Avro 的"原生大数据"优势
+已消失。接口已开放，未来真需要时再实现。
 
 ### log4go KafkaCodec API (extensible) | log4go 编解码接口（可扩展）
 
