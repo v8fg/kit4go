@@ -452,6 +452,78 @@ stop := log4go.SetSamplingStrategyFor(
 
 ---
 
+## Kafka Codec Comparison & Selection Guide | Kafka 编解码方案对比与选择
+
+### Industry serialization formats | 业界序列化格式
+
+| Format | Size/rec | Encode | Decode | Schema | ES native | Big-data native | Status in log4go |
+|--------|---------|--------|--------|--------|-----------|----------------|-----------------|
+| **JSON** | ~177B | ~200ns | ~200ns | none (weak) | ✅ | ✅ | ✅ **Done** (KafkaCodecJSON) |
+| **Protobuf** | ~95B (54%) | ~260ns | ~150ns | ✅ .proto | needs decode | ✅ | ✅ **Done** (KafkaCodecProto) |
+| **Avro** | ~70B (40%) | ~150ns | ~100ns | ✅ Schema Registry | needs decode | ✅ **native** | ☐ planned (interface open) |
+| **FlatBuffers** | ~100B | ~50ns | ~10ns (zero-copy) | ✅ .fbs | needs decode | needs adapter | ☐ optional (gaming) |
+| Thrift | ~90B | ~250ns | ~200ns | ✅ .thrift | needs decode | needs adapter | ❌ no consumer demand |
+| MessagePack | ~150B | ~180ns | ~180ns | none | needs decode | needs adapter | ❌ no consumer demand |
+
+### Decision matrix: which codec for which scenario | 场景选型矩阵
+
+| Scenario | Recommended codec | Why |
+|----------|------------------|-----|
+| **Dev / debug / small volume** | JSON | human-readable, ES native |
+| **Ad-tech 1M+ QPS (production)** | **Protobuf** | 3× smaller bandwidth, cross-language .proto |
+| **Big-data (Spark/Flink/Hive)** | **Avro** | Hadoop ecosystem native, Schema Registry |
+| **Gaming events (zero-copy read)** | **FlatBuffers** | consumer reads selective fields without full parse |
+| **Financial audit (schema strict)** | Protobuf / Avro | strict schema, field-level evolution |
+| **Cross-language (Java/Python/Go)** | Protobuf | most universal IDL + type safety |
+
+### log4go KafkaCodec API (extensible) | log4go 编解码接口（可扩展）
+
+```go
+// Built-in (done):
+log4go.KafkaCodecJSON{}   // default — ES native, human-readable
+log4go.KafkaCodecProto{}  // production — 3× smaller, .proto cross-language
+
+// Planned:
+// log4go.KafkaCodecAvro{}  // big-data — Spark/Flink native, Schema Registry
+
+// Custom (interface open):
+type KafkaCodec interface {
+    Encode(p *kafkaPayload) []byte
+    ContentType() string
+}
+log4go.SetKafkaCodec(myCustomCodec{})
+```
+
+### Gaming + Kafka: does it apply? | 游戏 + Kafka：用不用？
+
+| Game data type | Kafka? | Why | Alternative |
+|----------------|--------|-----|-------------|
+| Real-time gameplay (frames/position) | ❌ | latency-sensitive (<10ms) | UDP/WebSocket/shared memory |
+| Match/room management | ❌ | strong consistency + low latency | Redis/custom |
+| Player behavior logs | ✅ | event stream, tolerates delay | = log4go use case |
+| Operations analytics (DAU/retention) | ✅ | big-data analysis | Kafka → Spark/Flink |
+| Audit/compliance (anti-addiction/spend) | ✅ | must persist | Kafka → ES/warehouse |
+| Anti-cheat (streaming detection) | ✅ | stream processing | Kafka → Flink CEP |
+
+**Conclusion**: game backends don't use Kafka for real-time gameplay (too slow), but DO
+use it for operations/logs/analytics/audit/anti-cheat — exactly log4go's use case.
+Game telemetry logs through log4go → Kafka → consumer is identical to ad-tech's pattern.
+
+**FlatBuffers** value is on the **consumer** side (zero-copy selective field read), not the
+producer (encoder) side. For log4go (producer), Protobuf is sufficient. FlatBuffers becomes
+relevant if a game-event consumer needs to read billions of records selectively without full parse.
+
+### .proto schema (for Protobuf consumers)
+
+See `log4go/proto/log_record.proto` — consumers generate decoders in any language:
+```bash
+protoc --python_out=. log_record.proto   # Python consumer
+protoc --java_out=. log_record.proto     # Java consumer
+protoc --go_out=. log_record.proto       # Go consumer
+```
+
+---
+
 ## Sources | 参考来源
 
 - [Elastic Common Schema (ECS)](https://www.elastic.co/guide/en/ecs/current/ecs-field-reference.html)

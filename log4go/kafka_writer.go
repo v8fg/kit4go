@@ -98,6 +98,8 @@ type KafKaWriter struct {
 	producerFactory func(brokers []string, cfg *sarama.Config) (sarama.AsyncProducer, error)
 	drainInterval   time.Duration
 	wg              sync.WaitGroup
+	codecMu         sync.RWMutex
+	codec           KafkaCodec // default KafkaCodecJSON; swap via SetKafkaCodec (rare)
 
 	run  atomic.Bool // set true once the daemon starts
 	quit chan struct{}
@@ -116,6 +118,7 @@ func NewKafKaWriter(options KafKaWriterOptions) *KafKaWriter {
 		policy:        ParseOverflowPolicy(options.OverflowPolicy),
 		drainInterval: 200 * time.Millisecond,
 	}
+	w.codec = KafkaCodecJSON{} // default codec
 	w.stats.SetAlertEvery(1000, 1000)
 	return w
 }
@@ -283,11 +286,26 @@ func (k *KafKaWriter) buildPayload(r *Record) []byte {
 		}
 		p.userFields = uf
 	}
-	// MarshalJSON is a hand-rolled, infallible append marshaler with no error
-	// path (see kafkaPayload.MarshalJSON), so the former `if err != nil` branch
-	// was unreachable dead code — removed during coverage hardening.
+	k.codecMu.RLock()
+	c := k.codec
+	k.codecMu.RUnlock()
+	if c != nil {
+		return c.Encode(&p)
+	}
 	b, _ := p.MarshalJSON()
 	return b
+}
+
+// SetKafkaCodec swaps the serialization codec (JSON default ↔ Protobuf).
+// RWMutex-protected — safe under concurrent logging, takes effect on the next
+// record. Codec swaps are rare (config change, not per-record).
+func (k *KafKaWriter) SetKafkaCodec(c KafkaCodec) {
+	if c == nil {
+		c = KafkaCodecJSON{}
+	}
+	k.codecMu.Lock()
+	k.codec = c
+	k.codecMu.Unlock()
 }
 
 // Write service for Record. It never spawns a goroutine per record; the record

@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package log4go;
+
+option go_package = "github.com/v8fg/kit4go/log4go/proto;log4goproto";
+
+// LogRecord is the binary serialization of a log4go record for Kafka.
+// Field numbers MUST match the hand-rolled encoder in kafka_proto.go.
+// Consumers generate decoders from this file in their language:
+//   protoc --python_out=. log_record.proto
+//   protoc --java_out=. log_record.proto
+//   protoc --go_out=. log_record.proto
+//
+// All framework fields (1-9) are always emitted by the encoder (empty strings
+// are omitted for proto3 default). Field 10 (fields) carries user/business
+// fields as repeated key-value pairs; non-string values are JSON-encoded into
+// the value string (consumer JSON-parses back to typed value).
+message LogRecord {
+  int64 unix_nano = 1;     // wall-clock nanoseconds (strict ordering key 1)
+  uint64 seq = 2;          // process-global monotonic counter (ordering key 2)
+  string level = 3;        // "INFO", "ERROR", etc (RFC 5424 + TRACE)
+  string file = 4;         // source file:line (caller info)
+  string message = 5;      // log message text
+  string timestamp = 6;    // RFC3339 UTC with micros (human-readable)
+  int64 now = 7;           // unix seconds (for quick bucketing)
+  string server_ip = 8;    // legacy routing (prefer Base Field "server_ip")
+  string es_index = 9;     // legacy routing (prefer Base Field "es_index")
+  repeated Field fields = 10;  // user/business structured fields
+
+  message Field {
+    string key = 1;
+    string value = 2;  // JSON-encoded for non-string types; raw string for strings
+  }
+}
