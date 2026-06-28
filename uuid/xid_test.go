@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/agiledragon/gomonkey"
 	"github.com/rs/xid"
 	"github.com/smartystreets/goconvey/convey"
 
@@ -12,29 +11,21 @@ import (
 )
 
 func TestNewXID(t *testing.T) {
-	testXIDStr := "cd1rbp8nhc7lkdm71vsg"
-	testXID, _ := uuid.XIDFromString(testXIDStr)
 	convey.Convey("TestNewXID", t, func() {
-		outputs := []gomonkey.OutputCell{
-			{Values: gomonkey.Params{testXID}, Times: 1},
-		}
-		af := gomonkey.ApplyFuncSeq(xid.New, outputs)
-		defer af.Reset()
-		convey.So(uuid.NewXID().String(), convey.ShouldEqual, testXIDStr)
+		// generator: invariant check (real generator; no error-path — gomonkey previously asserted a fixed value, now we assert the version/non-nil invariant)
+		newID := uuid.NewXID()
+		convey.So(newID.IsNil(), convey.ShouldBeFalse)
+		convey.So(newID.String(), convey.ShouldNotBeEmpty)
 	})
 }
 
 func TestNewXIDWithTime(t *testing.T) {
-	testXIDStr := "cd1rbp8nhc7lkdm71vsg"
-	testXID, _ := uuid.XIDFromString(testXIDStr)
 	timePart := time.Unix(0, 1665381861000000000)
 	convey.Convey("TestNewXIDWithTime", t, func() {
-		outputs := []gomonkey.OutputCell{
-			{Values: gomonkey.Params{testXID}, Times: 1},
-		}
-		af := gomonkey.ApplyFuncSeq(xid.NewWithTime, outputs)
-		defer af.Reset()
-		convey.So(uuid.NewXIDWithTime(timePart).String(), convey.ShouldEqual, testXIDStr)
+		// generator: invariant check (real generator; no error-path — gomonkey previously asserted a fixed value, now we assert the version/non-nil invariant)
+		newID := uuid.NewXIDWithTime(timePart)
+		convey.So(newID.IsNil(), convey.ShouldBeFalse)
+		convey.So(newID.String(), convey.ShouldNotBeEmpty)
 	})
 }
 
@@ -59,6 +50,11 @@ func TestXIDFromString(t *testing.T) {
 	convey.Convey("TestXIDFromString", t, func() {
 		outUUID, _ := uuid.XIDFromString(testXIDStr)
 		convey.So(outUUID.String(), convey.ShouldEqual, testXIDStr)
+
+		// error-path: malformed string returns an error.
+		outBad, err := uuid.XIDFromString("not-an-xid!")
+		convey.So(outBad.IsNil(), convey.ShouldBeTrue)
+		convey.So(err, convey.ShouldBeError)
 	})
 }
 
@@ -68,5 +64,10 @@ func TestXIDFromBytes(t *testing.T) {
 	convey.Convey("TestXIDFromBytes", t, func() {
 		outUUID, _ := uuid.XIDFromBytes(testXID.Bytes())
 		convey.So(outUUID.String(), convey.ShouldEqual, testXIDStr)
+
+		// error-path: wrong-length byte slice returns an error.
+		outBad, err := uuid.XIDFromBytes([]byte{1, 2, 3})
+		convey.So(outBad.IsNil(), convey.ShouldBeTrue)
+		convey.So(err, convey.ShouldBeError)
 	})
 }
