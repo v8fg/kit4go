@@ -384,6 +384,49 @@ type customStrategy struct{}
 
 func (customStrategy) ShouldLog(string) bool { return true }
 
+// TestBaseField_UpsertReplaceClear: SetBaseField upserts (no duplicate),
+// SetBaseFields replaces (full replace), ClearBaseFields empties.
+func TestBaseField_UpsertReplaceClear(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 4))
+	defer root.Close()
+
+	// SetBaseField upsert (no duplicate)
+	root.SetBaseField("a", 1)
+	root.SetBaseField("a", 2) // same key → upsert, not append
+	root.SetBaseField("b", 3)
+	bf := root.baseFields.v.Load()
+	if len(*bf) != 2 {
+		t.Errorf("after upsert: len=%d want 2", len(*bf))
+	}
+
+	// SetBaseFields full replace (removes old keys)
+	root.SetBaseFields(map[string]interface{}{"c": 4})
+	bf = root.baseFields.v.Load()
+	if len(*bf) != 1 {
+		t.Errorf("after replace: len=%d want 1 (a,b gone, only c)", len(*bf))
+	}
+
+	// ClearBaseFields
+	root.ClearBaseFields()
+	bf = root.baseFields.v.Load()
+	if bf != nil {
+		t.Errorf("after clear: want nil, got len=%d", len(*bf))
+	}
+}
+
+// TestPackage_ClearBaseFields covers the package-level ClearBaseFields.
+func TestPackage_ClearBaseFields(t *testing.T) {
+	defer Close()
+	Close()
+	SetupLog(LogConfig{Level: "info", ConsoleWriter: ConsoleWriterOptions{Enable: true}})
+	SetBaseField("x", 1)
+	ClearBaseFields()
+	if dl := defaultLogger(); dl.baseFields.v.Load() != nil {
+		t.Error("package ClearBaseFields did not clear")
+	}
+	Close()
+}
+
 // TestPriorityLevel_ErrorBypass: even on a sampled-out request (ratio=0),
 // records at or above PriorityLevel (ERROR) are always kept — the
 // industry-standard "error protection" pattern.
@@ -396,12 +439,12 @@ func TestPriorityLevel_ErrorBypass(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), "trace_id", "abcdef0123456789abcdef0123456789")
 	root.SetSamplingStrategy(TraceIDRatioBased{Ratio: 0}) // drop all
-	root.SetPriorityLevel(ERROR)                           // errors bypass
+	root.SetPriorityLevel(ERROR)                          // errors bypass
 
-	lg := root.WithContext(ctx) // sampleDrop=true (ratio=0)
-	lg.Info("info should be dropped")  // INFO(6) > ERROR(3) → dropped
-	lg.Error("error should be kept")   // ERROR(3) <= ERROR(3) → kept (bypass)
-	lg.Critical("critical kept")       // CRITICAL(2) <= ERROR(3) → kept
+	lg := root.WithContext(ctx)       // sampleDrop=true (ratio=0)
+	lg.Info("info should be dropped") // INFO(6) > ERROR(3) → dropped
+	lg.Error("error should be kept")  // ERROR(3) <= ERROR(3) → kept (bypass)
+	lg.Critical("critical kept")      // CRITICAL(2) <= ERROR(3) → kept
 
 	waitFor(t, func() bool { return cw.Len() >= 2 }, time.Second)
 	if cw.Len() != 2 {

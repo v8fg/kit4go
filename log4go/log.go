@@ -558,7 +558,7 @@ func newLoggerWithRecords(records chan *Record) *Logger {
 	l.quit = make(chan struct{})
 	l.recordsByLevel = new([TRACE + 1]uint64)
 	l.occurredByLevel = new([TRACE + 1]uint64)
-	l.priorityLevel.Store(-1) // default: no bypass; sampling governs all
+	l.priorityLevel.Store(-1)          // default: no bypass; sampling governs all
 	l.baseFields = &baseFieldsHolder{} // shared with every clone (see clone)
 	l.level.Store(int32(DEBUG))
 	lp := DefaultLayout
@@ -797,46 +797,58 @@ func (l *Logger) SetLayout(layout string) {
 	l.layout.Store(&v)
 }
 
-// SetBaseField registers a global static field that EVERY subsequent log
-// record will carry (merged into Record.fields). Unlike With (which returns
-// a child Logger), base fields affect the singleton and all child Loggers.
-// Use at startup for environment fields: hostname, server_ip, app_name, env.
+// SetBaseField registers or updates a global static field (upsert by key). Every
+// subsequent log record carries it. If the key already exists, its value is
+// replaced (not duplicated). Use at startup for environment fields: hostname,
+// service_name, env, region.
 func (l *Logger) SetBaseField(key string, val interface{}) {
+	f := fieldOf(key, val)
 	cur := l.baseFields.v.Load()
-	var next []field
 	if cur != nil {
-		next = make([]field, len(*cur)+1)
-		copy(next, *cur)
-	} else {
-		next = make([]field, 1)
+		next := make([]field, len(*cur))
+		copy(next, *cur) // copy-on-write: never mutate the snapshot the bootstrap reads
+		for i := range next {
+			if next[i].key == key {
+				next[i] = f // upsert: replace existing
+				l.baseFields.v.Store(&next)
+				return
+			}
+		}
+		// key not found → append
+		next = append(next, f)
+		l.baseFields.v.Store(&next)
+		return
 	}
-	next[len(next)-1] = fieldOf(key, val)
+	// no existing fields → first field
+	next := []field{f}
 	l.baseFields.v.Store(&next)
 }
 
-// SetBaseFields is a batch version of SetBaseField.
+// SetBaseFields REPLACES all base fields with the given map (full replace, not
+// append). The map IS the new complete set — omit a key to remove it, add a key
+// to include it. Use ClearBaseFields() to remove all.
 func (l *Logger) SetBaseFields(m map[string]interface{}) {
-	cur := l.baseFields.v.Load()
-	next := make([]field, 0, len(m)+func() int {
-		if cur != nil {
-			return len(*cur)
-		}
-		return 0
-	}())
-	if cur != nil {
-		next = append(next, *cur...)
-	}
+	next := make([]field, 0, len(m))
 	for k, v := range m {
 		next = append(next, fieldOf(k, v))
 	}
 	l.baseFields.v.Store(&next)
 }
 
-// SetBaseField registers a global static field on the default logger.
+// ClearBaseFields removes all base fields. Subsequent records carry no base
+// fields until SetBaseField(s) is called again.
+func (l *Logger) ClearBaseFields() {
+	l.baseFields.v.Store(nil)
+}
+
+// SetBaseField upserts a global static field on the default logger.
 func SetBaseField(key string, val interface{}) { defaultLogger().SetBaseField(key, val) }
 
-// SetBaseFields registers global static fields on the default logger.
+// SetBaseFields REPLACES all base fields on the default logger.
 func SetBaseFields(m map[string]interface{}) { defaultLogger().SetBaseFields(m) }
+
+// ClearBaseFields removes all base fields from the default logger.
+func ClearBaseFields() { defaultLogger().ClearBaseFields() }
 
 // SetLevel set the logger level
 func (l *Logger) SetLevel(lvl int) {
