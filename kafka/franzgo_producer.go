@@ -24,6 +24,7 @@ type franzProducer struct {
 	batchCount    atomic.Uint64
 	batchMax      atomic.Uint64
 	bytesEnqueued atomic.Uint64
+	bytesFailed   atomic.Uint64
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -66,6 +67,7 @@ func (s *franzProducer) SendBatch(ctx context.Context, msgs []Message) error {
 		s.cl.Produce(ctx, r, func(rec *kgo.Record, err error) {
 			if err != nil {
 				s.failed.Add(1)
+				s.bytesFailed.Add(uint64(len(r.Value)))
 				s.fire(ProducerEvent{Name: "error", Topic: r.Topic, Err: err})
 				return
 			}
@@ -95,16 +97,18 @@ func (s *franzProducer) Metrics() ProducerMetrics {
 	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
 	be := s.bytesEnqueued.Load()
 	ba := s.bytes.Load()
+	bf := s.bytesFailed.Load()
 	return ProducerMetrics{
 		Enqueued:      e,
 		Success:       su,
 		Failed:        f,
 		Bytes:         ba,
+		BytesFailed:   bf,
 		BytesEnqueued: be,
 		BatchCount:    s.batchCount.Load(),
 		BatchMax:      s.batchMax.Load(),
 		InFlight:      ComputeInFlight(e, su, f),
-		BufferedBytes: ComputeBufferedBytes(be, ba),
+		BufferedBytes: ComputeBufferedBytes(be, ba, bf),
 	}
 }
 
@@ -142,11 +146,12 @@ type franzSyncProducer struct {
 	opts Options
 	cl   *kgo.Client
 
-	closed   atomic.Bool
-	enqueued atomic.Uint64
-	success  atomic.Uint64
-	failed   atomic.Uint64
-	bytes    atomic.Uint64
+	closed      atomic.Bool
+	enqueued    atomic.Uint64
+	success     atomic.Uint64
+	failed      atomic.Uint64
+	bytes       atomic.Uint64
+	bytesFailed atomic.Uint64
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -199,6 +204,7 @@ func (s *franzSyncProducer) SendBatch(ctx context.Context, msgs []Message) error
 	for i, pr := range res {
 		if pr.Err != nil {
 			s.failed.Add(1)
+			s.bytesFailed.Add(uint64(len(msgs[i].Value)))
 			if firstErr == nil {
 				firstErr = pr.Err
 			}
@@ -212,13 +218,14 @@ func (s *franzSyncProducer) SendBatch(ctx context.Context, msgs []Message) error
 
 func (s *franzSyncProducer) Metrics() ProducerMetrics {
 	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
-	be, ba := s.bytes.Load(), s.bytes.Load() // sync: enqueued ≈ acked (blocks per send)
+	ba := s.bytes.Load()
 	return ProducerMetrics{
 		Enqueued:      e,
 		Success:       su,
 		Failed:        f,
 		Bytes:         ba,
-		BytesEnqueued: be,
+		BytesFailed:   s.bytesFailed.Load(),
+		BytesEnqueued: ba,
 		InFlight:      ComputeInFlight(e, su, f),
 		BufferedBytes: 0, // sync: no buffered bytes (blocks per send)
 	}

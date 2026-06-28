@@ -37,6 +37,7 @@ type saramaProducer struct {
 	batchCount    atomic.Uint64
 	batchMax      atomic.Uint64
 	bytesEnqueued atomic.Uint64
+	bytesFailed   atomic.Uint64
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -84,6 +85,7 @@ func (s *saramaProducer) startDrains() {
 	go func() {
 		for pe := range s.p.Errors() {
 			s.failed.Add(1)
+			s.bytesFailed.Add(uint64(encLen(pe.Msg.Value)))
 			s.fire(ProducerEvent{Name: "error", Topic: pe.Msg.Topic, Err: pe.Err})
 		}
 	}()
@@ -164,11 +166,12 @@ func (s *saramaProducer) Metrics() ProducerMetrics {
 		Success:       su,
 		Failed:        f,
 		Bytes:         ba,
+		BytesFailed:   s.bytesFailed.Load(),
 		BytesEnqueued: be,
 		BatchCount:    s.batchCount.Load(),
 		BatchMax:      s.batchMax.Load(),
 		InFlight:      ComputeInFlight(e, su, f),
-		BufferedBytes: ComputeBufferedBytes(be, ba),
+		BufferedBytes: ComputeBufferedBytes(be, ba, s.bytesFailed.Load()),
 	}
 }
 

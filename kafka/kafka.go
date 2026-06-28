@@ -173,11 +173,12 @@ type ProducerMetrics struct {
 	Success       uint64 // total broker-acked records
 	Failed        uint64 // total broker-rejected records
 	Bytes         uint64 // total bytes acked (sum of Value lengths on success)
+	BytesFailed   uint64 // total bytes of failed records (sum of Value lengths on failure)
 	BytesEnqueued uint64 // total bytes handed to the producer (sum of Value lengths on enqueue)
 	BatchCount    uint64 // SendBatch call count (0 = only Send used, no batching)
 	BatchMax      uint64 // largest single SendBatch size (batch size upper bound)
 	InFlight      uint64 // current records in buffer (Enqueued - Success - Failed) — linger backlog
-	BufferedBytes uint64 // current bytes in buffer (BytesEnqueued - Bytes) — real-time batch memory
+	BufferedBytes uint64 // current bytes in buffer (BytesEnqueued - Bytes - BytesFailed) — real-time batch memory
 }
 
 // ComputeInFlight returns Enqueued - Success - Failed, clamped to 0.
@@ -188,12 +189,14 @@ func ComputeInFlight(enqueued, success, failed uint64) uint64 {
 	return enqueued - success - failed
 }
 
-// ComputeBufferedBytes returns BytesEnqueued - Bytes (acked), clamped to 0.
-func ComputeBufferedBytes(bytesEnqueued, bytesAcked uint64) uint64 {
-	if bytesAcked > bytesEnqueued {
+// ComputeBufferedBytes returns BytesEnqueued - BytesAcked - BytesFailed, clamped to 0.
+// This correctly excludes failed records' bytes (they're no longer in the buffer).
+func ComputeBufferedBytes(bytesEnqueued, bytesAcked, bytesFailed uint64) uint64 {
+	resolved := bytesAcked + bytesFailed
+	if resolved > bytesEnqueued {
 		return 0
 	}
-	return bytesEnqueued - bytesAcked
+	return bytesEnqueued - resolved
 }
 
 // ProducerSnapshot is a point-in-time, lock-free, zero-allocation snapshot of

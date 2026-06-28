@@ -132,6 +132,7 @@ func (s *saramaSyncProducer) Metrics() ProducerMetrics {
 		Success:       su,
 		Failed:        f,
 		Bytes:         ba,
+		BytesFailed:   0,
 		BytesEnqueued: ba, // sync: enqueued ≈ acked (blocks per send)
 		InFlight:      ComputeInFlight(e, su, f),
 		BufferedBytes: 0, // sync: no buffered bytes
