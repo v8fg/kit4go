@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/IBM/sarama v1.50.3
+	go.uber.org/goleak v1.3.0
 	google.golang.org/protobuf v1.36.11
 )
 
