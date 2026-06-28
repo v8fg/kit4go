@@ -97,23 +97,30 @@ func (s *saramaSyncProducer) Close() error {
 }
 
 func (s *saramaSyncProducer) SendBatch(ctx context.Context, msgs []Message) error {
-	// SyncProducer has no batch advantage (each SendMessage blocks for an ack),
-	// but we implement it for interface conformance — it's just Send in a loop.
+	// sarama's SendMessages pushes all records to Input() in a burst (internal
+	// batching via Flush.Frequency/Messages/Bytes can combine them), then waits
+	// for ALL acks — functionally equivalent to franz-go's variadic ProduceSync.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
 		return ErrProducerClosed
 	}
-	for _, msg := range msgs {
-		pm := toSaramaProducerMessage(msg, s.topic)
-		s.enqueued.Add(1)
-		if _, _, err := s.p.SendMessage(pm); err != nil {
-			s.failed.Add(1)
-			return err
-		}
-		s.success.Add(1)
-		s.bytes.Add(uint64(len(msg.Value)))
+	n := len(msgs)
+	pms := make([]*sarama.ProducerMessage, n)
+	totalBytes := uint64(0)
+	for i, msg := range msgs {
+		pms[i] = toSaramaProducerMessage(msg, s.topic)
+		totalBytes += uint64(len(msg.Value))
 	}
+	s.enqueued.Add(uint64(n))
+	if err := s.p.SendMessages(pms); err != nil {
+		// SendMessages returns on first error; we don't know exactly how many
+		// succeeded — conservatively count all as failed.
+		s.failed.Add(uint64(n))
+		return err
+	}
+	s.success.Add(uint64(n))
+	s.bytes.Add(totalBytes)
 	return nil
 }
 
