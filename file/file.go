@@ -3,7 +3,6 @@ package file
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -22,19 +21,19 @@ var (
 
 // IsDir checks whether the path is directory or not, returns true if directory.
 func IsDir(path string) bool {
-	s, err := os.Stat(path)
+	s, err := DefaultFS.Stat(path)
 	return err == nil && s.IsDir()
 }
 
 // IsFile checks whether the path is file or not, returns true if file.
 func IsFile(path string) bool {
-	s, err := os.Stat(path)
+	s, err := DefaultFS.Stat(path)
 	return err == nil && !s.IsDir()
 }
 
 // IsExist checks whether a file or directory exists, returns true if the file or directory exists.
 func IsExist(path string) bool {
-	_, err := os.Stat(path)
+	_, err := DefaultFS.Stat(path)
 	return err == nil || os.IsExist(err)
 }
 
@@ -42,11 +41,11 @@ func IsExist(path string) bool {
 // and attributes will be ignored.
 func CopyFile(src string, dst string) (err error) {
 	var srcInfo fs.FileInfo
-	if srcInfo, err = os.Stat(src); err != nil || !srcInfo.Mode().IsRegular() {
+	if srcInfo, err = DefaultFS.Stat(src); err != nil || !srcInfo.Mode().IsRegular() {
 		return err
 	}
 
-	srcFh, err := os.Open(src)
+	srcFh, err := DefaultFS.Open(src)
 	if err != nil {
 		return err
 	}
@@ -58,13 +57,13 @@ func CopyFile(src string, dst string) (err error) {
 	if IsDir(dst) {
 		dst = filepath.Join(dst, srcInfo.Name())
 	} else {
-		err = os.MkdirAll(filepath.Dir(dst), 0750)
+		err = DefaultFS.MkdirAll(filepath.Dir(dst), 0750)
 		if err != nil {
 			return err
 		}
 	}
 
-	dstFh, err := os.Create(dst)
+	dstFh, err := DefaultFS.Create(dst)
 	if err != nil {
 		return err
 	}
@@ -73,7 +72,7 @@ func CopyFile(src string, dst string) (err error) {
 	}(dstFh)
 
 	var size int64
-	if size, err = io.Copy(dstFh, srcFh); err != nil || size != srcInfo.Size() {
+	if size, err = DefaultFS.Copy(dstFh, srcFh); err != nil || size != srcInfo.Size() {
 		err = fmt.Errorf("copy failed: %d of %d, err: %w", size, srcInfo.Size(), err)
 	}
 	return err
@@ -97,13 +96,13 @@ func CopyDir(src string, dst string) (err error) {
 func CreateIfNotExists(path string, isFile bool) (err error) {
 	if exist := IsExist(path); !exist {
 		if !isFile {
-			return os.MkdirAll(path, 0755)
+			return DefaultFS.MkdirAll(path, 0755)
 		}
-		if err = os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		if err = DefaultFS.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			return err
 		}
 		var f *os.File
-		f, err = os.OpenFile(path, os.O_CREATE, 0755)
+		f, err = DefaultFS.OpenFile(path, os.O_CREATE, 0755)
 		if err != nil {
 			return err
 		}
@@ -116,7 +115,7 @@ func CreateIfNotExists(path string, isFile bool) (err error) {
 
 // InfoStr returns the file info json string, if not exist, return ""
 func InfoStr(file string) string {
-	s, err := os.Stat(file)
+	s, err := DefaultFS.Stat(file)
 	if err != nil {
 		return ""
 	}

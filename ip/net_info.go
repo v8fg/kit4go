@@ -90,7 +90,7 @@ func (cacheLocalIP *localIP) UpdateCacheLocalIP() (localIP string) {
 //  2. flag=6: return only the ipv6.
 //  3. others: return the ipv4 or ipv6.
 func GetIPAll(flag Flag, ignoreTypeFlag int) (ips []string) {
-	if ifa, err := net.InterfaceAddrs(); err == nil {
+	if ifa, err := DefaultAddrLookup.InterfaceAddrs(); err == nil {
 		for _, adr := range ifa {
 			inet, ok := adr.(*net.IPNet)
 			if ok {
@@ -158,7 +158,7 @@ func LocalIP() (ipv4 string) {
 
 // getLocalIPBytes returns the local ipv4 format net.IP
 func getLocalIPBytes() (ipv4 net.IP) {
-	if ifa, err := net.InterfaceAddrs(); err == nil {
+	if ifa, err := DefaultAddrLookup.InterfaceAddrs(); err == nil {
 		for _, adr := range ifa {
 			inet, ok := adr.(*net.IPNet)
 			if ok && !inet.IP.IsLoopback() && !inet.IP.IsLinkLocalUnicast() {
@@ -173,7 +173,7 @@ func getLocalIPBytes() (ipv4 net.IP) {
 
 // PrivateIP returns the first local ipv4 format private IP.
 func PrivateIP() (ipv4 string) {
-	if ifa, err := net.InterfaceAddrs(); err == nil {
+	if ifa, err := DefaultAddrLookup.InterfaceAddrs(); err == nil {
 		for _, adr := range ifa {
 			inet, ok := adr.(*net.IPNet)
 			if ok && !inet.IP.IsLoopback() && inet.IP.IsPrivate() {
@@ -189,7 +189,7 @@ func PrivateIP() (ipv4 string) {
 
 // PrivateIPAll returns all the local ipv4 format private IP.
 func PrivateIPAll() (ipv4s []string) {
-	if ifa, err := net.InterfaceAddrs(); err == nil {
+	if ifa, err := DefaultAddrLookup.InterfaceAddrs(); err == nil {
 		for _, adr := range ifa {
 			inet, ok := adr.(*net.IPNet)
 			if ok && !inet.IP.IsLoopback() && inet.IP.IsPrivate() {
@@ -204,7 +204,7 @@ func PrivateIPAll() (ipv4s []string) {
 
 // MacAddress returns all the local mac address.
 func MacAddress() (macAddress []string) {
-	if netInterfaces, err := net.Interfaces(); err == nil {
+	if netInterfaces, err := DefaultAddrLookup.Interfaces(); err == nil {
 		for _, netInterface := range netInterfaces {
 			macAddr := netInterface.HardwareAddr.String()
 			if len(macAddr) == 0 {

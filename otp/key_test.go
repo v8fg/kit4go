@@ -1,33 +1,35 @@
 package otp_test
 
 import (
-	"crypto/rand"
 	"encoding/base32"
 	"errors"
 	"testing"
 
-	"github.com/agiledragon/gomonkey"
 	"github.com/smartystreets/goconvey/convey"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/v8fg/kit4go/otp"
 )
 
 var b32NoPadding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
+// withRandomReader temporarily replaces the package-level DefaultRandomReader
+// for the duration of fn (defer-restored). It asserts the mock expectations
+// were met. fn must run within a convey.Convey context.
+func withRandomReader(t *testing.T, mockReader *otp.MockRandomReader, fn func()) {
+	t.Helper()
+	orig := otp.DefaultRandomReader
+	otp.DefaultRandomReader = mockReader
+	defer func() { otp.DefaultRandomReader = orig }()
+	fn()
+	if !mockReader.Mock.AssertExpectations(t) {
+		t.Fail()
+	}
+}
+
 func TestRandomSecret(t *testing.T) {
 	convey.SetDefaultFailureMode(convey.FailureContinues)
 	convey.Convey("TestRandomSecret", t, func() {
-		convey.Convey("TestRandomSecret-Failed", func() {
-			outputs := []gomonkey.OutputCell{
-				{Values: gomonkey.Params{0, nil}, Times: 1},
-				{Values: gomonkey.Params{0, errors.New("error")}, Times: 1},
-			}
-			af := gomonkey.ApplyFuncSeq(rand.Read, outputs)
-			defer af.Reset()
-			convey.So(otp.RandomSecret(6), convey.ShouldEqual, "")
-			convey.So(otp.RandomSecret(6), convey.ShouldEqual, "")
-		})
-
 		convey.Convey("TestRandomSecret-Success", func() {
 			code := otp.RandomSecret(4)
 			decodeString, _ := b32NoPadding.DecodeString(code)
@@ -35,6 +37,26 @@ func TestRandomSecret(t *testing.T) {
 			code = otp.RandomSecret(6)
 			decodeString, _ = b32NoPadding.DecodeString(code)
 			convey.So(decodeString, convey.ShouldHaveLength, 6)
+		})
+
+		// error-path: rand.Read returns an error -> RandomSecret returns "".
+		convey.Convey("TestRandomSecret-ReadError", func() {
+			mockReader := new(otp.MockRandomReader)
+			mockReader.EXPECT().Read(mock.Anything).
+				Return(0, errors.New("rand.Read error")).Once()
+			withRandomReader(t, mockReader, func() {
+				convey.So(otp.RandomSecret(6), convey.ShouldEqual, "")
+			})
+		})
+
+		// error-path: rand.Read returns short read (n < length) -> "".
+		convey.Convey("TestRandomSecret-ShortRead", func() {
+			mockReader := new(otp.MockRandomReader)
+			mockReader.EXPECT().Read(mock.Anything).
+				Return(0, nil).Once()
+			withRandomReader(t, mockReader, func() {
+				convey.So(otp.RandomSecret(6), convey.ShouldEqual, "")
+			})
 		})
 	})
 }
