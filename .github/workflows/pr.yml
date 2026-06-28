@@ -44,13 +44,13 @@ jobs:
         run: |
           set -e
           go build ./...
-          for m in log4go postgres grpcclient; do (cd "$m" && go build ./...); done
+          for m in log4go postgres grpcclient kafka; do (cd "$m" && go build ./...); done
 
       - name: Vet (all modules)
         run: |
           set -e
           go vet ./...
-          for m in log4go postgres grpcclient; do (cd "$m" && go vet ./...); done
+          for m in log4go postgres grpcclient kafka; do (cd "$m" && go vet ./...); done
 
       - name: gofmt (fail if any file is unformatted)
         run: |
@@ -70,7 +70,7 @@ jobs:
         run: |
           set -e
           go test -short -race -count=1 -coverprofile=coverage-root.out -covermode=atomic ./...
-          for m in log4go postgres grpcclient; do
+          for m in log4go postgres grpcclient kafka; do
             (cd "$m" && go test -short -race -count=1 -coverprofile="coverage-$m.out" -covermode=atomic ./...)
             mv "$m/coverage-$m.out" .
           done
@@ -79,7 +79,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v7
         with:
-          files: ./coverage-root.out,./coverage-log4go.out,./coverage-postgres.out,./coverage-grpcclient.out
+          files: ./coverage-root.out,./coverage-log4go.out,./coverage-postgres.out,./coverage-grpcclient.out,./coverage-kafka.out
           fail_ci_if_error: false
 
   lint:
@@ -110,7 +110,7 @@ jobs:
         run: |
           set -e
           golangci-lint run --timeout=5m ./...
-          for m in log4go postgres grpcclient; do
+          for m in log4go postgres grpcclient kafka; do
             (cd "$m" && golangci-lint run --timeout=5m ./...)
           done
 

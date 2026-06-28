@@ -42,6 +42,7 @@ kit4go is a **multi-module** repository, so you only pull the dependencies you a
 | `github.com/v8fg/kit4go/log4go` | log4go — structured logger | sarama, sonic, goccy/go-json |
 | `github.com/v8fg/kit4go/postgres` | postgres — pgx pool | jackc/pgx/v5 |
 | `github.com/v8fg/kit4go/grpcclient` | grpcclient — gRPC client | grpc, protobuf |
+| `github.com/v8fg/kit4go/kafka` | kafka — producer + consumer (sync/async, group, partition) | IBM/sarama, protobuf |
 
 Importing `github.com/v8fg/kit4go/log4go` does **not** pull pgx or grpc into your
 module graph — each sub-module owns only its own dependencies. Local development

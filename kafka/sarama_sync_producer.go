@@ -1,0 +1,115 @@
+package kafka
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+
+	"github.com/IBM/sarama"
+)
+
+// syncProducerFactory is the test seam for the sync producer (default
+// sarama.NewSyncProducer).
+type syncProducerFactory func(brokers []string, cfg *sarama.Config) (sarama.SyncProducer, error)
+
+// saramaSyncProducer is the default SyncProducer implementation.
+type saramaSyncProducer struct {
+	opts    Options
+	topic   string
+	cfg     *sarama.Config
+	factory syncProducerFactory
+
+	p sarama.SyncProducer
+
+	mu     sync.RWMutex
+	closed bool
+
+	enqueued atomic.Uint64
+	success  atomic.Uint64
+	failed   atomic.Uint64
+
+	onEvent atomic.Pointer[func(ProducerEvent)]
+}
+
+// NewSyncProducer builds a sync Producer (each Send blocks until the broker
+// acks) backed by sarama. opts are applied with defaults; only WithBrokers is
+// required. ReturnSuccesses is forced on (sarama requires it for SyncProducer).
+func NewSyncProducer(opts ...Option) (SyncProducer, error) {
+	o := applyOptions(opts)
+	o.ReturnSuccesses = true
+	o = o.withDefaults()
+	if err := o.validate("producer"); err != nil {
+		return nil, err
+	}
+	return newSaramaSyncProducer(o, nil)
+}
+
+func newSaramaSyncProducer(o Options, factory syncProducerFactory) (*saramaSyncProducer, error) {
+	cfg, err := buildSaramaConfig(o)
+	if err != nil {
+		return nil, err
+	}
+	if factory == nil {
+		factory = sarama.NewSyncProducer
+	}
+	sp, err := factory(o.Brokers, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &saramaSyncProducer{opts: o, topic: o.Topic, cfg: cfg, factory: factory, p: sp}, nil
+}
+
+func (s *saramaSyncProducer) Send(ctx context.Context, msg Message) (int32, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return 0, 0, ErrProducerClosed
+	}
+	pm := toSaramaProducerMessage(msg, s.topic)
+	s.enqueued.Add(1)
+	s.fire(ProducerEvent{Name: "send", Topic: pm.Topic, Bytes: len(msg.Value)})
+	partition, offset, err := s.p.SendMessage(pm)
+	if err != nil {
+		s.failed.Add(1)
+		s.fire(ProducerEvent{Name: "error", Topic: pm.Topic, Err: err})
+		return 0, 0, err
+	}
+	s.success.Add(1)
+	s.fire(ProducerEvent{Name: "success", Topic: pm.Topic, Bytes: len(msg.Value)})
+	return partition, offset, nil
+}
+
+func (s *saramaSyncProducer) Close() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	s.mu.Unlock()
+	err := s.p.Close()
+	s.fire(ProducerEvent{Name: "close"})
+	return err
+}
+
+func (s *saramaSyncProducer) Metrics() ProducerMetrics {
+	return ProducerMetrics{
+		Enqueued: s.enqueued.Load(),
+		Success:  s.success.Load(),
+		Failed:   s.failed.Load(),
+	}
+}
+
+func (s *saramaSyncProducer) SetOnEvent(fn func(ProducerEvent)) {
+	if fn == nil {
+		s.onEvent.Store(nil)
+		return
+	}
+	s.onEvent.Store(&fn)
+}
+
+func (s *saramaSyncProducer) fire(e ProducerEvent) {
+	if fnp := s.onEvent.Load(); fnp != nil {
+		(*fnp)(e)
+	}
+}
