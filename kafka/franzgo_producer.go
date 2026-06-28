@@ -43,6 +43,7 @@ func (s *franzProducer) Send(ctx context.Context, msg Message) error {
 	s.cl.Produce(ctx, r, func(rec *kgo.Record, err error) {
 		if err != nil {
 			s.failed.Add(1)
+			s.bytesFailed.Add(uint64(len(r.Value)))
 			s.fire(ProducerEvent{Name: "error", Topic: r.Topic, Err: err})
 			return
 		}
