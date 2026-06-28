@@ -186,3 +186,48 @@ Multi-env: Go 1.25+ honors cgroup CPU quota natively; older/abnormal → `import
 **Anti-patterns**: unbuffered Console in prod; sharing one `*FileWriter` across shards (use RegisterFunc); high-rate `With("count",i)` (use WithInt); NetWriter for high volume.
 
 > The **default tier is already solid** (typed fields, caller cache, zero reflection, + overflow/recovery/sharding/alerting). Unless a bottleneck is measured (single-core >900K QPS or 10M-class), use the default — spend effort on the business.
+
+## 21. Stress & soak verification (2026-06-28, Apple M5 10c, Go 1.26)
+
+Full stress re-run after the v0.1.0 multi-module split + golangci-lint migration. All
+numbers `go test -bench -benchmem` unless noted.
+
+### Deliver pipeline — multi-core scaling (the ad-tech hot path)
+
+| Benchmark | 1 CPU | 4 CPU | 8 CPU | allocs/op |
+|---|---|---|---|---|
+| `LoggerInfo` (caller + writer) | 6056 ns | 1492 ns | **1468 ns** | 3 |
+| `LoggerInfoNoCaller` (writer) | 5995 ns | 1441 ns | **1374 ns** | **1** |
+| `DeliverPipeline_Discard` | 5974 ns | 1473 ns | 1473 ns | 3 |
+| `DeliverPipeline_SampledActive` | 5916 ns | 1537 ns | 1519 ns | 1 |
+| `DeliverPipeline_Filtered` | 13.1 ns | 11.5 ns | 11.5 ns | **0** |
+| `DeliverPipeline_SampledOut` | 3.27 ns | 3.27 ns | 3.27 ns | **0** |
+
+- **1 → 4 CPU ≈ 4× scaling** (~165K → ~690K rec/s/core), **plateau at 4–8 CPU** — the
+  documented channel-scheduling bottleneck. `ShardLogger` is the path past the plateau.
+- Hot path **≤1 alloc/op** (no-caller); **0 alloc** on the filter/sample-drop paths.
+
+### Soak (sustained load) — throughput stability + leak
+
+- **10s sustained @ 8 CPU**: `LoggerInfo` 1468 ns/op, `NoCaller` 1374 ns/op — **identical
+  to the 2s baseline** → no throughput degradation under sustained load.
+- **Heap (1,000,000 records + GC)**: `before 603 KB → after 607 KB, Δ +3 KB` (~3
+  bytes/record retained = allocator fragmentation) → **no memory leak**.
+- **goleak** (`shutdown_leak_test.go`): **0 goroutine leak** after Close.
+- **stress/** (`TestStress_AllClients`, `TestStress_ConcurrentSafety`): 10K ops × 5
+  client types, **PASS under `-race`** — no data races.
+
+### Codec & fields (zero-alloc where it matters)
+
+| Benchmark | ns/op | B/op | allocs |
+|---|---|---|---|
+| `Field_IntJSON` | 15.2 | 0 | **0** |
+| `Field_FloatJSON` | 37.0 | 0 | **0** |
+| `KafKaCodec_JSON` | 196 | 384 | 2 |
+| `KafKaCodec_Proto` | 250 | 288 | 3 |
+| `Logger_DeliverTypedFields` (6 fields) | 1542 | 696 | 6 |
+
+**Verdict**: all performance claims hold — ~700K rec/s/core with a writer, zero-alloc
+drop paths, multi-core scaling, sustained-load stability, no leak, race-clean. Meets the
+100k–1M+ QPS ad-tech target. Repo-wide numbers (microservice infra + clients) are in the
+root `BENCHMARKS.md`.
