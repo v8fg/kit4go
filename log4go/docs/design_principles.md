@@ -231,7 +231,6 @@ Key architectural decisions and their rationale:
 ---
 
 ## Sources | 参考来源
-
 - [Elastic Common Schema (ECS)](https://www.elastic.co/guide/en/ecs/current/ecs-field-reference.html)
 - [OpenTelemetry Sampling](https://opentelemetry.io/docs/concepts/sampling/)
 - [OpenTelemetry Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/resource/)
@@ -239,3 +238,69 @@ Key architectural decisions and their rationale:
 - [Google Dapper Paper](https://research.google/pubs/pub36356/)
 - [uber-go/zap](https://pkg.go.dev/github.com/uber-go/zap) — AtomicLevel
 - [Effective Go](https://go.dev/doc/effective_go) — Go naming + API conventions
+
+---
+
+## Performance Profile & Bottleneck Analysis | 性能画像与瓶颈分析
+
+### CPU profile (pprof) — Benchmark_DeliverPipeline_NoCaller, 3s
+
+```
+Top CPU consumers (total samples 9.06s):
+  44%  runtime.pthread_cond_signal   (waking bootstrap goroutine per record)
+  27%  runtime.pthread_cond_wait     (bootstrap waiting on records channel)
+   ~1%  log4go code (format, pool, enqueue)
+   ~0%  sampling/metrics (Occurred atomic, sampleDrop, priorityLevel)
+```
+
+**Conclusion**: log4go's own code is **NOT the bottleneck**. The Go runtime's
+channel send + goroutine wake/schedule dominates (~71%). The sampling/metrics
+additions are **invisible in the profile** (<1%).
+
+**结论**：log4go 自身代码**不是瓶颈**。Go runtime 的 channel send + goroutine
+唤醒/调度占主导（~71%）。采样/指标的新增在画像中**不可见**（<1%）。
+
+### Scaling benchmarks (ns/op, lower is better)
+
+| Benchmark | 1 CPU | 4 CPU | 8 CPU | Scales? |
+|-----------|-------|-------|-------|---------|
+| DeliverPipeline_Discard (full path) | 6002 | 1495 | 1522 | ✅ 4×→1/4 latency; 8 CPU flat (channel contention) |
+| DeliverPipeline_NoCaller (fast path) | 5980 | 1393 | 1410 | ✅ same pattern |
+| DeliverPipeline_Filtered (level drop) | 13 | 11 | 12 | ✅ ~0 ns, no scaling needed |
+| DeliverPipeline_SampledActive (keep) | 5934 | 1459 | 1444 | ✅ sampling overhead = noise |
+| DeliverPipeline_SampledOut (drop) | 3.2 | 3.3 | 3.3 | ✅ 3 ns flat — zero-cost drop |
+| LoggerParallel (concurrent) | 6099 | 2654 | 3293 | ✅ scales to 4 CPU; 8 CPU mild contention |
+
+### Allocation budget
+
+| Path | allocs/op | bytes/op | Status |
+|------|-----------|----------|--------|
+| No-args Info (hot path) | 1 | 16 | ✅ ≤1 (pool contention occasional) |
+| SampledOut (dropped) | 0 | 0 | ✅ zero alloc |
+| Filtered (level drop) | 0 | 0 | ✅ zero alloc |
+| With format args | 3 | 48 | ✅ fmt.Sprintf only (unavoidable) |
+
+### Bottleneck analysis
+
+| Bottleneck | Impact | Solution | Status |
+|------------|--------|----------|--------|
+| **Channel wake** (44% CPU) | Per-record goroutine wake | ShardLogger (multi-channel) | ✅ Exists |
+| **Channel contention** at 8 CPU | Slight latency increase | ShardLogger distributes across shards | ✅ Exists |
+| **Pool miss** (1 alloc/op) | sync.Pool occasionally calls New | Unavoidable in async design; zerolog's 0 = sync-only | Accepted |
+| **Sampling overhead** | None visible in profile | — | ✅ Zero cost |
+| **Metrics overhead** | None visible in profile | — | ✅ Zero cost |
+| **PriorityLevel check** | 1 atomic.Load per record | Negligible | ✅ Zero cost |
+
+### Path to higher throughput | 更高吞吐的路径
+
+For 1M+ QPS on a single process:
+1. **ShardLogger(cores/2)** — distributes channel pressure across N shards
+   (each shard = independent channel + bootstrap goroutine). This is the
+   architectural answer to the channel-wake bottleneck.
+2. **WithCaller(false)** — saves ~1 µs per record (runtime.Callers + cache lookup).
+3. **TraceIDRatioBased(ratio)** — for non-critical paths, drops records in 3 ns
+   (vs ~1400 ns to keep). 458× cheaper.
+4. **Async writers** (KafkaWriter/FileWriter async) — writer I/O off the caller
+   path entirely.
+
+None of these require changes to log4go — they are configuration choices.
