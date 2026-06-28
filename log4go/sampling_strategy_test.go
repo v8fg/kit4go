@@ -384,6 +384,45 @@ type customStrategy struct{}
 
 func (customStrategy) ShouldLog(string) bool { return true }
 
+// TestPriorityLevel_ErrorBypass: even on a sampled-out request (ratio=0),
+// records at or above PriorityLevel (ERROR) are always kept — the
+// industry-standard "error protection" pattern.
+func TestPriorityLevel_ErrorBypass(t *testing.T) {
+	root := newLoggerWithRecords(make(chan *Record, 64))
+	defer root.Close()
+	cw := &captureWriter{}
+	root.Register(cw)
+	root.SetLevel(DEBUG)
+
+	ctx := context.WithValue(context.Background(), "trace_id", "abcdef0123456789abcdef0123456789")
+	root.SetSamplingStrategy(TraceIDRatioBased{Ratio: 0}) // drop all
+	root.SetPriorityLevel(ERROR)                           // errors bypass
+
+	lg := root.WithContext(ctx) // sampleDrop=true (ratio=0)
+	lg.Info("info should be dropped")  // INFO(6) > ERROR(3) → dropped
+	lg.Error("error should be kept")   // ERROR(3) <= ERROR(3) → kept (bypass)
+	lg.Critical("critical kept")       // CRITICAL(2) <= ERROR(3) → kept
+
+	waitFor(t, func() bool { return cw.Len() >= 2 }, time.Second)
+	if cw.Len() != 2 {
+		t.Errorf("PriorityLevel=ERROR ratio=0: cw.Len()=%d want 2 (error+critical, info dropped)", cw.Len())
+	}
+}
+
+// TestPackage_SetPriorityLevel covers the package-level setter on the singleton.
+func TestPackage_SetPriorityLevel(t *testing.T) {
+	defer Close()
+	Close()
+	if err := SetupLog(LogConfig{Level: "debug", ConsoleWriter: ConsoleWriterOptions{Enable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	SetPriorityLevel(ERROR)
+	if got := defaultLogger().priorityLevel.Load(); got != int32(ERROR) {
+		t.Errorf("package SetPriorityLevel: got %d want %d", got, ERROR)
+	}
+	Close()
+}
+
 // TestMetrics_Funnel: Occurred >= Records >= 0; Dropped = Occurred − Records;
 // level-filtered records count as Occurred but not Written (Dropped).
 func TestMetrics_Funnel(t *testing.T) {

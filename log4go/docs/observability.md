@@ -230,7 +230,83 @@ So: real-time collection (cheap, per-shard/bootstrap) + periodic aggregation +
 bounded cached snapshots for reads. No real-time push, no live-counter reads
 from outside.
 
-## Quality gates for the hot path (top-library parity)
+## Best practices for RTB / ad-tech (industry-grounded)
+
+Synthesized from Google (Dapper), Uber (Jaeger), Netflix (Zipkin), Stripe
+(Honeycomb), ByteDance APM, and Datadog:
+
+### The three-layer complementarity (trace + metric + log)
+
+No single layer solves everything. Trace shows the chain, metric does real-time
+alerting, log does detail. log4go is the **log** layer:
+
+| Layer | Purpose | Tool | log4go's role |
+|---|---|---|---|
+| **Trace** | chain / timing / call tree | OpenTelemetry → Tempo/Jaeger | carry trace_id (correlation) |
+| **Metric** | real-time alerting, dashboards | Prometheus / Grafana | expose Occurred/Written/Dropped counters |
+| **Log** | detail / context / per-request debugging | **log4go** → Kafka → consumer | structured records tagged with trace_id |
+
+### Head-based sampling (the mainstream — Google/Netflix/ByteDance/Datadog)
+
+Almost no one does pure tail-sampling at scale (cost). Head-based is the norm:
+the entry service decides once (by trace_id hash), downstream honors it.
+
+log4go's `sampleDrop` (decided at `WithContext`, cached per-request) IS head-based.
+
+### Error protection (Stripe / Dapper / Netflix — universal pattern)
+
+**Errors are ALWAYS kept, regardless of sampling.** This is the single most
+important threshold. log4go: `SetPriorityLevel(ERROR)` — records at ERROR or
+above bypass sampling, even on sampled-out requests.
+
+### Per-service differentiated sampling (Uber / ByteDance / Netflix)
+
+Each service configures its own rate based on traffic volume:
+
+| Service type | QPS | Recommended ratio | PriorityLevel |
+|---|---|---|---|
+| Bid request / auction (extreme) | 100k-1M+ | `0.001` (0.1%) | ERROR |
+| Impression / click callback | 10k-100k | `0.05` (5%) | ERROR |
+| Reporting / admin API | <10k | `0.5`-`1.0` (50-100%) | ERROR |
+| Core gateway (Netflix pattern) | any | `1.0` (100%) | — |
+
+Google's Dapper insight: **1% is statistically sufficient for P99 estimation.**
+At 1M QPS, 0.1% = 1000 records/sec — more than enough for analysis; the full
+trail is on disk for exact queries.
+
+### Recommended RTB configuration
+
+```go
+// 1. Level control (primary, manual): only log changes + errors
+log4go.SetLevel(log4go.INFO)
+
+// 2. Error protection (always keep errors regardless of sampling)
+log4go.SetPriorityLevel(log4go.ERROR)
+
+// 3. Sampling ratio (secondary, adjustable): 0.1% for extreme QPS
+log4go.SetSamplingStrategy(log4go.TraceIDRatioBased{Ratio: 0.001})
+
+// Emergency: temporary 10% for 30 min (ops-triggered debug window)
+stop := log4go.SetSamplingStrategyFor(
+    log4go.TraceIDRatioBased{Ratio: 0.1}, 30*time.Minute)
+defer stop() // or let it expire → reverts to 0.1%
+```
+
+At 1M QPS: ~1000 records/sec sampled + all errors → Kafka. Full business data
+on disk → big-data. Consumer-side ES sampling is downstream of Kafka (not log4go).
+
+### Google's lesson for RTB
+
+> "Low sampling rate is fine; sampling QUALITY matters more than QUANTITY.
+> Metric does alerting, log does detail, trace does chain — three layers,
+> each covering what the others can't."
+
+For ad-tech: head-based + statistical sampling (hash by request_id, deterministic
+→ reproducible + cross-service consistent). Don't over-engineer with tail-sampling
+or complex adaptive signals — a simple, adjustable ratio + error protection is
+what production RTB actually needs (ByteDance uses 0.1% for bidding).
+
+
 
 The design matches zap/zerolog/slog hallmarks (record pooling, append encoding,
 typed fields, atomic config, async bounded writers, sharding). P1 must add the

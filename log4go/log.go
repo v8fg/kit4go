@@ -494,6 +494,13 @@ type Logger struct {
 	// which loads it once per record.
 	sampler atomic.Pointer[Sampler]
 
+	// priorityLevel is the severity threshold below which records ALWAYS bypass
+	// sampling (even on a sampled-out request). Records with level <= priorityLevel
+	// are kept regardless of sampleDrop. Default -1 (no bypass; sampling governs
+	// all). Set to ERROR so EMERGENCY/ALERT/CRITICAL/ERROR are always logged —
+	// the industry-standard "error protection" pattern (Stripe/Dapper/Netflix).
+	priorityLevel atomic.Int32
+
 	// samplingStrategy is the pluggable id-based sampling policy
 	// (TraceIDRatioBased / TailDigit / Full). nil ⇒ Full (keep all). It is
 	// evaluated ONCE per request at WithContext (decided from the correlation id
@@ -551,6 +558,7 @@ func newLoggerWithRecords(records chan *Record) *Logger {
 	l.quit = make(chan struct{})
 	l.recordsByLevel = new([TRACE + 1]uint64)
 	l.occurredByLevel = new([TRACE + 1]uint64)
+	l.priorityLevel.Store(-1) // default: no bypass; sampling governs all
 	l.baseFields = &baseFieldsHolder{} // shared with every clone (see clone)
 	l.level.Store(int32(DEBUG))
 	lp := DefaultLayout
@@ -914,6 +922,7 @@ func (l *Logger) clone() *Logger {
 		c.samplingStrategy.Store(ss)
 	}
 	c.sampleDrop.Store(l.sampleDrop.Load())
+	c.priorityLevel.Store(l.priorityLevel.Load())
 	// share the writers snapshot (copy-on-write on Register applies to parent;
 	// child reads its own snapshot which is fine since Register on a child is
 	// unusual but supported).
@@ -1114,6 +1123,16 @@ func (l *Logger) SetSamplingStrategy(s SamplingStrategy) {
 	l.samplingStrategy.Store(&s)
 }
 
+// SetPriorityLevel sets the severity threshold below which records ALWAYS bypass
+// sampling (even on a sampled-out request). Records with level <= this value
+// (numerically lower = more severe: EMERGENCY=0 ... ERROR=3 ... DEBUG=7) are
+// always kept. Default -1 (no bypass). Set to ERROR so errors are never sampled
+// away — the industry-standard "error protection" pattern (Stripe/Dapper/Netflix
+// all keep error traces/logs regardless of sampling). Atomic + lock-free.
+func (l *Logger) SetPriorityLevel(level int) {
+	l.priorityLevel.Store(int32(level))
+}
+
 // SetSamplingStrategyFor temporarily installs s for duration, then auto-reverts
 // to the previous strategy (or nil/Full). Returns a stop func for early cancel
 // (idempotent). Use as a bounded debug/troubleshoot window, e.g. sample 10% for
@@ -1266,8 +1285,11 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 		return
 	}
 	// Per-request sampling verdict (cached at WithContext). A dropped request's
-	// records never reach the writers. Default false (keep).
-	if l.sampleDrop.Load() {
+	// non-priority records never reach the writers. Records at or above
+	// priorityLevel (e.g. ERROR) ALWAYS bypass sampling — the industry-standard
+	// "error protection" pattern (errors kept for alerting even on sampled-out
+	// requests). Default priorityLevel=-1 (no bypass).
+	if l.sampleDrop.Load() && level > int(l.priorityLevel.Load()) {
 		return
 	}
 	// Sampling runs before Metrics increment: a record dropped by the sampler
@@ -1505,6 +1527,10 @@ func Runtime() RuntimeConfig { return defaultLogger().Runtime() }
 // SetSamplingStrategy installs an id-based sampling policy on the package
 // singleton (nil ⇒ FullSampling / keep all). See Logger.SetSamplingStrategy.
 func SetSamplingStrategy(s SamplingStrategy) { defaultLogger().SetSamplingStrategy(s) }
+
+// SetPriorityLevel sets the error-protection threshold on the singleton.
+// See Logger.SetPriorityLevel.
+func SetPriorityLevel(level int) { defaultLogger().SetPriorityLevel(level) }
 
 // SetSamplingStrategyFor temporarily installs s on the singleton for duration,
 // then reverts. See Logger.SetSamplingStrategyFor.
