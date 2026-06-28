@@ -270,6 +270,51 @@ func computeCallerFileLine(pc uintptr, fullPath, withFunc bool) string {
 	return s
 }
 
+// log4goPkgDir is the on-disk source directory of this package, captured once
+// from a known internal frame. Used to tell log4go-internal frames (Info /
+// deliverRecordToWriter / compiler wrappers) from the user's caller. Derived
+// from the actual file location so it stays correct under vendoring, module
+// relocation, or a renamed import path.
+var log4goPkgDir = func() string {
+	var pcs [1]uintptr
+	runtime.Callers(1, pcs[:]) // depth 1 = this closure's frame, inside log4go
+	file, _ := runtime.FuncForPC(pcs[0]).FileLine(pcs[0])
+	if i := strings.LastIndexByte(file, '/'); i >= 0 {
+		return file[:i+1] // ".../log4go/"
+	}
+	return ""
+}()
+
+var (
+	callerInternalCache = make(map[uintptr]bool)
+	callerInternalMu    sync.RWMutex
+)
+
+// callerIsInternal reports whether pc is a frame inside log4go's own production
+// source (Info/Debug/deliverRecordToWriter, compiler-generated wrappers, etc.).
+// Memoized per pc. A frame in log4go's source dir that lives in a *_test.go file
+// is treated as a USER frame — internal tests exercise the caller path and their
+// call sites are the callers under test. Production builds never carry *_test.go
+// frames, so this distinction is exact for real callers.
+func callerIsInternal(pc uintptr) bool {
+	callerInternalMu.RLock()
+	v, ok := callerInternalCache[pc]
+	callerInternalMu.RUnlock()
+	if ok {
+		return v
+	}
+	internal := false
+	if log4goPkgDir != "" {
+		if file, _ := runtime.FuncForPC(pc).FileLine(pc); file != "" {
+			internal = strings.HasPrefix(file, log4goPkgDir) && !strings.HasSuffix(file, "_test.go")
+		}
+	}
+	callerInternalMu.Lock()
+	callerInternalCache[pc] = internal
+	callerInternalMu.Unlock()
+	return internal
+}
+
 // FieldsJSON returns the record's structured fields marshaled to a JSON object
 // (e.g. `{"trace_id":"abc","user":42}`). Returns "" when there are no fields,
 // so callers can cheaply skip the append. Used by Record.String and
@@ -1369,10 +1414,24 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{})
 	// mapping is then resolved through callerFileLine, which memoizes it per call
 	// site (a given PC is always the same source location). Steady state: 0 alloc
 	// on the caller path (the file string + FuncForPC.Name run once per site).
+	//
+	// We walk the stack past log4go-internal frames (Info / deliverRecordToWriter
+	// and any compiler-generated wrappers) to the first USER frame, instead of a
+	// fixed skip count. A fixed skip is fragile: the number of intermediate
+	// frames depends on the compiler's per-architecture inlining decisions, so
+	// skip=3 lands on a log4go frame on some toolchains (observed on linux/amd64,
+	// where it reported log.go instead of the caller). Walking past internal
+	// frames is invariant to all such variation. callerIsInternal + callerFileLine
+	// are both memoized per call site, so steady-state cost is a few map lookups.
 	if l.hasCaller.Load() {
-		var pcs [1]uintptr
-		if runtime.Callers(3, pcs[:]) > 0 {
-			fileStr = callerFileLine(pcs[0], l.fullPath.Load(), l.withFuncName.Load())
+		var pcs [8]uintptr
+		n := runtime.Callers(2, pcs[:]) // depth 1 = this func; scan from depth 2
+		for i := 0; i < n; i++ {
+			if callerIsInternal(pcs[i]) {
+				continue
+			}
+			fileStr = callerFileLine(pcs[i], l.fullPath.Load(), l.withFuncName.Load())
+			break
 		}
 	}
 
