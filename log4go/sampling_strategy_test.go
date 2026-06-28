@@ -418,6 +418,62 @@ func TestMetrics_Funnel(t *testing.T) {
 	}
 }
 
+// TestAllocBudget_HotPath: the no-args Info hot path must be ≤1 allocs/op —
+// the async pool-based design occasionally calls sync.Pool.New when the bootstrap
+// hasn't returned a record yet (1 alloc); zerolog's 0-alloc is sync-only. The
+// gate verifies sampling (sampleDrop) + metrics (Occurred) didn't add allocs.
+func TestAllocBudget_HotPath(t *testing.T) {
+	result := testing.Benchmark(func(b *testing.B) {
+		lg := newBenchLogger()
+		lg.SetLevel(DEBUG)
+		lg.Register(discardWriter{})
+		defer lg.Close()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			lg.Info("x")
+		}
+	})
+	if n := result.AllocsPerOp(); n > 1 {
+		t.Errorf("hot path (no-args Info) allocs/op = %d, want ≤1", n)
+	}
+}
+
+// Benchmark_DeliverPipeline_SampledActive: hot path with a sampling strategy
+// active (ratio=1, sampleDrop=false → keep). Compare to Benchmark_DeliverPipeline_Discard
+// (no strategy) — the overhead should be just the atomic sampleDrop.Load.
+func Benchmark_DeliverPipeline_SampledActive(b *testing.B) {
+	lg := newBenchLogger()
+	lg.SetLevel(DEBUG)
+	lg.Register(discardWriter{})
+	lg.SetSamplingStrategy(TraceIDRatioBased{Ratio: 1.0})
+	defer lg.Close()
+	ctx := context.WithValue(context.Background(), "trace_id", "abcdef0123456789abcdef0123456789")
+	lgCtx := lg.WithContext(ctx) // sampleDrop pre-computed (keep)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		lgCtx.Info("x")
+	}
+}
+
+// Benchmark_DeliverPipeline_SampledOut: hot path when sampling drops the record
+// (ratio=0, sampleDrop=true → return before record build). Should be FAST — just
+// Occurred increment + level check + sampleDrop check → return.
+func Benchmark_DeliverPipeline_SampledOut(b *testing.B) {
+	lg := newBenchLogger()
+	lg.SetLevel(DEBUG)
+	lg.SetSamplingStrategy(TraceIDRatioBased{Ratio: 0.0})
+	defer lg.Close()
+	ctx := context.WithValue(context.Background(), "trace_id", "abcdef0123456789abcdef0123456789")
+	lgCtx := lg.WithContext(ctx) // sampleDrop = true (dropped)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		lgCtx.Info("x")
+	}
+}
+
 // TestMetricSnapshot covers each writer's Metrics() branch (and the nil case).
 func TestMetricSnapshot(t *testing.T) {
 	cases := []struct {
