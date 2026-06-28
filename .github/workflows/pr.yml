@@ -28,7 +28,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -36,11 +36,21 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build
-        run: go build ./...
+      # kit4go is a multi-module repo: the root module plus three sub-modules
+      # (log4go, postgres, grpcclient), each with its own go.mod. `go build/test
+      # ./...` does NOT descend across module boundaries, so every gate runs
+      # once per module.
+      - name: Build (all modules)
+        run: |
+          set -e
+          go build ./...
+          for m in log4go postgres grpcclient; do (cd "$m" && go build ./...); done
 
-      - name: Vet
-        run: go vet ./...
+      - name: Vet (all modules)
+        run: |
+          set -e
+          go vet ./...
+          for m in log4go postgres grpcclient; do (cd "$m" && go vet ./...); done
 
       - name: gofmt (fail if any file is unformatted)
         run: |
@@ -56,18 +66,24 @@ jobs:
       # -short skips the postgres live-PG integration test (it also self-skips
       #   when PG_HOST is unset); -race enforces concurrency safety across all
       #   packages (breaker/limiter/clients/latency/log4go hot paths).
-      - name: Test
-        run: go test -short -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Test (all modules)
+        run: |
+          set -e
+          go test -short -race -count=1 -coverprofile=coverage-root.out -covermode=atomic ./...
+          for m in log4go postgres grpcclient; do
+            (cd "$m" && go test -short -race -count=1 -coverprofile="coverage-$m.out" -covermode=atomic ./...)
+            mv "$m/coverage-$m.out" .
+          done
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
-          files: ./coverage.out
+          files: ./coverage-root.out,./coverage-log4go.out,./coverage-postgres.out,./coverage-grpcclient.out
           fail_ci_if_error: false
 
-  # golangci-lint is intentionally NOT run here: the previous job used v1.48.0,
-  # which panics ("can't load fmt") against modern Go. Re-enabling requires
-  # migrating .golangci.yml to the golangci-lint v2 schema — do that as a
-  # follow-up, then add a golangci/golangci-lint-action@v6 job. Until then,
+  # golangci-lint is intentionally NOT run here: the historical config used
+  # v1.48.0, which panics ("can't load fmt") against modern Go. Re-enabling
+  # requires migrating .golangci.yml to the golangci-lint v2 schema — do that as
+  # a follow-up, then add a golangci/golangci-lint-action@v6 job. Until then,
   # `go vet` above carries the essential static analysis.

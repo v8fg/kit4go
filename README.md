@@ -32,9 +32,29 @@
 - [x] [uuid](uuid) requestID, go.uuid, ksuid, xid.
 - [x] [xlo](xlo) some utils ref *lo*, more pls use [lo](https://github.com/samber/lo) directly.
 
+## Modules
+
+kit4go is a **multi-module** repository, so you only pull the dependencies you actually use:
+
+| Module path | Packages | Heavy deps isolated |
+|-------------|----------|---------------------|
+| `github.com/v8fg/kit4go` (root) | bit, datetime, file, ip, json, number, otp, random, str, uuid, xlo, maxprocs, breaker, limiter, latency, httpclient, tcpclient, udpclient, stress | — |
+| `github.com/v8fg/kit4go/log4go` | log4go — structured logger | sarama, sonic, goccy/go-json |
+| `github.com/v8fg/kit4go/postgres` | postgres — pgx pool | jackc/pgx/v5 |
+| `github.com/v8fg/kit4go/grpcclient` | grpcclient — gRPC client | grpc, protobuf |
+
+Importing `github.com/v8fg/kit4go/log4go` does **not** pull pgx or grpc into your
+module graph — each sub-module owns only its own dependencies. Local development
+uses a committed `go.work` so `go build`/`go test` resolve all modules together.
+
 ## Install
 
-`go get -u github.com/v8fg/kit4go`
+```sh
+go get -u github.com/v8fg/kit4go            # root utilities
+go get -u github.com/v8fg/kit4go/log4go     # structured logging (standalone)
+go get -u github.com/v8fg/kit4go/postgres   # pgx pool (standalone)
+go get -u github.com/v8fg/kit4go/grpcclient # gRPC client (standalone)
+```
 
 ## Notes
 
