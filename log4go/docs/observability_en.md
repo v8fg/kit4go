@@ -106,6 +106,102 @@ log4go **不定义**业务字段常量（ad_id、tx_hash、transaction_id ——
 
 ---
 
+## Base Field Management API | BASE 字段管理 API
+
+Three operations, each with clearly different semantics. Understanding the
+difference is critical to avoid accidentally losing fields.
+
+三个操作，语义完全不同。理解差异至关重要——避免误删字段。
+
+| API | Semantics | What happens to existing fields |
+|-----|-----------|---------------------------------|
+| `SetBaseField(key, val)` | **UPSERT** single key | Same key → value replaced; other keys → KEPT |
+| `SetBaseFields(map)` | **REPLACE ALL** ⚠️ | ⚠️ Old fields GONE — the map IS the new complete set |
+| `ClearBaseFields()` | **CLEAR ALL** | Everything removed; records carry no base fields |
+
+### ⚠️ CRITICAL: SetBaseFields overwrites everything | SetBaseFields 覆盖全部
+
+```go
+// Starting state: base fields = {"a": 1, "b": 2, "c": 3}
+
+log4go.SetBaseField("d", 4)
+// → {"a":1, "b":2, "c":3, "d":4}  — "d" added, a/b/c KEPT ✓
+
+log4go.SetBaseFields(map[string]interface{}{"x": 99})
+// → {"x": 99}  — ⚠️ a, b, c, d are ALL GONE. Only "x" remains.
+
+log4go.ClearBaseFields()
+// → {}  — everything gone.
+
+// To ADD without losing others — use SetBaseField (NOT SetBaseFields):
+log4go.SetBaseField("y", 5)  // adds "y", existing fields kept
+```
+
+### When to use which | 何时用哪个
+
+| Scenario | Use |
+|----------|-----|
+| Startup: set all infra fields at once from config | `SetBaseFields(fullMap)` |
+| Runtime: add/update one field (e.g. new tag) | `SetBaseField(key, val)` |
+| Runtime: change service_name (canary deploy) | `SetBaseField("service_name", newName)` |
+| Shutdown/reset: clear everything | `ClearBaseFields()` |
+| Remove one specific field | `SetBaseFields` without that key (rebuild from current) |
+
+### Concurrency safety | 并发安全
+
+All three are **atomic + copy-on-write** — they never mutate the snapshot the
+bootstrap goroutine is reading. Safe to call concurrently with logging (verified
+by `-race`).
+
+三个操作都是**原子 + copy-on-write**——绝不修改 bootstrap 正在读取的快照。可与日志
+投递并发调用（`-race` 验证通过）。
+
+---
+
+## Flexibility & Evolution | 灵活性与演进
+
+Fields are **fully dynamic key-value** — log4go treats all keys as opaque
+strings and carries them verbatim to Kafka JSON. There is no schema validation,
+no required keys, no key-name enforcement. The constants above (`FieldServiceName`
+etc.) are **convenience constants** (IDE autocomplete + cross-service consistency),
+not constraints. A service can use any key name it wants.
+
+字段是**完全动态的 key-value**——log4go 把所有 key 当作不透明字符串，原样序列化到
+Kafka JSON。没有 schema 校验、没有必需的 key、没有 key 名强制。上面的常量
+（`FieldServiceName` 等）是**便利常量**（IDE 补全 + 跨服务一致），不是约束。服务可以
+用任意 key 名。
+
+### Can fields change at runtime? | 字段能运行时改吗？
+
+YES — all base field operations are atomic and take effect on the next record:
+
+可以——所有 base field 操作都是原子的，对下一条记录立即生效：
+
+```go
+log4go.SetBaseField("new_tag", "value")   // immediately on next record
+log4go.SetBaseField("env", "staging")      // change env at runtime (canary)
+// No code change, no restart, no log4go release needed.
+```
+
+### Can fields evolve over time? | 字段能随版本演进吗？
+
+YES — change `SetBaseFields` at startup; the consumer adapts:
+
+可以——在启动时改 `SetBaseFields`；消费端适配：
+
+| v1 fields | v2 fields | Migration |
+|-----------|-----------|-----------|
+| `server_ip` | `ip` (ECS aligned) | Consumer handles both (or transition period) |
+| no `country` | add `country` (GDPR) | Old records lack it; new records have it |
+| no `schema_version` | add `schema_version: "2.0"` | Consumer branches on version |
+
+```go
+// Optional: add a schema version for consumer-side migration
+log4go.SetBaseField("schema_version", "2.0")
+```
+
+---
+
 ## Standard Field Constants (Infrastructure) | 标准字段常量（基础设施）
 
 ```go
