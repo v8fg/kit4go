@@ -523,8 +523,8 @@ func (k *KafKaWriter) Start() (err error) {
 
 // Stop stop the kafka writer gracefully (flushes spiller to producer first).
 func (k *KafKaWriter) Stop() {
-	if !k.run.Load() {
-		return
+	if !k.run.CompareAndSwap(true, false) {
+		return // already stopped, or another Stop in flight — atomic claim avoids a double close
 	}
 	close(k.messages)
 	<-k.quit
@@ -535,7 +535,6 @@ func (k *KafKaWriter) Stop() {
 	if k.spiller != nil {
 		_ = k.spiller.Close()
 	}
-	k.run.Store(false) // mark stopped so a second Stop (e.g. via Logger.Close) is a no-op
 }
 
 // Stats returns a snapshot of overflow counters.
