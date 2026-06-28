@@ -1,5 +1,7 @@
 name: CI
 
+# Triggers: pushes to `release`, version tags (v*), and PRs targeting `release`.
+# `release` is the primary branch (origin/HEAD -> release); `main` mirrors it.
 on:
   push:
     tags:
@@ -14,67 +16,58 @@ permissions:
   contents: read
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setup Go
-        uses: actions/setup-go@v3
-        with:
-          go-version: '^1.18'
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      - name: Setup golangci-lint
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: v1.48.0
-          args: --verbose
   test:
-    needs: lint
+    # Cross-platform (linux + macos) because kit4go is a pure-Go library used on
+    # both. Go version is read from go.mod via go-version-file, so this never
+    # goes stale when the module bumps its Go directive.
+    name: test (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest ]
-        go: [ 1.19 ]
-        test-tags: ['', '-tags jsoniter', '-tags go_json', '-tags "sonic avx"']
-        include:
-          - os: ubuntu-latest
-            go-build: ~/.cache/go-build
-          - os: macos-latest
-            go-build: ~/Library/Caches/go-build
-    name: ${{ matrix.os }} @ Go ${{ matrix.go }} ${{ matrix.test-tags }}
     runs-on: ${{ matrix.os }}
-    env:
-      GO111MODULE: on
-      TESTTAGS: ${{ matrix.test-tags }}
-      GOPROXY: https://proxy.golang.org
     steps:
-      - name: Set up Go ${{ matrix.go }}
-        uses: actions/setup-go@v3
-        with:
-          go-version: ${{ matrix.go }}
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          ref: ${{ github.ref }}
+          go-version-file: go.mod
+          cache: true
 
-      - uses: actions/cache@v3
-        with:
-          path: |
-            ${{ matrix.go-build }}
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+      - name: Build
+        run: go build ./...
 
-      - name: Run Tests
-        run: make test
+      - name: Vet
+        run: go vet ./...
+
+      - name: gofmt (fail if any file is unformatted)
+        run: |
+          set -euo pipefail
+          diff=$(gofmt -l .)
+          if [ -n "$diff" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$diff"
+            gofmt -d .
+            exit 1
+          fi
+
+      # -short skips the postgres live-PG integration test (it also self-skips
+      #   when PG_HOST is unset); -race enforces concurrency safety across all
+      #   packages (breaker/limiter/clients/latency/log4go hot paths).
+      - name: Test
+        run: go test -short -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v4
         with:
-          flags: ${{ matrix.os }},go-${{ matrix.go }},${{ matrix.test-tags }}
-          verbose: true
+          files: ./coverage.out
+          fail_ci_if_error: false
 
-      - name: Format
-        if: matrix.go-version == '1.19.x'
-        run: diff -u <(echo -n) <(gofmt -d .)
+  # golangci-lint is intentionally NOT run here: the previous job used v1.48.0,
+  # which panics ("can't load fmt") against modern Go. Re-enabling requires
+  # migrating .golangci.yml to the golangci-lint v2 schema — do that as a
+  # follow-up, then add a golangci/golangci-lint-action@v6 job. Until then,
+  # `go vet` above carries the essential static analysis.
