@@ -72,7 +72,7 @@ func (h *cgHandler) Cleanup(sarama.ConsumerGroupSession) error { return nil }
 func (h *cgHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for cm := range claim.Messages() {
 		msg := fromSaramaConsumerMessage(cm)
-		h.parent.received.Add(1)
+		h.parent.bumpReceived(len(cm.Value))
 		h.parent.fire(ConsumerEvent{Name: "message", Msg: msg})
 		if err := h.handler(msg); err != nil {
 			h.parent.failed.Add(1)

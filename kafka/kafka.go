@@ -94,6 +94,13 @@ type Producer interface {
 	// SetOnEvent installs a per-event hook (send/success/error/close). Pass nil
 	// to disable (zero overhead). Not safe to call concurrently with Send.
 	SetOnEvent(fn func(ProducerEvent))
+	// Name returns the instance name (configurable via WithName, else the
+	// topic) — for per-instance monitoring.
+	Name() string
+	// Backend returns the underlying client library ("sarama" or "franz-go"),
+	// selected at build time (default sarama; -tags franzgo for franz-go) — so
+	// monitoring can identify which Kafka client is in use.
+	Backend() string
 }
 
 // SyncProducer blocks each Send until the broker acks. Use it when you need the
@@ -105,6 +112,8 @@ type SyncProducer interface {
 	Close() error
 	Metrics() ProducerMetrics
 	SetOnEvent(fn func(ProducerEvent))
+	Name() string
+	Backend() string
 }
 
 // ConsumerGroup is the rebalance-aware group consumer (the engine-master
@@ -121,6 +130,8 @@ type ConsumerGroup interface {
 	Close() error
 	Metrics() ConsumerMetrics
 	SetOnEvent(fn func(ConsumerEvent))
+	Name() string
+	Backend() string
 }
 
 // PartitionConsumer consumes ONE specified partition from a specified offset
@@ -136,6 +147,8 @@ type PartitionConsumer interface {
 	Messages() <-chan Message
 	Errors() <-chan error
 	Close() error
+	Name() string
+	Backend() string
 }
 
 // ProducerMetrics is a snapshot of async/sync producer counters.
@@ -143,6 +156,7 @@ type ProducerMetrics struct {
 	Enqueued uint64 // messages handed to the underlying client (Input/SendMessage)
 	Success  uint64 // broker-acked
 	Failed   uint64 // errors drained from the underlying client
+	Bytes    uint64 // bytes acked (sum of Value lengths on success)
 }
 
 // ConsumerMetrics is a snapshot of consumer counters.
@@ -151,6 +165,7 @@ type ConsumerMetrics struct {
 	Acked     uint64 // handler returned nil (offset committed)
 	Failed    uint64 // handler returned non-nil, or decode error
 	Rebalance uint64 // consumer-group sessions recreated after a rebalance
+	Bytes     uint64 // bytes received (sum of Value lengths)
 }
 
 // ProducerEvent feeds Producer.SetOnEvent. Name is one of "send","success",

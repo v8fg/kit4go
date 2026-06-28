@@ -27,6 +27,7 @@ type saramaSyncProducer struct {
 	enqueued atomic.Uint64
 	success  atomic.Uint64
 	failed   atomic.Uint64
+	bytes    atomic.Uint64
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -75,6 +76,7 @@ func (s *saramaSyncProducer) Send(ctx context.Context, msg Message) (int32, int6
 		return 0, 0, err
 	}
 	s.success.Add(1)
+	s.bytes.Add(uint64(len(msg.Value)))
 	s.fire(ProducerEvent{Name: "success", Topic: pm.Topic, Bytes: len(msg.Value)})
 	return partition, offset, nil
 }
@@ -97,8 +99,13 @@ func (s *saramaSyncProducer) Metrics() ProducerMetrics {
 		Enqueued: s.enqueued.Load(),
 		Success:  s.success.Load(),
 		Failed:   s.failed.Load(),
+		Bytes:    s.bytes.Load(),
 	}
 }
+
+func (s *saramaSyncProducer) Name() string { return nameOr(s.opts.Name, s.opts.Topic) }
+
+func (s *saramaSyncProducer) Backend() string { return backendName }
 
 func (s *saramaSyncProducer) SetOnEvent(fn func(ProducerEvent)) {
 	if fn == nil {

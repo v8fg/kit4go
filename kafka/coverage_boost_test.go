@@ -119,19 +119,3 @@ func TestProducer_SetOnEventNil(t *testing.T) {
 	p.SetOnEvent(func(ProducerEvent) {})
 	_ = p.Close()
 }
-
-// errorIs is a tiny helper (errors.Is wrapper) to avoid an import in every test.
-func errorIs(err, target error) bool {
-	for err != nil {
-		if err == target {
-			return true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := err.(unwrapper)
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
-}

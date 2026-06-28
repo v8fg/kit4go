@@ -4,6 +4,9 @@ import (
 	"github.com/IBM/sarama"
 )
 
+// backendName identifies the underlying client library for Backend()/monitoring.
+const backendName = "sarama"
+
 // defaultKafkaVersion is the sarama version assumed when Options.Version is
 // empty. Pinned to V2_5_0_0 (broad compatibility; matches log4go's KafKaWriter).
 var defaultKafkaVersion = sarama.V2_5_0_0

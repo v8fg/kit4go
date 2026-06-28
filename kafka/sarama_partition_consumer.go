@@ -33,6 +33,7 @@ type saramaPartitionConsumer struct {
 	received atomic.Uint64
 	acked    atomic.Uint64
 	failed   atomic.Uint64
+	bytes    atomic.Uint64
 
 	onEvent atomic.Pointer[func(ConsumerEvent)]
 }
@@ -111,6 +112,7 @@ func (s *saramaPartitionConsumer) pump(ctx context.Context, handler MessageHandl
 			}
 			msg := fromSaramaConsumerMessage(cm)
 			s.received.Add(1)
+			s.bytes.Add(uint64(len(cm.Value)))
 			s.fire(ConsumerEvent{Name: "message", Msg: msg})
 			if handler != nil {
 				if err := handler(msg); err != nil {
@@ -175,8 +177,13 @@ func (s *saramaPartitionConsumer) Metrics() ConsumerMetrics {
 		Received: s.received.Load(),
 		Acked:    s.acked.Load(),
 		Failed:   s.failed.Load(),
+		Bytes:    s.bytes.Load(),
 	}
 }
+
+func (s *saramaPartitionConsumer) Name() string { return nameOr(s.opts.Name, s.opts.Topic) }
+
+func (s *saramaPartitionConsumer) Backend() string { return backendName }
 
 func (s *saramaPartitionConsumer) SetOnEvent(fn func(ConsumerEvent)) {
 	if fn == nil {

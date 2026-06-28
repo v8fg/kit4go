@@ -35,6 +35,7 @@ type saramaProducer struct {
 	enqueued atomic.Uint64
 	success  atomic.Uint64
 	failed   atomic.Uint64
+	bytes    atomic.Uint64
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -74,7 +75,9 @@ func (s *saramaProducer) startDrains() {
 	go func() {
 		for pm := range s.p.Successes() {
 			s.success.Add(1)
-			s.fire(ProducerEvent{Name: "success", Topic: pm.Topic, Bytes: encLen(pm.Value)})
+			n := uint64(encLen(pm.Value))
+			s.bytes.Add(n)
+			s.fire(ProducerEvent{Name: "success", Topic: pm.Topic, Bytes: int(n)})
 		}
 	}()
 	go func() {
@@ -129,8 +132,15 @@ func (s *saramaProducer) Metrics() ProducerMetrics {
 		Enqueued: s.enqueued.Load(),
 		Success:  s.success.Load(),
 		Failed:   s.failed.Load(),
+		Bytes:    s.bytes.Load(),
 	}
 }
+
+// Name returns the instance name (WithName, else the topic) for monitoring.
+func (s *saramaProducer) Name() string { return nameOr(s.opts.Name, s.opts.Topic) }
+
+// Backend returns the underlying client library ("sarama").
+func (s *saramaProducer) Backend() string { return backendName }
 
 func (s *saramaProducer) SetOnEvent(fn func(ProducerEvent)) {
 	if fn == nil {

@@ -35,6 +35,7 @@ type saramaConsumerGroup struct {
 	acked     atomic.Uint64
 	failed    atomic.Uint64
 	rebalance atomic.Uint64
+	bytes     atomic.Uint64
 
 	onEvent atomic.Pointer[func(ConsumerEvent)]
 }
@@ -139,8 +140,19 @@ func (s *saramaConsumerGroup) Metrics() ConsumerMetrics {
 		Acked:     s.acked.Load(),
 		Failed:    s.failed.Load(),
 		Rebalance: s.rebalance.Load(),
+		Bytes:     s.bytes.Load(),
 	}
 }
+
+// bumpReceived records a received message's bytes (called from the cgHandler).
+func (s *saramaConsumerGroup) bumpReceived(valueLen int) {
+	s.received.Add(1)
+	s.bytes.Add(uint64(valueLen))
+}
+
+func (s *saramaConsumerGroup) Name() string { return nameOr(s.opts.Name, s.opts.GroupID) }
+
+func (s *saramaConsumerGroup) Backend() string { return backendName }
 
 func (s *saramaConsumerGroup) SetOnEvent(fn func(ConsumerEvent)) {
 	if fn == nil {

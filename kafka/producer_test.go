@@ -2,29 +2,12 @@ package kafka
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/IBM/sarama/mocks"
 )
-
-// waitUntil polls cond until it returns true or the deadline passes (fail on
-// timeout). The async producer's Successes/Errors drains run on goroutines, so
-// Metrics counters settle shortly after Send/Close.
-func waitUntil(t *testing.T, cond func() bool, what string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for: %s", what)
-}
 
 // mockAsyncCfg builds a sarama config suitable for the mock async producer
 // (Return.Successes must match the producer's so the success drain works).
@@ -135,15 +118,4 @@ func TestProducer_VersionParseError(t *testing.T) {
 	if err == nil {
 		t.Fatal("invalid version should error")
 	}
-}
-
-var errBoom = errors.New("boom")
-
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

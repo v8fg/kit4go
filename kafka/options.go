@@ -17,6 +17,12 @@ type Options struct {
 	// a constructor with no brokers returns an error.
 	Brokers []string `json:"brokers" mapstructure:"brokers"`
 
+	// Name is the instance name for per-instance monitoring (exposed via
+	// Producer/Consumer Name()). Default: the Topic (producer/partition) or
+	// GroupID (consumer group) — so each instance is identifiable in metrics
+	// like log4go's per-writer monitoring.
+	Name string `json:"name" mapstructure:"name"`
+
 	// Version is the Kafka cluster version, e.g. "3.5.0". Default "" selects
 	// the wrapper's default (sarama V2_5_0). An invalid string is a
 	// construction error.
@@ -92,11 +98,24 @@ func applyOptions(opts []Option) Options {
 	return o
 }
 
+// nameOr returns name if non-empty, else fallback. Used by constructors to
+// default the instance Name to the Topic (producer/partition) or GroupID
+// (consumer group) when WithName is not set.
+func nameOr(name, fallback string) string {
+	if name != "" {
+		return name
+	}
+	return fallback
+}
+
 // Option is a functional option applied to Options at construction.
 type Option func(*Options)
 
 // WithBrokers sets the bootstrap broker list.
 func WithBrokers(brokers ...string) Option { return func(o *Options) { o.Brokers = brokers } }
+
+// WithName sets the instance name for per-instance monitoring.
+func WithName(name string) Option { return func(o *Options) { o.Name = name } }
 
 // WithVersion sets the Kafka cluster version string (e.g. "3.5.0").
 func WithVersion(v string) Option { return func(o *Options) { o.Version = v } }
