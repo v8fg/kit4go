@@ -41,10 +41,19 @@ func kgoProducerOpts(o Options) []kgo.Opt {
 // AutoCommitMarks + MarkCommitRecords on ACK gives at-least-once (NACK = not
 // marked = re-delivered next session), matching the sarama backend's semantics.
 func kgoConsumerGroupOpts(o Options) []kgo.Opt {
+	// Map the initial offset (OffsetNewest/Oldest) to the kgo reset offset.
+	var reset kgo.Offset
+	switch o.ConsumerOffsetInitial {
+	case OffsetOldest:
+		reset = kgo.NewOffset().AtStart()
+	default:
+		reset = kgo.NewOffset().AtEnd()
+	}
 	return []kgo.Opt{
 		kgo.SeedBrokers(o.Brokers...),
 		kgo.ConsumerGroup(o.GroupID),
-		kgo.AutoCommitMarks(), // commit the records we MarkCommitRecords on ACK
+		kgo.AutoCommitMarks(),
+		kgo.ConsumeResetOffset(reset),
 	}
 }
 
@@ -129,18 +138,16 @@ func NewSyncProducer(opts ...Option) (SyncProducer, error) {
 }
 
 // NewConsumerGroup builds a rebalance-aware ConsumerGroup. WithBrokers and
-// WithGroupID are required.
+// WithGroupID are required. The kgo client is created lazily in Consume() so
+// the topics can be wired to the client at creation time (franz-go requires
+// ConsumeTopics at client creation for group consuming).
 func NewConsumerGroup(opts ...Option) (ConsumerGroup, error) {
 	o := applyOptions(opts)
 	o = o.withDefaults()
 	if err := o.validate("consumer-group"); err != nil {
 		return nil, err
 	}
-	cl, err := kgo.NewClient(kgoConsumerGroupOpts(o)...)
-	if err != nil {
-		return nil, err
-	}
-	return &franzConsumerGroup{opts: o, cl: cl}, nil
+	return &franzConsumerGroup{opts: o}, nil
 }
 
 // NewPartitionConsumer builds a single-partition consumer. WithBrokers,

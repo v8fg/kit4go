@@ -35,8 +35,18 @@ func (s *franzConsumerGroup) Consume(ctx context.Context, topics []string, handl
 	if s.closed.Load() {
 		return ErrProducerClosed
 	}
-	// franz-go's client is already subscribed to the topics via ConsumerGroup +
-	// the kgo client auto-tracks them; PollFetches returns their records.
+	// Create the kgo client lazily here (not in the constructor) so we can wire
+	// the topics at creation time — franz-go requires ConsumeTopics at client
+	// creation for group consuming to work.
+	if s.cl == nil {
+		kopts := kgoConsumerGroupOpts(s.opts)
+		kopts = append(kopts, kgo.ConsumeTopics(topics...))
+		cl, err := kgo.NewClient(kopts...)
+		if err != nil {
+			return err
+		}
+		s.cl = cl
+	}
 	for {
 		if ctxDone(ctx) {
 			return ctx.Err()
