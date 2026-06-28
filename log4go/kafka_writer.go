@@ -13,7 +13,7 @@ import (
 // KafKaMSGFields holds the legacy Kafka→ES message fields.
 //
 // Field management is unified with the Logger's structured-fields layer:
-// SetBaseField/SetBaseFields (global static), With/WithField/WithFields
+// SetBaseField/RemoveBaseField (global static), With/WithField/WithFields
 // (per-scope) and context extractors (per-request) all flow into r.fields, and
 // those take PRIORITY over the struct members here. The struct members below are
 // kept as a backward-compatible fallback for callers that configure the writer
@@ -38,7 +38,7 @@ type KafKaMSGFields struct {
 
 	// ExtraFields are merged into the top-level JSON on send, below r.fields in
 	// priority (a Base/With/Context field of the same key wins). Prefer
-	// SetBaseFields for static fields.
+	// SetBaseField for static fields.
 	ExtraFields map[string]interface{} `json:"extra_fields" mapstructure:"extra_fields"`
 }
 
