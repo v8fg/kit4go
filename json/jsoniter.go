@@ -8,6 +8,9 @@ import jsoniter "github.com/json-iterator/go"
 // PKG package name imported
 const PKG = "jsoniter"
 
+// Backend returns the active JSON backend's short name for monitoring.
+func Backend() string { return "jsoniter" }
+
 var (
 	json = jsoniter.ConfigCompatibleWithStandardLibrary
 

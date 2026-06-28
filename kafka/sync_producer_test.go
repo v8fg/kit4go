@@ -1,3 +1,5 @@
+//go:build !franzgo
+
 package kafka
 
 import (

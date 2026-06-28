@@ -1,3 +1,5 @@
+//go:build !franzgo
+
 package kafka
 
 import (
@@ -118,4 +120,19 @@ func TestProducer_SetOnEventNil(t *testing.T) {
 	p.SetOnEvent(nil) // must not panic; drain goroutines still fire (nil fn = no-op)
 	p.SetOnEvent(func(ProducerEvent) {})
 	_ = p.Close()
+}
+
+// TestMapOffsetInitial is sarama-specific (mapOffsetInitial maps to sarama
+// sentinels); the franz-go backend has its own offsetToKgo.
+func TestMapOffsetInitial(t *testing.T) {
+	cases := []struct{ in, want int64 }{
+		{OffsetNewest, -1}, // sarama.OffsetNewest == -1
+		{OffsetOldest, -2}, // sarama.OffsetOldest == -2
+		{42, 42},           // absolute offset passthrough
+	}
+	for _, c := range cases {
+		if got := mapOffsetInitial(c.in); got != c.want {
+			t.Errorf("mapOffsetInitial(%d)=%d want %d", c.in, got, c.want)
+		}
+	}
 }

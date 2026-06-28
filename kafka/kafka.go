@@ -25,8 +25,13 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrProducerClosed is returned by Send/Consume after Close (shared by both
+// backends).
+var ErrProducerClosed = errors.New("kafka: client closed")
 
 // Offset sentinels for "consume from". They intentionally mirror sarama's
 // sentinel values but are owned here so callers never import sarama. A concrete

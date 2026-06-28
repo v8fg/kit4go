@@ -11,6 +11,9 @@ import "github.com/bytedance/sonic"
 // PKG package name imported
 const PKG = "sonic"
 
+// Backend returns the active JSON backend's short name for monitoring.
+func Backend() string { return "sonic" }
+
 var (
 	json = sonic.ConfigStd
 

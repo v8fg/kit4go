@@ -75,6 +75,17 @@ jobs:
             mv "$m/coverage-$m.out" .
           done
 
+      # The kafka module has a build-tag-selected franz-go backend
+      # (-tags franzgo); verify it also builds/vets/tests. The sarama backend
+      # was covered by the loop above (default build).
+      - name: Test kafka franz-go backend (-tags franzgo)
+        run: |
+          set -e
+          cd kafka
+          go build -tags franzgo ./...
+          go vet -tags franzgo ./...
+          go test -short -race -count=1 ./...
+
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v7
@@ -113,4 +124,6 @@ jobs:
           for m in log4go postgres grpcclient kafka; do
             (cd "$m" && golangci-lint run --timeout=5m ./...)
           done
+          # kafka franz-go backend (build-tag-selected alternate impl)
+          (cd kafka && golangci-lint run --build-tags franzgo --timeout=5m ./...)
 

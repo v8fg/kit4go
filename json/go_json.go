@@ -8,6 +8,9 @@ import json "github.com/goccy/go-json"
 // PKG package name imported
 const PKG = "go_json"
 
+// Backend returns the active JSON backend's short name for monitoring.
+func Backend() string { return "go_json" }
+
 var (
 	// Marshal is exported by gin/json package.
 	Marshal = json.Marshal

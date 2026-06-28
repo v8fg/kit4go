@@ -105,16 +105,3 @@ func TestOptions_Validate(t *testing.T) {
 		t.Errorf("partition-consumer with topic: %v", err)
 	}
 }
-
-func TestMapOffsetInitial(t *testing.T) {
-	cases := []struct{ in, want int64 }{
-		{OffsetNewest, -1}, // sarama.OffsetNewest == -1
-		{OffsetOldest, -2}, // sarama.OffsetOldest == -2
-		{42, 42},           // absolute offset passthrough
-	}
-	for _, c := range cases {
-		if got := mapOffsetInitial(c.in); got != c.want {
-			t.Errorf("mapOffsetInitial(%d)=%d want %d", c.in, got, c.want)
-		}
-	}
-}

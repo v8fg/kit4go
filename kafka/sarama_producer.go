@@ -1,16 +1,14 @@
+//go:build !franzgo
+
 package kafka
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"sync/atomic"
 
 	"github.com/IBM/sarama"
 )
-
-// ErrProducerClosed is returned by Send after Close.
-var ErrProducerClosed = errors.New("kafka: producer closed")
 
 // asyncProducerFactory is the seam used to inject a mock AsyncProducer in
 // tests. The default is sarama.NewAsyncProducer.

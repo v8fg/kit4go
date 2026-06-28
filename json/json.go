@@ -10,6 +10,12 @@ import "encoding/json"
 // PKG package name imported
 const PKG = "encoding/json"
 
+// Backend returns the active JSON backend's short name for monitoring — the
+// build tag selects which file (and thus which value) compiles: "stdlib"
+// (default), "goccy" (-tags go_json), "jsoniter" (-tags jsoniter), or "sonic"
+// (-tags sonic).
+func Backend() string { return "stdlib" }
+
 var (
 	// Marshal is exported by kit4go/json package.
 	Marshal = json.Marshal
