@@ -16,13 +16,14 @@ type franzProducer struct {
 	opts Options
 	cl   *kgo.Client
 
-	closed     atomic.Bool
-	enqueued   atomic.Uint64
-	success    atomic.Uint64
-	failed     atomic.Uint64
-	bytes      atomic.Uint64
-	batchCount atomic.Uint64
-	batchMax   atomic.Uint64
+	closed        atomic.Bool
+	enqueued      atomic.Uint64
+	success       atomic.Uint64
+	failed        atomic.Uint64
+	bytes         atomic.Uint64
+	batchCount    atomic.Uint64
+	batchMax      atomic.Uint64
+	bytesEnqueued atomic.Uint64
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -33,6 +34,7 @@ func (s *franzProducer) Send(ctx context.Context, msg Message) error {
 	}
 	r := toKgoRecord(msg, s.opts.Topic)
 	s.enqueued.Add(1)
+	s.bytesEnqueued.Add(uint64(len(msg.Value)))
 	s.fire(ProducerEvent{Name: "send", Topic: r.Topic, Bytes: len(msg.Value)})
 	// Produce is async: the promise fires on broker ack (or error). franz-go
 	// does NOT close the client's internal channels on a full buffer, so there
@@ -73,6 +75,9 @@ func (s *franzProducer) SendBatch(ctx context.Context, msgs []Message) error {
 			s.fire(ProducerEvent{Name: "success", Topic: rec.Topic, Partition: rec.Partition, Offset: rec.Offset, Bytes: int(nn)})
 		})
 	}
+	for _, msg := range msgs {
+		s.bytesEnqueued.Add(uint64(len(msg.Value)))
+	}
 	s.enqueued.Add(n)
 	return nil
 }
@@ -88,14 +93,29 @@ func (s *franzProducer) Close() error {
 
 func (s *franzProducer) Metrics() ProducerMetrics {
 	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
+	be := s.bytesEnqueued.Load()
+	ba := s.bytes.Load()
 	return ProducerMetrics{
-		Enqueued:   e,
-		Success:    su,
-		Failed:     f,
-		Bytes:      s.bytes.Load(),
-		BatchCount: s.batchCount.Load(),
-		BatchMax:   s.batchMax.Load(),
-		InFlight:   ComputeInFlight(e, su, f),
+		Enqueued:      e,
+		Success:       su,
+		Failed:        f,
+		Bytes:         ba,
+		BytesEnqueued: be,
+		BatchCount:    s.batchCount.Load(),
+		BatchMax:      s.batchMax.Load(),
+		InFlight:      ComputeInFlight(e, su, f),
+		BufferedBytes: ComputeBufferedBytes(be, ba),
+	}
+}
+
+func (s *franzProducer) Snapshot() ProducerSnapshot {
+	return ProducerSnapshot{
+		Name:             s.Name(),
+		Backend:          s.Backend(),
+		ProducerMetrics:  s.Metrics(),
+		Linger:           s.opts.ProducerLinger,
+		MaxBufferedRecs:  s.opts.MaxBufferedRecords,
+		BatchMaxBytesCfg: s.opts.BatchMaxBytes,
 	}
 }
 
@@ -192,12 +212,23 @@ func (s *franzSyncProducer) SendBatch(ctx context.Context, msgs []Message) error
 
 func (s *franzSyncProducer) Metrics() ProducerMetrics {
 	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
+	be, ba := s.bytes.Load(), s.bytes.Load() // sync: enqueued ≈ acked (blocks per send)
 	return ProducerMetrics{
-		Enqueued: e,
-		Success:  su,
-		Failed:   f,
-		Bytes:    s.bytes.Load(),
-		InFlight: ComputeInFlight(e, su, f),
+		Enqueued:      e,
+		Success:       su,
+		Failed:        f,
+		Bytes:         ba,
+		BytesEnqueued: be,
+		InFlight:      ComputeInFlight(e, su, f),
+		BufferedBytes: 0, // sync: no buffered bytes (blocks per send)
+	}
+}
+
+func (s *franzSyncProducer) Snapshot() ProducerSnapshot {
+	return ProducerSnapshot{
+		Name:            s.Name(),
+		Backend:         s.Backend(),
+		ProducerMetrics: s.Metrics(),
 	}
 }
 

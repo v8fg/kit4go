@@ -114,6 +114,9 @@ type Producer interface {
 	// selected at build time (default sarama; -tags franzgo for franz-go) — so
 	// monitoring can identify which Kafka client is in use.
 	Backend() string
+	// Snapshot returns a lock-free, zero-allocation monitoring snapshot.
+	// Safe to call at any cadence (Prometheus scrape) — no hot-path contention.
+	Snapshot() ProducerSnapshot
 }
 
 // SyncProducer blocks each Send until the broker acks. Use it when you need the
@@ -166,24 +169,51 @@ type PartitionConsumer interface {
 
 // ProducerMetrics is a snapshot of async/sync producer counters.
 type ProducerMetrics struct {
-	Enqueued   uint64 // messages handed to the underlying client (Input/SendMessage)
-	Success    uint64 // broker-acked
-	Failed     uint64 // errors drained from the underlying client
-	Bytes      uint64 // bytes acked (sum of Value lengths on success)
-	BatchCount uint64 // SendBatch call count (0 = only Send used, no batching)
-	BatchMax   uint64 // largest single SendBatch size (batch size upper bound)
-	InFlight   uint64 // current in-flight (Enqueued - Success - Failed) — linger backlog / memory
+	Enqueued      uint64 // total records handed to the producer (Send+1, SendBatch+N)
+	Success       uint64 // total broker-acked records
+	Failed        uint64 // total broker-rejected records
+	Bytes         uint64 // total bytes acked (sum of Value lengths on success)
+	BytesEnqueued uint64 // total bytes handed to the producer (sum of Value lengths on enqueue)
+	BatchCount    uint64 // SendBatch call count (0 = only Send used, no batching)
+	BatchMax      uint64 // largest single SendBatch size (batch size upper bound)
+	InFlight      uint64 // current records in buffer (Enqueued - Success - Failed) — linger backlog
+	BufferedBytes uint64 // current bytes in buffer (BytesEnqueued - Bytes) — real-time batch memory
 }
 
 // ComputeInFlight returns Enqueued - Success - Failed, clamped to 0.
-// Exported so callers building custom Metrics snapshots can reuse the formula.
 func ComputeInFlight(enqueued, success, failed uint64) uint64 {
-	inFlight := enqueued - success - failed
 	if success+failed > enqueued {
-		inFlight = 0 // guard against counter skew
+		return 0
 	}
-	return inFlight
+	return enqueued - success - failed
 }
+
+// ComputeBufferedBytes returns BytesEnqueued - Bytes (acked), clamped to 0.
+func ComputeBufferedBytes(bytesEnqueued, bytesAcked uint64) uint64 {
+	if bytesAcked > bytesEnqueued {
+		return 0
+	}
+	return bytesEnqueued - bytesAcked
+}
+
+// ProducerSnapshot is a point-in-time, lock-free, zero-allocation snapshot of
+// a producer's operational state, suitable for scraping by a monitoring system
+// (Prometheus, Grafana, etc.) at any cadence without affecting the hot path.
+// All fields are computed from atomic counters — safe for concurrent reads.
+type ProducerSnapshot struct {
+	Name    string // instance name (WithName or topic)
+	Backend string // "sarama" or "franz-go"
+	ProducerMetrics
+	Linger           time.Duration // configured ProducerLinger (0 = batching off)
+	MaxBufferedRecs  int           // configured MaxBufferedRecords (0 = backend default)
+	BatchMaxBytesCfg int           // configured BatchMaxBytes (0 = backend default)
+}
+
+// Snapshot returns a lock-free, zero-allocation point-in-time view of the
+// producer. Safe to call at any cadence (Prometheus scrape, health check) —
+// it reads atomic counters with no lock contention on the hot Send path.
+// Snapshot() ProducerSnapshot
+//  ← defined as a method on the Producer interface above (not a separate type).
 
 // ConsumerMetrics is a snapshot of consumer counters.
 type ConsumerMetrics struct {

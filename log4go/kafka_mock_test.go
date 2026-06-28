@@ -58,6 +58,14 @@ func (m *mockKafkaProducer) SendBatch(_ context.Context, msgs []kafka.Message) e
 	return nil
 }
 
+func (m *mockKafkaProducer) Snapshot() kafka.ProducerSnapshot {
+	return kafka.ProducerSnapshot{
+		Name:            "mock",
+		Backend:         "mock",
+		ProducerMetrics: m.Metrics(),
+	}
+}
+
 func (m *mockKafkaProducer) Len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

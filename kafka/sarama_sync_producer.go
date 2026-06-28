@@ -126,12 +126,23 @@ func (s *saramaSyncProducer) SendBatch(ctx context.Context, msgs []Message) erro
 
 func (s *saramaSyncProducer) Metrics() ProducerMetrics {
 	e, su, f := s.enqueued.Load(), s.success.Load(), s.failed.Load()
+	ba := s.bytes.Load()
 	return ProducerMetrics{
-		Enqueued: e,
-		Success:  su,
-		Failed:   f,
-		Bytes:    s.bytes.Load(),
-		InFlight: ComputeInFlight(e, su, f),
+		Enqueued:      e,
+		Success:       su,
+		Failed:        f,
+		Bytes:         ba,
+		BytesEnqueued: ba, // sync: enqueued ≈ acked (blocks per send)
+		InFlight:      ComputeInFlight(e, su, f),
+		BufferedBytes: 0, // sync: no buffered bytes
+	}
+}
+
+func (s *saramaSyncProducer) Snapshot() ProducerSnapshot {
+	return ProducerSnapshot{
+		Name:            s.Name(),
+		Backend:         s.Backend(),
+		ProducerMetrics: s.Metrics(),
 	}
 }
 
