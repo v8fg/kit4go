@@ -300,7 +300,7 @@ func decodeSpillFile[T any](path string, codec SpillCodec[T]) []T {
 	if err != nil {
 		return nil
 	}
-	defer fh.Close()
+	defer func() { _ = fh.Close() }() // read-only spill file; close error is irrelevant
 	r := bufio.NewReader(fh)
 	var out []T
 	for {

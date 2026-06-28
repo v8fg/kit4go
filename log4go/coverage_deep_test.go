@@ -17,12 +17,6 @@ type errDeep string
 
 func (e errDeep) Error() string { return string(e) }
 
-// nilPtrErr is a typed-nil error: calling Error() on it panics (nil receiver),
-// which exercises the recover() path in safeErrorString.
-type nilPtrErr struct{}
-
-func (e *nilPtrErr) Error() string { return "should never see this" }
-
 // ---------------------------------------------------------------------------
 // Section 1 — small / pure-function wins
 // ---------------------------------------------------------------------------
@@ -987,9 +981,7 @@ func Test_FileWriter_StartDaemon_SpillFileAndChain(t *testing.T) {
 
 // failFlusherWriter is a test Writer whose Flush/Close return errors, to cover
 // the error-handling branches in (*Logger).Close.
-type failFlusherWriter struct {
-	closed bool
-}
+type failFlusherWriter struct{}
 
 func (f *failFlusherWriter) Init() error           { return nil }
 func (f *failFlusherWriter) Write(r *Record) error { return nil }

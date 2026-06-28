@@ -82,8 +82,33 @@ jobs:
           files: ./coverage-root.out,./coverage-log4go.out,./coverage-postgres.out,./coverage-grpcclient.out
           fail_ci_if_error: false
 
-  # golangci-lint is intentionally NOT run here: the historical config used
-  # v1.48.0, which panics ("can't load fmt") against modern Go. Re-enabling
-  # requires migrating .golangci.yml to the golangci-lint v2 schema — do that as
-  # a follow-up, then add a golangci/golangci-lint-action@v6 job. Until then,
-  # `go vet` above carries the essential static analysis.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Install only; the repo is multi-module, so we run golangci-lint once per
+      # module (./... does not cross go.mod boundaries). The v2 config at the
+      # repo root is auto-discovered from each sub-module dir.
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.11.4
+          install-only: true
+
+      - name: golangci-lint (all modules)
+        run: |
+          set -e
+          golangci-lint run --timeout=5m ./...
+          for m in log4go postgres grpcclient; do
+            (cd "$m" && golangci-lint run --timeout=5m ./...)
+          done
+

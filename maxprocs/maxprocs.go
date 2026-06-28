@@ -15,7 +15,10 @@ import (
 //
 // Calling Set again is safe (idempotent).
 func Set() {
-	maxprocs.Set(maxprocs.Logger(log.Printf))
+	// automaxprocs.Set returns a restore func + error; in a long-running server
+	// we set once at import and never restore, and it reports issues via the
+	// Logger — so both are intentionally unused.
+	_, _ = maxprocs.Set(maxprocs.Logger(log.Printf))
 }
 
 func init() {

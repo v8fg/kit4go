@@ -1,7 +1,6 @@
 package log4go
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -80,7 +79,6 @@ type NetWriter struct {
 	run  atomic.Bool
 	quit chan struct{}
 	stop chan struct{}
-	wg   sync.WaitGroup
 }
 
 // NewNetWriter builds a NetWriter from options. It does NOT dial yet — the
@@ -347,10 +345,6 @@ func (n *NetWriter) Metrics() NetWriterMetrics {
 		OverflowSpilled: n.stats.Spilled(),
 	}
 }
-
-// errNetWriterClosed is returned by callers that need a sentinel; the daemon
-// itself never returns it (it logs and continues).
-var errNetWriterClosed = errors.New("log4go: net writer closed")
 
 // String for debug.
 func (n *NetWriter) String() string {

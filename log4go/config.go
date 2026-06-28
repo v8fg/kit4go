@@ -129,6 +129,9 @@ func SetupLog(lc LogConfig) error {
 func SetLogWithConf(file string) (err error) {
 	var lc LogConfig
 	cnt, err := os.ReadFile(file)
+	if err != nil {
+		return
+	}
 
 	if err = json.Unmarshal(cnt, &lc); err != nil {
 		return

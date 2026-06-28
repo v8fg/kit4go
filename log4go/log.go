@@ -52,14 +52,6 @@ const (
 	timestampLayout = "2006-01-02T15:04:05.000000Z07:00"
 )
 
-// jsonMarshal is the JSON marshal entry point used everywhere log4go serializes
-// JSON (Record.JSON, FieldsJSON, KafKaWriter payload, deliverRecordToWriter).
-// It defaults to jsonMarshalEncode (the codec-aware function — goccy by
-// default, switchable via SetJSONCodec). Tests override it to inject a failing
-// encoder for the marshal-error paths. NOTE: test overrides bypass the codec
-// selection, which is fine — they only exercise the error branch.
-var jsonMarshal = jsonMarshalEncode
-
 // LevelFlags level Flags set
 var (
 	LevelFlags = []string{
@@ -562,8 +554,6 @@ type Logger struct {
 	// atomic.Pointer so it can be toggled live (SetContextExtractor) — e.g. turn
 	// trace-context capture on only when investigating a distributed incident.
 	ctxExtractor atomic.Pointer[contextExtractor]
-
-	lock sync.RWMutex
 
 	// hasSubSecond is set by SetLayout when the layout contains a fractional
 	// seconds directive (".000", ".999", etc). When true, the time cache is
