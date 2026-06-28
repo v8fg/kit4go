@@ -99,10 +99,10 @@ func Test_PackageLevel_Panic(t *testing.T) {
 	// lg already closed by Sync inside Panic
 }
 
-func Test_Logger_SetBaseFields(t *testing.T) {
+func Test_Logger_SetBaseField(t *testing.T) {
 	lg := newLoggerWithRecords(make(chan *Record, 4))
 	defer lg.Close()
-	lg.SetBaseFields(map[string]interface{}{"a": 1, "b": "x"})
+	lg.SetBaseField("a", 1); lg.SetBaseField("b", "x")
 	lg.SetLevel(DEBUG)
 	cw := &captureWriter{}
 	lg.Register(cw)
@@ -412,11 +412,11 @@ func Test_NetWriter_String(t *testing.T) {
 	_ = w.Metrics()
 }
 
-// ===================== Package-level SetBaseField / SetBaseFields =====================
+// ===================== Package-level SetBaseField / SetBaseField =====================
 
 func Test_PackageLevel_SetBaseField(t *testing.T) {
 	SetBaseField("pkg_key", "pkg_val")
-	SetBaseFields(map[string]interface{}{"pk1": 1, "pk2": "v"})
+	SetBaseField("pk1", 1); SetBaseField("pk2", "v")
 }
 
 // ===================== NetWriter String() =====================

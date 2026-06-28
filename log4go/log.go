@@ -428,7 +428,7 @@ type LevelSetter interface {
 // cost nothing on the hot path. *Logger satisfies this interface; obtain it via
 // Logger.Runtime or the package-level Runtime.
 //
-// Note: SetBaseField/SetBaseFields use copy-on-write atomic swap — safe to call
+// Note: SetBaseField uses copy-on-write atomic swap — safe to call
 // concurrently with logging (no data race), but intended for infrequent updates
 // (startup env fields, occasional additions), not high-frequency mutation.
 type RuntimeConfig interface {
@@ -441,7 +441,7 @@ type RuntimeConfig interface {
 	SetSampling(initial, thereafter int)
 	SetContextExtractor(fn func(context.Context) map[string]interface{})
 	SetBaseField(key string, val interface{})
-	SetBaseFields(m map[string]interface{})
+	RemoveBaseField(key string)
 }
 
 // Logger logger define
@@ -797,18 +797,38 @@ func (l *Logger) SetLayout(layout string) {
 	l.layout.Store(&v)
 }
 
-// SetBaseField registers or updates (UPSERT) a single global static field by key.
-// Every subsequent log record carries it. If the key already exists, its value is
-// replaced — no duplicates. If the key is new, it is appended.
+// Base field management — three orthogonal operations on a key-value store.
+// Each operates on a SINGLE key (or all), never has implicit side effects on
+// other keys, and is copy-on-write (safe under concurrent logging).
 //
-// To ADD or UPDATE a single field without affecting others, use SetBaseField.
-// To REPLACE the ENTIRE field set at once (removing old keys), use SetBaseFields.
-// To REMOVE ALL fields, use ClearBaseFields.
+// | Operation              | Effect on the key       | Effect on OTHER keys |
+// |------------------------|-------------------------|----------------------|
+// | SetBaseField(key, val) | Added or updated        | Untouched            |
+// | RemoveBaseField(key)   | Removed (no-op if gone) | Untouched            |
+// | ClearBaseFields()      | —                       | All removed          |
 //
-// Example:
+// There is intentionally NO batch-replace API (a SetBaseFields that overwrites
+// everything was removed: it violated consistency with SetBaseField's upsert
+// semantics and was a footgun — callers would lose fields by surprise). To set
+// multiple fields, call SetBaseField per key (cheap: base field sets are small).
 //
-//	log4go.SetBaseField("service_name", "bidder")  // add or update "service_name"
-//	log4go.SetBaseField("service_name", "bidder2") // upsert: replaces, not duplicates
+// Base field 管理 —— 三个正交操作：
+// SetBaseField（加/改一个 key）、RemoveBaseField（删一个 key）、ClearBaseFields（清空）。
+// 无批量覆盖 API（故意去掉 —— 与 upsert 语义不一致，易误删字段）。批量设 = 循环 SetBaseField。
+
+// SetBaseField adds or updates (upsert) a single base field by key. If the key
+// already exists its value is replaced; if it is new it is appended. Other keys
+// are untouched. Every subsequent log record carries all base fields.
+//
+// Typical usage at startup:
+//
+//	for k, v := range configMap {
+//	    log4go.SetBaseField(k, v)
+//	}
+//
+// Runtime update (e.g. canary deploy):
+//
+//	log4go.SetBaseField("service_name", "bidder-canary")
 func (l *Logger) SetBaseField(key string, val interface{}) {
 	f := fieldOf(key, val)
 	cur := l.baseFields.v.Load()
@@ -822,58 +842,52 @@ func (l *Logger) SetBaseField(key string, val interface{}) {
 				return
 			}
 		}
-		// key not found → append
 		next = append(next, f)
 		l.baseFields.v.Store(&next)
 		return
 	}
-	// no existing fields → first field
 	next := []field{f}
 	l.baseFields.v.Store(&next)
 }
 
-// SetBaseFields REPLACES ALL base fields with the given map — this is a FULL
-// OVERWRITE, not an append. After this call, the base field set IS exactly the
-// keys in m: every key not in m is REMOVED. Use this when you know the complete
-// field set at once (e.g. at startup from config).
-//
-// ⚠️ WARNING: this OVERWRITES. Previous fields are gone. If you only want to
-// add or update a single field without losing others, use SetBaseField(key, val)
-// instead.
-//
-// To REMOVE a specific field: call SetBaseFields with a map that omits that key.
-// To REMOVE ALL fields: use ClearBaseFields.
-//
-// Example:
-//
-//	// Full replace — base fields are now EXACTLY {a, b}:
-//	log4go.SetBaseFields(map[string]interface{}{"a": 1, "b": 2})
-//	// "a" was previously "old_a" → now "1" (overwritten)
-//	// any key not in this map (e.g. "c") is GONE
-//
-//	// To add one without losing others — use SetBaseField instead:
-//	log4go.SetBaseField("c", 3)  // upsert: adds "c", keeps "a" and "b"
-func (l *Logger) SetBaseFields(m map[string]interface{}) {
-	next := make([]field, 0, len(m))
-	for k, v := range m {
-		next = append(next, fieldOf(k, v))
+// RemoveBaseField removes a single base field by key. No-op if the key does not
+// exist. Other keys are untouched.
+func (l *Logger) RemoveBaseField(key string) {
+	cur := l.baseFields.v.Load()
+	if cur == nil || len(*cur) == 0 {
+		return
 	}
-	l.baseFields.v.Store(&next)
+	s := *cur
+	next := make([]field, 0, len(s))
+	found := false
+	for _, f := range s {
+		if f.key == key {
+			found = true
+			continue
+		}
+		next = append(next, f)
+	}
+	if !found {
+		return
+	}
+	if len(next) == 0 {
+		l.baseFields.v.Store(nil)
+	} else {
+		l.baseFields.v.Store(&next)
+	}
 }
 
 // ClearBaseFields removes ALL base fields. Subsequent records carry no base
-// fields until SetBaseField or SetBaseFields is called again.
+// fields until SetBaseField is called again.
 func (l *Logger) ClearBaseFields() {
 	l.baseFields.v.Store(nil)
 }
 
-// SetBaseField upserts (add-or-update by key) a global static field on the default
-// logger. See Logger.SetBaseField for details.
+// SetBaseField upserts (add-or-update by key) a base field on the default logger.
 func SetBaseField(key string, val interface{}) { defaultLogger().SetBaseField(key, val) }
 
-// SetBaseFields REPLACES ALL base fields on the default logger (full overwrite,
-// not append). See Logger.SetBaseFields — ⚠️ this removes keys not in the map.
-func SetBaseFields(m map[string]interface{}) { defaultLogger().SetBaseFields(m) }
+// RemoveBaseField removes a single base field by key on the default logger.
+func RemoveBaseField(key string) { defaultLogger().RemoveBaseField(key) }
 
 // ClearBaseFields removes ALL base fields from the default logger.
 func ClearBaseFields() { defaultLogger().ClearBaseFields() }

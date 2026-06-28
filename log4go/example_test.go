@@ -236,7 +236,7 @@ func Example_kafkaWriter() {
 //
 //	app (log4go) ──KafKaWriter──▶ Kafka ──Filebeat/Logstash──▶ Elasticsearch
 //
-// Field management is unified with Base Fields: SetBaseFields registers the
+// Field management is unified with Base Fields: SetBaseField registers the
 // global static fields (hostname/server_ip/app/env) every record carries, and
 // es_index is set as a Base Field so the Kafka payload itself names the target
 // ES index — the consumer routes on it with no extra parsing. The payload also
@@ -248,14 +248,10 @@ func Example_kafkaWriter() {
 // SetBaseField(s) for new code.
 func Example_kafkaToES() {
 	// 1) global static fields — set once at startup, carried by EVERY record.
-	//    Base fields propagate to child loggers built via With, so a
-	//    With("trace_id",…).Info(…) line also carries hostname/server_ip/… .
-	log4go.SetBaseFields(map[string]interface{}{
-		"hostname":  "adx-prod-01",
-		"server_ip": "10.0.1.5",
-		"app":       "adx-dsp",
-		"env":       "prod",
-	})
+	log4go.SetBaseField("hostname", "adx-prod-01")
+	log4go.SetBaseField("server_ip", "10.0.1.5")
+	log4go.SetBaseField("app", "adx-dsp")
+	log4go.SetBaseField("env", "prod")
 	// es_index routes the record to its ES index. Static here; for time-sharded
 	// indices (adx-logs-2026.06.26) prefer computing it on the consumer side
 	// from @timestamp (see Filebeat config below) so the index rolls daily
@@ -354,15 +350,15 @@ func Example_multiWriterAlerts() {
 			log4go.MatchKeyword("fail"),
 		),
 		Gate:          log4go.NewRateAlerter(time.Minute, 10), // >=10/min, ~1 fire/min
-		RateFormatter: log4go.DefaultRateWebhookFormatter,    // payload: "[N in window] ..."
+		RateFormatter: log4go.DefaultRateWebhookFormatter,     // payload: "[N in window] ..."
 	})
 	log4go.Register(webhook)
 
 	defer log4go.Close() // flushes kafka/net; closes the webhook sink
 
-	log4go.Info("started")                       // → kafka only
-	log4go.Warn("cache degraded")                // → kafka + net
-	log4go.Error("db timeout")                   // → kafka + net; webhook filter rejects (not domain=pay)
+	log4go.Info("started")                               // → kafka only
+	log4go.Warn("cache degraded")                        // → kafka + net
+	log4go.Error("db timeout")                           // → kafka + net; webhook filter rejects (not domain=pay)
 	log4go.With("domain", "pay").Error("payment failed") // → kafka + net + webhook (domain=pay + "fail", past threshold)
 }
 

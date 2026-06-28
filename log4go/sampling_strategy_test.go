@@ -385,8 +385,8 @@ type customStrategy struct{}
 func (customStrategy) ShouldLog(string) bool { return true }
 
 // TestBaseField_UpsertReplaceClear: SetBaseField upserts (no duplicate),
-// SetBaseFields replaces (full replace), ClearBaseFields empties.
-func TestBaseField_UpsertReplaceClear(t *testing.T) {
+// RemoveBaseField deletes by key, ClearBaseFields empties.
+func TestBaseField_UpsertRemoveClear(t *testing.T) {
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
 
@@ -399,14 +399,32 @@ func TestBaseField_UpsertReplaceClear(t *testing.T) {
 		t.Errorf("after upsert: len=%d want 2", len(*bf))
 	}
 
-	// SetBaseFields full replace (removes old keys)
-	root.SetBaseFields(map[string]interface{}{"c": 4})
+	// RemoveBaseField removes by key (others untouched)
+	root.RemoveBaseField("a")
 	bf = root.baseFields.v.Load()
-	if len(*bf) != 1 {
-		t.Errorf("after replace: len=%d want 1 (a,b gone, only c)", len(*bf))
+	if len(*bf) != 1 || (*bf)[0].key != "b" {
+		t.Errorf("after remove a: len=%d want 1, key=b", len(*bf))
 	}
 
+	// RemoveBaseField no-op for missing key
+	root.RemoveBaseField("nonexistent")
+	bf = root.baseFields.v.Load()
+	if len(*bf) != 1 {
+		t.Errorf("after remove nonexistent: len=%d want 1", len(*bf))
+	}
+
+	// RemoveBaseField → last field → nil
+	root.RemoveBaseField("b")
+	bf = root.baseFields.v.Load()
+	if bf != nil {
+		t.Errorf("after remove last: want nil, got len=%d", len(*bf))
+	}
+
+	// RemoveBaseField no-op on nil
+	root.RemoveBaseField("anything") // should not panic
+
 	// ClearBaseFields
+	root.SetBaseField("x", 1)
 	root.ClearBaseFields()
 	bf = root.baseFields.v.Load()
 	if bf != nil {
@@ -414,12 +432,17 @@ func TestBaseField_UpsertReplaceClear(t *testing.T) {
 	}
 }
 
-// TestPackage_ClearBaseFields covers the package-level ClearBaseFields.
+// TestPackage_ClearBaseFields covers the package-level ClearBaseFields + RemoveBaseField.
 func TestPackage_ClearBaseFields(t *testing.T) {
 	defer Close()
 	Close()
 	SetupLog(LogConfig{Level: "info", ConsoleWriter: ConsoleWriterOptions{Enable: true}})
 	SetBaseField("x", 1)
+	RemoveBaseField("x") // package-level RemoveBaseField
+	if dl := defaultLogger(); dl.baseFields.v.Load() != nil {
+		t.Error("package RemoveBaseField did not remove")
+	}
+	SetBaseField("y", 2)
 	ClearBaseFields()
 	if dl := defaultLogger(); dl.baseFields.v.Load() != nil {
 		t.Error("package ClearBaseFields did not clear")

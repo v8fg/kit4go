@@ -287,7 +287,7 @@ func ExampleLogger_WithCaller() {
 		Enable: true, Level: log4go.LevelFlagInfo,
 	}))
 
-	lg.WithCaller(true)  // includes file:line
+	lg.WithCaller(true) // includes file:line
 	lg.Info("with caller")
 
 	lg.WithCaller(false) // skip runtime.Caller (max throughput)
@@ -303,18 +303,6 @@ func ExampleSetBaseField() {
 
 	// Every record now carries hostname/app/es_index
 	log4go.Info("started")
-}
-
-// ExampleSetBaseFields shows batch global field registration.
-func ExampleSetBaseFields() {
-	log4go.SetBaseFields(map[string]interface{}{
-		"hostname":  "prod-01",
-		"server_ip": "10.0.1.5",
-		"env":       "prod",
-	})
-	defer log4go.Close()
-
-	log4go.Info("all records carry these fields")
 }
 
 // ExampleSetFormat shows the three output formats.
