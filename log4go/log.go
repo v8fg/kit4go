@@ -1610,6 +1610,19 @@ func ResumeWriter(name string) bool { return defaultLogger().ResumeWriter(name) 
 // WriterPaused reports whether the named writer on the package singleton is paused.
 func WriterPaused(name string) bool { return defaultLogger().WriterPaused(name) }
 
+// SetKafkaCodec applies c to every registered KafKaWriter on the package
+// singleton (nil ⇒ JSON, the default). Use at startup to choose the on-the-wire
+// Kafka payload format (KafkaCodecProto for ~46% smaller payloads at 1M+ QPS),
+// or for a rare runtime format switch. Non-Kafka writers are ignored. Each
+// writer's codec swap is RWMutex-protected, so this is safe under load.
+func SetKafkaCodec(c KafkaCodec) {
+	for _, w := range Writers() {
+		if kw, ok := w.(*KafKaWriter); ok {
+			kw.SetKafkaCodec(c)
+		}
+	}
+}
+
 // SetFormat selects the record serialization format on the package singleton
 // (FormatText default, FormatJSON for structured/machine-readable logs). Should
 // be called before the logger is used for real (alongside SetLevel/SetLayout).

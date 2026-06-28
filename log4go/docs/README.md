@@ -1,9 +1,8 @@
 # log4go — Comprehensive Evaluation & Usage Guide
 # log4go — 全面评估与使用指南
 
-**Version**: 2026.06 (dev branch, P1b complete)
-**Branch**: `dev` @ `6362ec2`
-**Coverage**: 100.0% | **Race**: clean | **Alloc**: ≤1/op (hot path)
+**Version**: 2026.06 (dev branch, P1b + KafkaCodec complete)
+**Coverage**: 100% | **Race**: clean | **Alloc**: ≤1/op (hot path)
 
 ---
 
@@ -265,6 +264,97 @@ log4go.ResumeWriter(log4go.WriterNameKafka)
 
 ---
 
+## Kafka Codec (JSON + Protobuf) | Kafka 编解码
+
+### Supported codecs (zero external dependency)
+
+| Codec | Status | Size/rec | Deps | Use case |
+|-------|--------|---------|------|----------|
+| **JSON** | ✅ Done (default) | ~177B | zero | ES native, debug, human-readable |
+| **Protobuf** | ✅ Done (hand-rolled) | ~95B (46% smaller) | zero | production, cross-language, 1M QPS bandwidth |
+| Avro | ❌ Not doing | ~70B | +38% binary + Schema Registry | assessed: advantage insufficient vs cost |
+| FlatBuffers | ⏸️ Future (if needed) | ~100B | codegen | gaming zero-copy consumer read |
+
+### API
+
+```go
+// Default (JSON):
+log4go.SetKafkaCodec(log4go.KafkaCodecJSON{})
+
+// Production (Protobuf, 3× smaller):
+log4go.SetKafkaCodec(log4go.KafkaCodecProto{})
+
+// Runtime switch (RWMutex, rare config change):
+writer := log4go.NewKafKaWriter(...)
+writer.SetKafkaCodec(log4go.KafkaCodecProto{})
+
+// Custom (interface open):
+type KafkaCodec interface {
+    Encode(p *kafkaPayload) []byte
+    ContentType() string
+}
+```
+
+### Protobuf schema (.proto)
+
+File: `log4go/proto/log_record.proto`. Consumers generate decoders:
+
+```bash
+protoc --python_out=. log_record.proto   # Python
+protoc --java_out=. log_record.proto     # Java
+protoc --go_out=. log_record.proto       # Go
+```
+
+### Why Avro was rejected | 为什么不选 Avro
+
+| Factor | Protobuf | Avro | Verdict |
+|--------|---------|------|---------|
+| Size | 95B | 70B | 25% diff — marginal at Kafka scale |
+| Binary cost | 0 (hand-rolled) | +38% binary (hamba/avro ~8000 lines) | ❌ |
+| Infrastructure | .proto in git (zero) | Schema Registry server (new ops) | ❌ |
+| Spark/Flink | ✅ `from_protobuf()` (Spark 3.x) | ✅ native | tied |
+| ES compatibility | needs decode (same as Avro) | needs decode | tied |
+| Hand-roll possible | ✅ done (~158 lines) | ❌ too complex | ❌ |
+| Schema evolution | ✅ field numbers + optional | ✅ stronger (named fields) | tied (logs rarely change schema) |
+
+**Decision**: JSON + Protobuf only. Avro's complexity far exceeds its marginal benefit.
+Available via open KafkaCodec interface if genuinely needed.
+
+Avro 不做：25% 体积优势不值得 +38% binary + Schema Registry + 重依赖 + 无法手写。
+Spark 3.x 已支持 Protobuf，Avro 的"原生大数据"优势消失。
+
+### Performance (verified)
+
+```
+Benchmark_KafKaCodec_JSON-10    5831253    200 ns/op    384 B/op    2 allocs/op
+Benchmark_KafKaCodec_Proto-10   4695116    264 ns/op    288 B/op    3 allocs/op
+```
+
+Proto is 46% smaller (95B vs 177B); slightly slower (264 vs 200 ns) due to `time.Format`
+in timestamp. Optimization path: pre-compute ISO timestamp from unixNano without
+`time.Unix().Format()` (saves ~60ns + 1 alloc).
+
+### Gaming + Kafka analysis | 游戏 + Kafka 分析
+
+| Game data type | Kafka? | Why |
+|----------------|--------|-----|
+| Real-time gameplay (frames) | ❌ | latency <10ms; use UDP/WebSocket |
+| Match/room management | ❌ | strong consistency; use Redis |
+| Player behavior logs | ✅ | event stream = log4go use case |
+| Operations analytics (DAU) | ✅ | big-data analysis |
+| Audit/compliance | ✅ | must persist |
+| Anti-cheat streaming | ✅ | Flink CEP |
+
+**Conclusion**: Game backends don't use Kafka for real-time gameplay (too slow), but DO
+use it for operations/logs/analytics/audit — exactly log4go's domain. Game telemetry
+through log4go is identical to ad-tech's pattern.
+
+**FlatBuffers**: value is on consumer side (zero-copy selective field read), not producer
+side. Relevant only if a game-event consumer needs to read billions of records selectively.
+Not needed now; available via open KafkaCodec interface.
+
+---
+
 ## Industry Alignment Summary | 业界对标汇总
 
 | Concern | Industry standard | log4go implementation |
@@ -283,19 +373,6 @@ log4go.ResumeWriter(log4go.WriterNameKafka)
 
 ---
 
-## Document Index | 文档索引
-
-| Document | Content |
-|----------|---------|
-| `docs/README.md` | **This document** — comprehensive evaluation + usage guide |
-| `docs/design_principles.md` | 8 design principles + decision log + perf profile |
-| `docs/observability.md` | Distributed observability design (OTel division, sampling, metrics) |
-| `docs/observability_en.md` | Field schema + industry best practices (bilingual) |
-| `doc.go` | Package-level godoc (API reference, examples) |
-| `PERFORMANCE.en.md` | Benchmark methodology + historical results |
-
----
-
 ## What log4go Does NOT Do (intentional) | log4go 不做的事（故意）
 
 | Out of scope | Why | Use instead |
@@ -308,10 +385,25 @@ log4go.ResumeWriter(log4go.WriterNameKafka)
 | Alert notification channels | Not logging | PagerDuty/Slack/DingTalk |
 | Config file reload | Over-engineered (removed) | Granular setters (RuntimeConfig) |
 | Batch field replace | Violates orthogonality (removed) | SetBaseField per key |
+| Avro codec | Marginal size gain, heavy cost | Protobuf (or custom via KafkaCodec) |
 
 ---
 
-## Session Change Log (30 commits) | 本次改动记录（30 commits）
+## Document Index | 文档索引
+
+| Document | Content |
+|----------|---------|
+| `docs/README.md` | **This document** — comprehensive evaluation + usage guide |
+| `docs/design_principles.md` | 8 design principles + decision log + perf profile |
+| `docs/observability.md` | Distributed observability design (OTel division, sampling, metrics) |
+| `docs/observability_en.md` | Field schema + industry best practices + codec comparison (bilingual) |
+| `doc.go` | Package-level godoc (API reference, examples) |
+| `PERFORMANCE.en.md` | Benchmark methodology + historical results |
+| `proto/log_record.proto` | Protobuf schema for Kafka cross-language consumers |
+
+---
+
+## Session Change Log (32 commits) | 本次改动记录（32 commits）
 
 | Phase | Commits | Key deliverable |
 |-------|---------|----------------|
@@ -331,14 +423,17 @@ log4go.ResumeWriter(log4go.WriterNameKafka)
 | **Base field refactor** | 880a108 | orthogonal 3-op (Set/Remove/Clear) |
 | **Design principles** | 4cfff87 | 8 principles + decision log |
 | **Performance profile** | 6362ec2 | pprof + bottleneck analysis |
+| **KafkaCodec (JSON + Protobuf)** | 782c204 | pluggable codec + hand-rolled proto + .proto schema |
+| **Codec decision (Avro rejected)** | a77a579 | JSON + Protobuf only; assessment matrix |
 
 ---
 
-## Roadmap (remaining P1b optional) | 后续（P1b 可选项）
+## Roadmap | 后续
 
-| Item | Priority | Effort |
-|------|----------|--------|
-| `OnErrorBurst(window, threshold, fn)` | low | small (wraps RateAlerter) |
-| Snapshot goroutine + bounded cache | low | medium (periodic aggregation for Grafana) |
-| protobuf KafKaWriter codec | medium | medium (5× bandwidth saving at 1M QPS) |
-| Per-shard Occurred counter | low | small (ShardLogger integration) |
+| Item | Priority | Effort | Status |
+|------|----------|--------|--------|
+| `kit4go/kafka` wrapper (Producer/Consumer) | high | large | planned — seamless sarama/kafka-go/confluent switch |
+| `OnErrorBurst(window, threshold, fn)` | low | small | optional (wraps RateAlerter) |
+| Snapshot goroutine + bounded cache | low | medium | optional (periodic aggregation for Grafana) |
+| Per-shard Occurred counter | low | small | ShardLogger integration |
+| FlatBuffers codec | low | medium | future (gaming zero-copy consumer read); open interface |
