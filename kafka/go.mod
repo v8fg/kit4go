@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/IBM/sarama v1.50.3
 	github.com/twmb/franz-go v1.21.4
+	github.com/twmb/franz-go/pkg/kfake v0.0.0-20260625163649-cec2eb18edeb
 	go.uber.org/goleak v1.3.0
 	google.golang.org/protobuf v1.36.11
 )

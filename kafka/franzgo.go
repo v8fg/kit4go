@@ -29,25 +29,73 @@ func offsetToKgo(o int64) kgo.Offset {
 	}
 }
 
-// kgoProducerOpts builds kgo client options for a producer. franz-go's default
-// acks is all-ISR; no explicit RequiredAcks needed.
+// kgoProducerOpts builds kgo client options for an ASYNC producer.
+//
+// RequiredAcks, ProducerLinger, and MaxBufferedRecords are ALWAYS set explicitly
+// (via kgoAcks / effectiveLinger / the resolved value) so franz-go's native
+// defaults (acks=all-ISR, linger=10ms, maxBufferedRecords=10000) never leak in —
+// behavior is pinned to the kit4go resolved Options (acks default = leader, for
+// parity with sarama) and matches what Snapshot() reports.
 func kgoProducerOpts(o Options) []kgo.Opt {
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(o.Brokers...),
 		kgo.AllowAutoTopicCreation(),
 		kgo.RecordRetries(5), // retry on UNKNOWN_TOPIC_OR_PART (auto-create race)
+		kgo.RequiredAcks(kgoAcks(o.Acks)),
+		kgo.ProducerLinger(effectiveLinger(o.ProducerLinger)),
+		kgo.MaxBufferedRecords(o.MaxBufferedRecords),
 	}
-	// Batch tuning: ProducerLinger accumulates records before flush (higher
-	// throughput, added latency). MaxBufferedRecords bounds memory. BatchMaxBytes
-	// caps a single batch's byte size.
-	if o.ProducerLinger > 0 {
-		opts = append(opts, kgo.ProducerLinger(o.ProducerLinger))
-	}
-	if o.MaxBufferedRecords > 0 {
-		opts = append(opts, kgo.MaxBufferedRecords(o.MaxBufferedRecords))
-	}
+	// BatchMaxBytes caps a single batch's byte size (0 = kgo default ~1MiB).
 	if o.BatchMaxBytes > 0 {
 		opts = append(opts, kgo.ProducerBatchMaxBytes(int32(o.BatchMaxBytes)))
+	}
+	// acks=leader/none is incompatible with franz-go's idempotent producer
+	// (which requires acks=all) — disable it explicitly in those modes.
+	if kgoNeedsIdempotencyDisabled(o.Acks) {
+		opts = append(opts, kgo.DisableIdempotentWrite())
+	}
+	return opts
+}
+
+// kgoAcks maps Options.Acks to kgo's RequiredAcks. Empty/unknown → LeaderAcks
+// (acks=1, the package default — throughput-first; unifies both backends on
+// leader unless AcksAll/AcksNone is set. NOTE: this changes franz-go's behavior
+// from its native all-ISR default to leader — set AcksAll for durability).
+// kgoAcks maps Options.Acks to kgo's RequiredAcks. Default (empty or AcksLeader)
+// → LeaderAck — UNIFIED with sarama (both backends default to leader).
+// Only explicit AcksAll → AllISRAcks (keeps the idempotent producer).
+func kgoAcks(a string) kgo.Acks {
+	switch a {
+	case AcksAll:
+		return kgo.AllISRAcks()
+	case AcksNone:
+		return kgo.NoAck()
+	default: // "" or AcksLeader → leader (the unified default)
+		return kgo.LeaderAck()
+	}
+}
+
+// kgoNeedsIdempotencyDisabled reports whether the chosen acks is incompatible
+// with franz-go's idempotent producer (which requires acks=all). Only AcksAll
+// keeps it; everything else (including the default "") disables it.
+func kgoNeedsIdempotencyDisabled(a string) bool {
+	return a != AcksAll
+}
+
+// kgoSyncProducerOpts builds kgo client options for a SYNC producer. ProduceSync
+// is synchronous (blocks per send, no async batching), so ProducerLinger /
+// MaxBufferedRecords are NOT applied — they're inert for sync. Omitting them
+// keeps franz-go sync behavior identical to sarama's Flush-off sync path
+// (buildSaramaConfig sync=true), so the two backends stay consistent.
+func kgoSyncProducerOpts(o Options) []kgo.Opt {
+	opts := []kgo.Opt{
+		kgo.SeedBrokers(o.Brokers...),
+		kgo.AllowAutoTopicCreation(),
+		kgo.RecordRetries(5),
+		kgo.RequiredAcks(kgoAcks(o.Acks)),
+	}
+	if kgoNeedsIdempotencyDisabled(o.Acks) {
+		opts = append(opts, kgo.DisableIdempotentWrite())
 	}
 	return opts
 }
@@ -132,11 +180,12 @@ func NewProducer(opts ...Option) (Producer, error) {
 	if err := o.validate("producer"); err != nil {
 		return nil, err
 	}
+	logConfig("async-producer", o)
 	cl, err := kgo.NewClient(kgoProducerOpts(o)...)
 	if err != nil {
 		return nil, err
 	}
-	return &franzProducer{opts: o, cl: cl}, nil
+	return &franzProducer{opts: o, cl: cl, history: newSnapshotHistory(o.SnapshotHistory)}, nil
 }
 
 // NewSyncProducer builds a sync Producer (Send blocks until broker ack).
@@ -146,7 +195,8 @@ func NewSyncProducer(opts ...Option) (SyncProducer, error) {
 	if err := o.validate("producer"); err != nil {
 		return nil, err
 	}
-	cl, err := kgo.NewClient(kgoProducerOpts(o)...)
+	logConfig("sync-producer", o)
+	cl, err := kgo.NewClient(kgoSyncProducerOpts(o)...)
 	if err != nil {
 		return nil, err
 	}

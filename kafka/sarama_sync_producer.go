@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/IBM/sarama"
 )
@@ -44,11 +45,12 @@ func NewSyncProducer(opts ...Option) (SyncProducer, error) {
 	if err := o.validate("producer"); err != nil {
 		return nil, err
 	}
+	logConfig("sync-producer", o)
 	return newSaramaSyncProducer(o, nil)
 }
 
 func newSaramaSyncProducer(o Options, factory syncProducerFactory) (*saramaSyncProducer, error) {
-	cfg, err := buildSaramaConfig(o)
+	cfg, err := buildSaramaConfig(o, true)
 	if err != nil {
 		return nil, err
 	}
@@ -140,9 +142,12 @@ func (s *saramaSyncProducer) Metrics() ProducerMetrics {
 }
 
 func (s *saramaSyncProducer) Snapshot() ProducerSnapshot {
+	// Sync has no batch buffer (linger/MaxBufferedRecords are forced off — see
+	// buildSaramaConfig sync=true), so only Timestamp + counters are reported.
 	return ProducerSnapshot{
 		Name:            s.Name(),
 		Backend:         s.Backend(),
+		Timestamp:       time.Now().UTC(),
 		ProducerMetrics: s.Metrics(),
 	}
 }

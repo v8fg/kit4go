@@ -125,8 +125,16 @@ type SyncProducer interface {
 	// Send sends msg and blocks until the broker acks, returning the assigned
 	// partition and offset.
 	Send(ctx context.Context, msg Message) (partition int32, offset int64, err error)
+	// SendBatch sends msgs in one broker round-trip (much higher QPS than
+	// per-record Send). Both backends implement it (sarama SendMessages,
+	// franz-go ProduceSync variadic).
+	SendBatch(ctx context.Context, msgs []Message) error
 	Close() error
 	Metrics() ProducerMetrics
+	// Snapshot returns a point-in-time monitoring snapshot (with UTC Timestamp).
+	// Sync has no batch buffer (linger/MaxBufferedRecords are inert), so only
+	// Timestamp + counters are reported.
+	Snapshot() ProducerSnapshot
 	SetOnEvent(fn func(ProducerEvent))
 	Name() string
 	Backend() string
@@ -145,6 +153,9 @@ type ConsumerGroup interface {
 	Errors() <-chan error
 	Close() error
 	Metrics() ConsumerMetrics
+	// Snapshot returns a point-in-time monitoring view with a UTC Timestamp
+	// (parity with ProducerSnapshot). Safe to call at any cadence.
+	Snapshot() ConsumerSnapshot
 	SetOnEvent(fn func(ConsumerEvent))
 	Name() string
 	Backend() string
@@ -163,6 +174,9 @@ type PartitionConsumer interface {
 	Messages() <-chan Message
 	Errors() <-chan error
 	Close() error
+	// Snapshot returns a point-in-time monitoring view with a UTC Timestamp
+	// (parity with ProducerSnapshot).
+	Snapshot() ConsumerSnapshot
 	Name() string
 	Backend() string
 }
@@ -202,21 +216,49 @@ func ComputeBufferedBytes(bytesEnqueued, bytesAcked, bytesFailed uint64) uint64 
 // ProducerSnapshot is a point-in-time, lock-free, zero-allocation snapshot of
 // a producer's operational state, suitable for scraping by a monitoring system
 // (Prometheus, Grafana, etc.) at any cadence without affecting the hot path.
-// All fields are computed from atomic counters — safe for concurrent reads.
+// All counter fields are computed from atomic counters — safe for concurrent
+// reads. Each call also records the sample into the optional history ring (see
+// SnapshotHistory) so trend analysis is possible without an external TSDB.
 type ProducerSnapshot struct {
-	Name    string // instance name (WithName or topic)
-	Backend string // "sarama" or "franz-go"
+	Name      string    // instance name (WithName or topic)
+	Backend   string    // "sarama" or "franz-go"
+	Timestamp time.Time // when this sample was taken (UTC; JSON → RFC3339 "Z")
 	ProducerMetrics
-	Linger           time.Duration // configured ProducerLinger (0 = batching off)
-	MaxBufferedRecs  int           // configured MaxBufferedRecords (0 = backend default)
+	Linger           time.Duration // effective ProducerLinger (0 = batching off)
+	MaxBufferedRecs  int           // effective MaxBufferedRecords
 	BatchMaxBytesCfg int           // configured BatchMaxBytes (0 = backend default)
+}
+
+// SnapshotHistory is an OPTIONAL capability implemented by async producers when
+// history sampling is enabled (WithSnapshotHistory). It exposes the bounded ring
+// of recent ProducerSnapshot samples recorded on each Snapshot() call, for trend
+// analysis (e.g. computing throughput between scrapes via SnapshotRate).
+//
+// Obtain it via a type assertion — matching the Go idiom for optional
+// capabilities (io.Seeker; this repo's SpillerRecoverable):
+//
+//	if h, ok := producer.(SnapshotHistory); ok {
+//	    samples := h.History() // oldest→newest; nil if disabled/empty
+//	}
+//
+// Async producers always satisfy this interface — History() returns nil when
+// history is disabled or empty, so check len(samples) (not the assertion) for
+// enablement. The assertion FAILS for sync producers and test doubles, which
+// don't implement it. Keeping it off the core Producer interface avoids forcing
+// every implementor to stub it and preserves backward compatibility.
+type SnapshotHistory interface {
+	// History returns the retained samples oldest→newest, or nil if history is
+	// disabled or empty. Each Snapshot() call appends one sample (Prometheus
+	// scrape-driven model); the count is bounded by the WithSnapshotHistory cap.
+	History() []ProducerSnapshot
 }
 
 // Snapshot returns a lock-free, zero-allocation point-in-time view of the
 // producer. Safe to call at any cadence (Prometheus scrape, health check) —
-// it reads atomic counters with no lock contention on the hot Send path.
-// Snapshot() ProducerSnapshot
-//  ← defined as a method on the Producer interface above (not a separate type).
+// it reads atomic counters with no lock contention on the hot Send path, and
+// records the sample into the history ring (when enabled) under a scrape-path
+// mutex that the Send path never touches. Defined as a method on the Producer
+// interface above.
 
 // ConsumerMetrics is a snapshot of consumer counters.
 type ConsumerMetrics struct {
@@ -225,6 +267,16 @@ type ConsumerMetrics struct {
 	Failed    uint64 // handler returned non-nil, or decode error
 	Rebalance uint64 // consumer-group sessions recreated after a rebalance
 	Bytes     uint64 // bytes received (sum of Value lengths)
+}
+
+// ConsumerSnapshot is the consumer counterpart of ProducerSnapshot — a
+// point-in-time, lock-free monitoring view with a UTC Timestamp. Parity with
+// the producer monitoring surface so scrapers treat both uniformly.
+type ConsumerSnapshot struct {
+	Name      string // GroupID (group) or Topic (partition)
+	Backend   string // "sarama" or "franz-go"
+	Timestamp time.Time
+	ConsumerMetrics
 }
 
 // ProducerEvent feeds Producer.SetOnEvent. Name is one of "send","success",

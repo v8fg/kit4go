@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/IBM/sarama"
 )
@@ -39,6 +40,8 @@ type saramaProducer struct {
 	bytesEnqueued atomic.Uint64
 	bytesFailed   atomic.Uint64
 
+	history *snapshotHistory // nil when WithSnapshotHistory not set (zero overhead)
+
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
 
@@ -50,11 +53,12 @@ func NewProducer(opts ...Option) (Producer, error) {
 	if err := o.validate("producer"); err != nil {
 		return nil, err
 	}
+	logConfig("async-producer", o)
 	return newSaramaProducer(o, nil)
 }
 
 func newSaramaProducer(o Options, factory asyncProducerFactory) (*saramaProducer, error) {
-	cfg, err := buildSaramaConfig(o)
+	cfg, err := buildSaramaConfig(o, false)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +69,7 @@ func newSaramaProducer(o Options, factory asyncProducerFactory) (*saramaProducer
 	if err != nil {
 		return nil, err
 	}
-	s := &saramaProducer{opts: o, topic: o.Topic, cfg: cfg, factory: factory, p: ap}
+	s := &saramaProducer{opts: o, topic: o.Topic, cfg: cfg, factory: factory, p: ap, history: newSnapshotHistory(o.SnapshotHistory)}
 	s.startDrains()
 	return s, nil
 }
@@ -176,15 +180,22 @@ func (s *saramaProducer) Metrics() ProducerMetrics {
 }
 
 func (s *saramaProducer) Snapshot() ProducerSnapshot {
-	return ProducerSnapshot{
+	snap := ProducerSnapshot{
 		Name:             s.Name(),
 		Backend:          s.Backend(),
+		Timestamp:        time.Now().UTC(),
 		ProducerMetrics:  s.Metrics(),
-		Linger:           s.opts.ProducerLinger,
+		Linger:           effectiveLinger(s.opts.ProducerLinger),
 		MaxBufferedRecs:  s.opts.MaxBufferedRecords,
 		BatchMaxBytesCfg: s.opts.BatchMaxBytes,
 	}
+	s.history.record(snap) // no-op when history disabled (nil)
+	return snap
 }
+
+// History implements the optional SnapshotHistory interface (present only when
+// WithSnapshotHistory is set). Returns retained samples oldest→newest, or nil.
+func (s *saramaProducer) History() []ProducerSnapshot { return s.history.snapshot() }
 
 // Name returns the instance name (WithName, else the topic) for monitoring.
 func (s *saramaProducer) Name() string { return nameOr(s.opts.Name, s.opts.Topic) }

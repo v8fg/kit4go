@@ -16,7 +16,14 @@ var defaultKafkaVersion = sarama.V2_5_0_0
 // buildSaramaConfig assembles a *sarama.Config from Options. It is the single
 // place sarama config is constructed so a future backend has a parallel
 // kafkago_config.go and the mapping stays in one spot.
-func buildSaramaConfig(o Options) (*sarama.Config, error) {
+//
+// sync selects whether batch/flush tuning is applied: async producers apply the
+// resolved linger (default 10ms) + buffer (default 1000) so records accumulate
+// into fewer, larger requests; sync producers force Flush off (see B5) because
+// sarama's SyncProducer wraps an AsyncProducer — a non-zero Flush.Frequency
+// would stall each SendMessage up to the linger window, and Flush.Messages would
+// stall waiting for N messages, diverging from franz-go's immediate ProduceSync.
+func buildSaramaConfig(o Options, sync bool) (*sarama.Config, error) {
 	cfg := sarama.NewConfig()
 
 	ver := defaultKafkaVersion
@@ -32,6 +39,7 @@ func buildSaramaConfig(o Options) (*sarama.Config, error) {
 	// producer
 	cfg.Producer.Return.Successes = o.ReturnSuccesses
 	cfg.Producer.Return.Errors = o.ReturnErrors
+	cfg.Producer.RequiredAcks = saramaAcks(o.Acks)
 	cfg.Producer.Timeout = o.ProducerTimeout
 	cfg.Producer.Retry.Max = o.RetryMax
 	if cfg.Producer.Retry.Max < 0 {
@@ -43,17 +51,25 @@ func buildSaramaConfig(o Options) (*sarama.Config, error) {
 	// sensible default for request-scoped ordering.
 	cfg.Producer.Partitioner = sarama.NewHashPartitioner
 
-	// batch tuning: linger triggers periodic flush; messages/bytes trigger
-	// immediate flush at thresholds. All default 0 (off) — only set when
-	// ProducerLinger > 0 (the caller explicitly opted into batching).
-	if o.ProducerLinger > 0 {
-		cfg.Producer.Flush.Frequency = o.ProducerLinger
-	}
-	if o.MaxBufferedRecords > 0 {
+	if sync {
+		// Sync: per-send blocking, no batching. Flush off → SendMessage flushes
+		// immediately (no linger stall, no wait-for-N-messages stall). Linger/
+		// MaxBufferedRecords defaults apply ONLY to async (see withDefaults).
+		cfg.Producer.Flush.Frequency = 0
+		cfg.Producer.Flush.Messages = 0
+		cfg.Producer.Flush.Bytes = 0
+	} else {
+		// Async: linger (default 10ms) triggers periodic flush; Messages/Bytes
+		// trigger flush at thresholds — whichever comes first. effectiveLinger
+		// maps LingerOff → 0 (batching disabled) and passes the resolved value
+		// (DefaultProducerLinger or user-set) through otherwise. Frequency is
+		// always set here (never 0 for async), so sarama's "Flush set without
+		// Frequency" warning never fires.
+		cfg.Producer.Flush.Frequency = effectiveLinger(o.ProducerLinger)
 		cfg.Producer.Flush.Messages = o.MaxBufferedRecords
-	}
-	if o.BatchMaxBytes > 0 {
-		cfg.Producer.Flush.Bytes = o.BatchMaxBytes
+		if o.BatchMaxBytes > 0 {
+			cfg.Producer.Flush.Bytes = o.BatchMaxBytes
+		}
 	}
 
 	// consumer
@@ -65,6 +81,20 @@ func buildSaramaConfig(o Options) (*sarama.Config, error) {
 	cfg.Consumer.Offsets.Initial = mapOffsetInitial(o.ConsumerOffsetInitial)
 
 	return cfg, nil
+}
+
+// saramaAcks maps Options.Acks to sarama's RequiredAcks. Empty/unknown → leader
+// (acks=1, the package default — throughput-first, matches the historical sarama
+// default and unifies both backends on leader unless AcksAll/AcksNone is set).
+func saramaAcks(a string) sarama.RequiredAcks {
+	switch a {
+	case AcksAll:
+		return sarama.WaitForAll
+	case AcksNone:
+		return sarama.NoResponse
+	default:
+		return sarama.WaitForLocal // AcksLeader / ""
+	}
 }
 
 // mapOffsetInitial maps the package offset sentinels to sarama's. A concrete

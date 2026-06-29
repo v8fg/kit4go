@@ -107,3 +107,17 @@ The kit meets the ad-tech target band (**100k–1M+ QPS**):
 
 Re-run after any hot-path change: `go test -run='^$' -bench=. -benchmem ./...` in each
 module, and `go test -race -short ./...` for the concurrency gate.
+
+## kafka package — stress matrix & monitoring
+
+Full producer/consumer stress matrix (both backends, multi-node, acks sweep, memory)
+with recommended defaults: [`kafka/STRESS_MATRIX.md`](kafka/STRESS_MATRIX.md) (EN) /
+[`kafka/STRESS_MATRIX.zh.md`](kafka/STRESS_MATRIX.zh.md) (中文).
+
+Monitoring design (Snapshot/Timestamp/History, acks, defaults, node-count):
+[`kafka/MONITORING.md`](kafka/MONITORING.md).
+
+Headline numbers (single node, loopback, RF=1): sync SendBatch(10000) sarama 506K /
+franz-go 1.15M rec/s; async 100B sarama 720K / franz-go 847K rec/s; async 10KB+ sarama
+~250 MB/s / franz-go ~1.3 GB/s. Memory: bufMB ≈ MaxBufferedRecords × payload; franz-go
+uses ~half sarama's buffer.

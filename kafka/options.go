@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"errors"
+	"log"
 	"time"
 )
 
@@ -64,15 +65,26 @@ type Options struct {
 	// RetryMax is the producer's retry count for transient errors. Default 3.
 	RetryMax int `json:"retry_max" mapstructure:"retry_max"`
 
-	// ChannelBufferSize is the async producer Input() channel size. Default
-	// 256. When full, Send blocks (backpressure); configure up for bursty load.
+	// ChannelBufferSize is the sarama channel buffer size — for the producer it
+	// sizes the Input() channel (no equivalent on franz-go); for consumers it
+	// sizes the per-partition message channel. For the producer it IS sarama's
+	// real hard backpressure point (vs MaxBufferedRecords, which on sarama is
+	// only a soft flush trigger — see that field). Default tracks
+	// MaxBufferedRecords (1000) so producer channel backpressure stays aligned
+	// with the in-flight cap (consumers get the same per-partition buffering).
+	// Configure up for bursty load, down to bound memory. SIZE: peak sarama
+	// producer in-flight ≈ ChannelBufferSize + current batch (≤MaxBufferedRecords)
+	// ≈ 2× the value. REFRESH: producer flush timing is independent of this
+	// (governed by ProducerLinger / MaxBufferedRecords / BatchMaxBytes on the
+	// batch); the channel adds no latency — only burst headroom + backpressure.
 	ChannelBufferSize int `json:"channel_buffer_size" mapstructure:"channel_buffer_size"`
 
 	// ProducerLinger is how long the backend waits before flushing a partial
-	// batch. 0 (default) = flush immediately (current behavior, lowest latency).
-	// >0 (e.g. 1ms) = accumulate records for up to this duration before flushing
-	// → larger batches → fewer RPCs → higher throughput, at the cost of added
-	// latency per record. Typical: 1-10ms for high-throughput pipelines.
+	// batch. Default DefaultProducerLinger (10ms) — applied when left at 0, so
+	// both backends batch identically (seamless swap). >0 (e.g. 1ms) accumulates
+	// records for up to this duration before flushing → larger batches → fewer
+	// RPCs → higher throughput, at the cost of added per-record latency. Pass
+	// LingerOff to flush every record immediately (lowest latency, no batching).
 	// Pairs with SendBatch for maximum effect. Memory impact: see Metrics.InFlight.
 	//
 	// DATA-LOSS RISK: records buffered during the linger window are lost if the
@@ -80,17 +92,44 @@ type Options struct {
 	// always defer Close() on shutdown. Monitor Metrics.InFlight for buffer depth.
 	ProducerLinger time.Duration `json:"producer_linger" mapstructure:"producer_linger"`
 
-	// MaxBufferedRecords caps the number of records buffered in the backend's
-	// internal accumulator before backpressure kicks in (Send/SendBatch blocks).
-	// 0 = use the backend's default (sarama: unlimited via channel buffer;
-	// franz-go: 10,000). Lower this to bound memory; raise it for bursty loads.
-	// Memory bound: MaxBufferedRecords × avg_msg_size.
+	// Acks controls the producer's required broker acknowledgments — the core
+	// durability-vs-throughput knob. A string (AcksLeader / AcksAll / AcksNone).
+	// Default AcksLeader (UNIFIED across both backends — applied to both async
+	// and sync). Both backends default to acks=leader for seamless swap.
+	//
+	// Set AcksAll for durability (enables franz-go's idempotent producer; slower
+	// under RF>1 — waits for all in-sync replicas). DATA-LOSS: acks=leader can
+	// lose records if the leader fails before replication — acceptable for
+	// ad-tech logs, NOT for money/critical state (use AcksAll + RF=3 there).
+	// See STRESS_MATRIX.md for the acks sweep data.
+	Acks string `json:"acks" mapstructure:"acks"`
+
+	// MaxBufferedRecords caps in-flight records. Default DefaultMaxBufferedRecords
+	// (1000) — applied when left at 0. SEMANTICS DIFFER BY BACKEND (honest
+	// contract, not smoothed-over):
+	//   - franz-go: MaxBufferedRecords — a HARD cap; Send/SendBatch blocks
+	//     (backpressure) when ≥N records are in-flight unacked.
+	//   - sarama: Flush.Messages — a SOFT flush trigger (flush when N messages
+	//     accumulate; does NOT block Send). sarama's real hard backpressure is
+	//     ChannelBufferSize (which defaults to this value — see that field).
+	// Memory bound: ≈ MaxBufferedRecords × avg_msg_size (franz-go hard; sarama
+	// ≈2× due to channel+batch). Raise for bursty loads, lower to bound memory.
 	MaxBufferedRecords int `json:"max_buffered_records" mapstructure:"max_buffered_records"`
 
 	// BatchMaxBytes caps a single batch's byte size. 0 = backend default
 	// (sarama: 1MB via MaxMessageBytes; franz-go: 1MB via ProducerBatchMaxBytes).
 	// Larger batches amortize RPC overhead but increase memory per batch.
 	BatchMaxBytes int `json:"batch_max_bytes" mapstructure:"batch_max_bytes"`
+
+	// SnapshotHistory is the number of recent ProducerSnapshot samples to retain
+	// for trend analysis (obtained via the optional SnapshotHistory interface /
+	// History()). 0 (default) disables history — Snapshot() still works but no
+	// samples are retained (zero memory). Recommended: 60-288 (1-5 min at a 1s
+	// scrape cadence, or 1-5h at 1min). Memory: ~160B per sample (bounded by
+	// this cap). Negative values are clamped to 0. Sampling is scrape-driven:
+	// each Snapshot() call records one sample (Prometheus model); no background
+	// goroutine.
+	SnapshotHistory int `json:"snapshot_history" mapstructure:"snapshot_history"`
 
 	// --- consumer tuning ---
 
@@ -120,6 +159,21 @@ func applyOptions(opts []Option) Options {
 		opt(&o)
 	}
 	return o
+}
+
+// logConfig prints the resolved configuration at startup so operators see
+// exactly what is running. Both backends call this from their constructors.
+// The durability hint reminds ad-tech users (default acks=leader) how to
+// switch to durable mode.
+func logConfig(mode string, o Options) {
+	acks := o.Acks
+	if acks == "" {
+		acks = AcksLeader + " (default)"
+	}
+	log.Printf("[kafka] %s backend=%s acks=%s linger=%s maxBufferedRecords=%d batchMaxBytes=%d "+
+		"topic=%s name=%s — for durability set WithAcks(AcksAll)",
+		mode, backendName, acks, effectiveLinger(o.ProducerLinger),
+		o.MaxBufferedRecords, o.BatchMaxBytes, o.Topic, nameOr(o.Name, o.Topic))
 }
 
 // nameOr returns name if non-empty, else fallback. Used by constructors to
@@ -171,11 +225,28 @@ func WithChannelBufferSize(n int) Option { return func(o *Options) { o.ChannelBu
 // WithProducerLinger sets the batch flush delay (0 = off; 1-10ms typical).
 func WithProducerLinger(d time.Duration) Option { return func(o *Options) { o.ProducerLinger = d } }
 
+// WithAcks sets the producer's required acknowledgments: AcksLeader (default),
+// AcksAll (all in-sync replicas — durable, slower under RF>1), or AcksNone
+// (fire-and-forget). Applied uniformly to both backends.
+func WithAcks(a string) Option { return func(o *Options) { o.Acks = a } }
+
 // WithMaxBufferedRecords caps the in-flight record count (memory bound).
 func WithMaxBufferedRecords(n int) Option { return func(o *Options) { o.MaxBufferedRecords = n } }
 
 // WithBatchMaxBytes caps a single batch's byte size.
 func WithBatchMaxBytes(n int) Option { return func(o *Options) { o.BatchMaxBytes = n } }
+
+// WithSnapshotHistory enables retaining the last n Snapshot() samples for trend
+// analysis (obtained via the optional SnapshotHistory interface). n ≤ 0 disables
+// history (the default). See the SnapshotHistory option field for sizing guidance.
+func WithSnapshotHistory(n int) Option {
+	return func(o *Options) {
+		if n < 0 {
+			n = 0
+		}
+		o.SnapshotHistory = n
+	}
+}
 
 // WithCodec installs a value (de)serialiser.
 func WithCodec(c Codec) Option { return func(o *Options) { o.Codec = c } }
@@ -188,14 +259,87 @@ func WithConsumerOffsetInitial(o int64) Option {
 // WithDeliveryMode selects PartitionConsumer delivery ("callback"/"channel").
 func WithDeliveryMode(m string) Option { return func(o *Options) { o.DeliveryMode = m } }
 
+// Package-level producer tuning defaults. These are the kit4go-chosen values,
+// applied by withDefaults when the caller leaves the corresponding option at its
+// zero value. They deliberately DIFFER from the underlying backends' native
+// defaults (documented inline) so both backends converge on identical behavior
+// (the "无感切换" / seamless-swap goal).
+const (
+	// DefaultProducerLinger is the batch flush delay applied when
+	// WithProducerLinger is not used. 10ms.
+	//
+	// Why 10ms:
+	//  1. Matches franz-go's native default (lingered batching is part of why
+	//     franz-go measures ~2.9× faster than sarama on raw Produce).
+	//  2. Unified across both backends → seamless swap (erases the sarama=0 /
+	//     franz-go=10ms silent asymmetry that existed when this defaulted to 0).
+	//  3. Ad-tech / log pipelines tolerate ~10ms latency in exchange for larger
+	//     batches → fewer RPCs → higher throughput.
+	//
+	// Cost: each record may wait up to 10ms before flush; records buffered
+	// during the linger window are LOST if the process crashes before Close()
+	// flushes them — always defer Close() on shutdown. Disable batching
+	// (per-record flush, lowest latency) with WithProducerLinger(LingerOff).
+	//
+	// Native defaults this overrides: sarama Flush.Frequency=0 (off);
+	// franz-go linger=10ms (on by default — we now set it explicitly to pin
+	// behavior rather than rely on the native default).
+	DefaultProducerLinger = 10 * time.Millisecond
+
+	// DefaultMaxBufferedRecords caps in-flight records applied when
+	// WithMaxBufferedRecords is not used. 1000.
+	//
+	// Contract (honest, not "smoothed-over"): best-effort in-flight record
+	// bound for backpressure/memory guidance, applied via each backend's
+	// native primitive:
+	//   - franz-go: MaxBufferedRecords — a HARD cap; Send blocks (backpressure)
+	//     when ≥N records are in-flight unacked.
+	//   - sarama: Flush.Messages — a SOFT flush trigger (flush when N messages
+	//     accumulate, does NOT block Send). sarama's real hard backpressure
+	//     point is the Input channel (ChannelBufferSize, see below).
+	// Neither backend can grow in-flight without bound (sarama: channel+batch;
+	// franz-go: hard cap). Monitoring (InFlight/BufferedBytes) uses a UNIFORM
+	// formula across backends → consistent VISIBILITY; but under broker
+	// slowness the sarama value may differ from franz-go's (soft vs hard).
+	// Monitoring gives visibility, not an isomorphic guarantee.
+	//
+	// More conservative than franz-go's native 10000 (1000 × ~200B ≈ 200KB/
+	// instance) to bound memory. Native default overridden: franz-go
+	// maxBufferedRecords=10000; sarama Flush.Messages=0 (no count trigger).
+	DefaultMaxBufferedRecords = 1000
+
+	// LingerOff disables batch lingering (flush every record immediately,
+	// lowest latency). Pass to WithProducerLinger for latency-sensitive
+	// single-message sends. Negative sentinel, mirroring the OffsetNewest=-1 /
+	// OffsetOldest=-2 convention used for offset sentinels.
+	LingerOff time.Duration = -1
+)
+
+// Acks values for Options.Acks (the producer durability-vs-throughput knob).
+// Industry guidance:
+//   - AcksLeader (acks=1, the default): ad-tech / telemetry / logs / metrics —
+//     throughput-first, a lost record on leader failure is acceptable. kit4go's
+//     domain.
+//   - AcksAll (acks=all, all in-sync replicas): finance / payments / orders /
+//     audit — durability-first, no data loss; pair with RF=3 + min.insync=2.
+//     Slower under RF>1 (every record replicated before ack).
+//   - AcksNone (acks=0, fire-and-forget): extreme throughput, fully loss-tolerant
+//     (some metrics, best-effort).
+const (
+	AcksLeader = "leader" // default
+	AcksAll    = "all"
+	AcksNone   = "none"
+)
+
 // defaultOptions returns the package defaults — the single source of truth.
+// Note: ChannelBufferSize is intentionally NOT set here — withDefaults derives
+// it from MaxBufferedRecords (see withDefaults) so the two stay coupled.
 func defaultOptions() Options {
 	return Options{
 		ReturnSuccesses:       true,
 		ReturnErrors:          true,
 		ProducerTimeout:       10 * time.Second,
 		RetryMax:              3,
-		ChannelBufferSize:     256,
 		ConsumerOffsetInitial: OffsetNewest,
 		FetchMin:              1,
 		DeliveryMode:          "callback",
@@ -212,8 +356,26 @@ func (o Options) withDefaults() Options {
 	if o.RetryMax <= 0 {
 		o.RetryMax = d.RetryMax
 	}
+	// Batch-tuning defaults (async producers): 0 → kit4go defaults so both
+	// backends converge (see DefaultProducerLinger / DefaultMaxBufferedRecords).
+	// LingerOff(-1) is preserved (explicit disable); a positive value is honored.
+	if o.ProducerLinger == 0 {
+		o.ProducerLinger = DefaultProducerLinger
+	}
+	if o.MaxBufferedRecords == 0 {
+		o.MaxBufferedRecords = DefaultMaxBufferedRecords
+	}
+	// ChannelBufferSize tracks MaxBufferedRecords by default (保持一致): sarama's
+	// Input channel IS its real hard backpressure point, so sizing it to match
+	// the in-flight cap keeps the two aligned (and narrows the soft/hard gap
+	// vs franz-go). SIZE: peak sarama in-flight ≈ ChannelBufferSize (input
+	// queue) + current batch (≤MaxBufferedRecords) ≈ 2×MaxBufferedRecords —
+	// bounded; lower either to halve peak. REFRESH: flush timing is governed by
+	// Flush.Frequency/Flush.Messages/Flush.Bytes on the BATCH and is INDEPENDENT
+	// of ChannelBufferSize (the channel is burst headroom + backpressure only;
+	// no added latency, no stall — the dispatch goroutine drains it continuously).
 	if o.ChannelBufferSize <= 0 {
-		o.ChannelBufferSize = d.ChannelBufferSize
+		o.ChannelBufferSize = o.MaxBufferedRecords
 	}
 	if !o.ReturnErrors { // default true; keep an explicit false only if caller set ReturnSuccesses
 		// ReturnErrors defaults to true; a zero value (false) is treated as

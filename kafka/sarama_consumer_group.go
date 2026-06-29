@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/IBM/sarama"
 )
@@ -54,7 +55,7 @@ func NewConsumerGroup(opts ...Option) (ConsumerGroup, error) {
 }
 
 func newSaramaConsumerGroup(o Options, factory consumerGroupFactory) (*saramaConsumerGroup, error) {
-	cfg, err := buildSaramaConfig(o)
+	cfg, err := buildSaramaConfig(o, false) // consumer: producer Flush section is unused
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +144,15 @@ func (s *saramaConsumerGroup) Metrics() ConsumerMetrics {
 		Failed:    s.failed.Load(),
 		Rebalance: s.rebalance.Load(),
 		Bytes:     s.bytes.Load(),
+	}
+}
+
+func (s *saramaConsumerGroup) Snapshot() ConsumerSnapshot {
+	return ConsumerSnapshot{
+		Name:            s.Name(),
+		Backend:         s.Backend(),
+		Timestamp:       time.Now().UTC(),
+		ConsumerMetrics: s.Metrics(),
 	}
 }
 

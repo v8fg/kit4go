@@ -5,6 +5,7 @@ package kafka
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -25,6 +26,8 @@ type franzProducer struct {
 	batchMax      atomic.Uint64
 	bytesEnqueued atomic.Uint64
 	bytesFailed   atomic.Uint64
+
+	history *snapshotHistory // nil when WithSnapshotHistory not set (zero overhead)
 
 	onEvent atomic.Pointer[func(ProducerEvent)]
 }
@@ -89,7 +92,7 @@ func (s *franzProducer) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	s.cl.Close() // flushes in-flight, then closes (void in franz-go)
+	flushAndClose(s.cl)
 	s.fire(ProducerEvent{Name: "close"})
 	return nil
 }
@@ -114,15 +117,22 @@ func (s *franzProducer) Metrics() ProducerMetrics {
 }
 
 func (s *franzProducer) Snapshot() ProducerSnapshot {
-	return ProducerSnapshot{
+	snap := ProducerSnapshot{
 		Name:             s.Name(),
 		Backend:          s.Backend(),
+		Timestamp:        time.Now().UTC(),
 		ProducerMetrics:  s.Metrics(),
-		Linger:           s.opts.ProducerLinger,
+		Linger:           effectiveLinger(s.opts.ProducerLinger),
 		MaxBufferedRecs:  s.opts.MaxBufferedRecords,
 		BatchMaxBytesCfg: s.opts.BatchMaxBytes,
 	}
+	s.history.record(snap) // no-op when history disabled (nil)
+	return snap
 }
+
+// History implements the optional SnapshotHistory interface (present only when
+// WithSnapshotHistory is set). Returns retained samples oldest→newest, or nil.
+func (s *franzProducer) History() []ProducerSnapshot { return s.history.snapshot() }
 
 func (s *franzProducer) Name() string { return nameOr(s.opts.Name, s.opts.Topic) }
 
@@ -181,7 +191,7 @@ func (s *franzSyncProducer) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	s.cl.Close()
+	flushAndClose(s.cl)
 	s.fire(ProducerEvent{Name: "close"})
 	return nil
 }
@@ -233,9 +243,13 @@ func (s *franzSyncProducer) Metrics() ProducerMetrics {
 }
 
 func (s *franzSyncProducer) Snapshot() ProducerSnapshot {
+	// Sync has no batch buffer (ProduceSync is synchronous; linger/
+	// MaxBufferedRecords are not applied — see kgoSyncProducerOpts), so only
+	// Timestamp + counters are reported.
 	return ProducerSnapshot{
 		Name:            s.Name(),
 		Backend:         s.Backend(),
+		Timestamp:       time.Now().UTC(),
 		ProducerMetrics: s.Metrics(),
 	}
 }
@@ -256,4 +270,17 @@ func (s *franzSyncProducer) fire(e ProducerEvent) {
 	if fnp := s.onEvent.Load(); fnp != nil {
 		(*fnp)(e)
 	}
+}
+
+// flushAndClose drains all in-flight records (kgo Flush blocks until every
+// buffered produce is acked/errored) BEFORE closing the client. kgo's Close()
+// alone returns before the final in-flight records land — a ~0.4% delivery gap
+// vs sarama's full-drain Close (verified via broker offsets during the stress
+// matrix; see STRESS_MATRIX.md). The 30s timeout bounds shutdown so a dead
+// broker can't hang it.
+func flushAndClose(cl *kgo.Client) {
+	fctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = cl.Flush(fctx)
+	cl.Close()
 }

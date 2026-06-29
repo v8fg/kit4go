@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/IBM/sarama"
 )
@@ -54,7 +55,7 @@ func NewPartitionConsumer(opts ...Option) (PartitionConsumer, error) {
 }
 
 func newSaramaPartitionConsumer(o Options, factory consumerFactory) (*saramaPartitionConsumer, error) {
-	cfg, err := buildSaramaConfig(o)
+	cfg, err := buildSaramaConfig(o, false) // consumer: producer Flush section is unused
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +181,15 @@ func (s *saramaPartitionConsumer) Metrics() ConsumerMetrics {
 		Acked:    s.acked.Load(),
 		Failed:   s.failed.Load(),
 		Bytes:    s.bytes.Load(),
+	}
+}
+
+func (s *saramaPartitionConsumer) Snapshot() ConsumerSnapshot {
+	return ConsumerSnapshot{
+		Name:            s.Name(),
+		Backend:         s.Backend(),
+		Timestamp:       time.Now().UTC(),
+		ConsumerMetrics: s.Metrics(),
 	}
 }
 

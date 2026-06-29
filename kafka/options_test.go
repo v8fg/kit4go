@@ -14,8 +14,16 @@ func TestOptions_WithDefaults_Zero(t *testing.T) {
 	if o.RetryMax != d.RetryMax {
 		t.Errorf("RetryMax=%d want %d", o.RetryMax, d.RetryMax)
 	}
-	if o.ChannelBufferSize != d.ChannelBufferSize {
-		t.Errorf("ChannelBufferSize=%d want %d", o.ChannelBufferSize, d.ChannelBufferSize)
+	if o.ProducerLinger != DefaultProducerLinger {
+		t.Errorf("ProducerLinger=%v want %v", o.ProducerLinger, DefaultProducerLinger)
+	}
+	if o.MaxBufferedRecords != DefaultMaxBufferedRecords {
+		t.Errorf("MaxBufferedRecords=%d want %d", o.MaxBufferedRecords, DefaultMaxBufferedRecords)
+	}
+	// ChannelBufferSize is derived from MaxBufferedRecords (保持一致), not from
+	// defaultOptions, so it tracks the in-flight cap.
+	if o.ChannelBufferSize != o.MaxBufferedRecords {
+		t.Errorf("ChannelBufferSize=%d want %d (tracks MaxBufferedRecords)", o.ChannelBufferSize, o.MaxBufferedRecords)
 	}
 	if !o.ReturnSuccesses {
 		t.Error("ReturnSuccesses must default true for producers")

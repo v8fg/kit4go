@@ -6,6 +6,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -107,6 +108,15 @@ func (s *franzConsumerGroup) Metrics() ConsumerMetrics {
 		Failed:    s.failed.Load(),
 		Rebalance: s.rebalance.Load(),
 		Bytes:     s.bytes.Load(),
+	}
+}
+
+func (s *franzConsumerGroup) Snapshot() ConsumerSnapshot {
+	return ConsumerSnapshot{
+		Name:            s.Name(),
+		Backend:         s.Backend(),
+		Timestamp:       time.Now().UTC(),
+		ConsumerMetrics: s.Metrics(),
 	}
 }
 
@@ -220,7 +230,9 @@ func (s *franzPartitionConsumer) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	s.cl.Close()
+	if s.cl != nil {
+		s.cl.Close()
+	}
 	s.fire(ConsumerEvent{Name: "close"})
 	return nil
 }
@@ -231,6 +243,15 @@ func (s *franzPartitionConsumer) Metrics() ConsumerMetrics {
 		Acked:    s.acked.Load(),
 		Failed:   s.failed.Load(),
 		Bytes:    s.bytes.Load(),
+	}
+}
+
+func (s *franzPartitionConsumer) Snapshot() ConsumerSnapshot {
+	return ConsumerSnapshot{
+		Name:            s.Name(),
+		Backend:         s.Backend(),
+		Timestamp:       time.Now().UTC(),
+		ConsumerMetrics: s.Metrics(),
 	}
 }
 
