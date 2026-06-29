@@ -236,6 +236,54 @@ func Benchmark_KafKaWriter_WriteMock(b *testing.B) {
 	b.StopTimer()
 }
 
+// benchmarkKafKaPipeline measures the FULL pipeline throughput: Write enqueues
+// b.N records, then we wait for the daemon to deliver them all (Metrics().Sent).
+// OverflowPolicy is "block" so Write self-paces to the daemon's drain rate (no
+// drops) — this is the true sustained throughput, where the batch-mode benefit
+// (fewer producer calls → less daemon overhead) shows up.
+func benchmarkKafKaPipeline(b *testing.B, batch bool) {
+	defer silenceStdLogger(b)()
+	opts := KafKaWriterOptions{
+		ProducerTopic: "bench", BufferSize: 1 << 14, Level: LevelFlagInfo,
+		OverflowPolicy: "block",
+	}
+	if batch {
+		opts.BatchMode = true
+		opts.BatchSize = 200
+		opts.BatchFlushInterval = 10 * time.Millisecond
+	}
+	w := NewKafKaWriter(opts)
+	w.producerFactory = func() (kafka.Producer, error) { return newMockKafkaProducer(), nil }
+	if err := w.Start(); err != nil {
+		b.Fatal(err)
+	}
+	defer w.Stop()
+
+	rec := benchRecord()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := w.Write(rec); err != nil {
+			b.Fatal(err)
+		}
+	}
+	// drain remainder (block policy paced most of it; flush the tail).
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if w.Metrics().Sent >= uint64(b.N) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	b.StopTimer()
+	if got := w.Metrics().Sent; got < uint64(b.N) {
+		b.Fatalf("drained only %d/%d (daemon fell behind)", got, b.N)
+	}
+}
+
+func Benchmark_KafKaWriter_Pipeline_PerRecord(b *testing.B) { benchmarkKafKaPipeline(b, false) }
+func Benchmark_KafKaWriter_Pipeline_Batch(b *testing.B)     { benchmarkKafKaPipeline(b, true) }
+
 // ---------------------------------------------------------------------------
 // NetWriter (in-process net.Pipe TCP)
 // ---------------------------------------------------------------------------
@@ -584,5 +632,66 @@ func Test_MemPerWriter(k *testing.T) {
 		"Writer", "HeapAlloc(MB)", "HeapInuse(MB)", "NumGC", "Goroutines")
 	for _, r := range rows {
 		k.Logf("%-20s %12.2f %12.2f %6d %10d", r.kind, r.heapAllocMB, r.heapInuseMB, r.numGC, r.goroutines)
+	}
+}
+
+// Benchmark_KafKaWriter_BufferBatchCombos sweeps BufferSize × BatchSize ×
+// BatchMode combos to show how each affects pipeline throughput + memory.
+// Uses a slow mock (50µs/call) so the buffer/batch effect is visible.
+func Benchmark_KafKaWriter_BufferBatchCombos(b *testing.B) {
+	defer silenceStdLogger(b)()
+	type combo struct {
+		name      string
+		bufSize   int
+		batchMode bool
+		batchSize int
+	}
+	combos := []combo{
+		{"buf1K_nobatch", 1024, false, 0},
+		{"buf1K_batch1K", 1024, true, 1024},
+		{"buf4K_batch1K", 4096, true, 1024},
+		{"buf4K_batch512", 4096, true, 512},
+		{"buf8K_batch256", 8192, true, 256},
+		{"buf8K_nobatch", 8192, false, 0},
+	}
+	for _, c := range combos {
+		b.Run(c.name, func(b *testing.B) {
+			mp := newMockKafkaProducer()
+			mp.callDelay = 50 * time.Microsecond // simulate real producer cost
+			opts := KafKaWriterOptions{
+				ProducerTopic: "bench", BufferSize: c.bufSize,
+				Level: LevelFlagInfo, OverflowPolicy: "block",
+			}
+			if c.batchMode {
+				opts.BatchMode = true
+				opts.BatchSize = c.batchSize
+				opts.BatchFlushInterval = 10 * time.Millisecond
+			}
+			w := NewKafKaWriter(opts)
+			w.producerFactory = func() (kafka.Producer, error) { return mp, nil }
+			if err := w.Start(); err != nil {
+				b.Fatal(err)
+			}
+			defer w.Stop()
+			rec := benchRecord()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if err := w.Write(rec); err != nil {
+					b.Fatal(err)
+				}
+			}
+			deadline := time.Now().Add(60 * time.Second)
+			for time.Now().Before(deadline) {
+				if w.Metrics().Sent >= uint64(b.N) {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+			b.StopTimer()
+			m := w.Metrics()
+			b.ReportMetric(float64(m.Batches), "batches")
+			b.ReportMetric(float64(m.BatchMax), "batchMax")
+		})
 	}
 }

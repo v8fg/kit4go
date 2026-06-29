@@ -39,14 +39,58 @@ func (p OverflowPolicy) String() string {
 // ParseOverflowPolicy parses a policy name, defaulting to OverflowDrop.
 func ParseOverflowPolicy(s string) OverflowPolicy {
 	switch s {
-	case "block":
+	case OverflowPolicyBlock:
 		return OverflowBlock
-	case "spill":
+	case OverflowPolicySpill:
 		return OverflowSpill
 	default:
 		return OverflowDrop
 	}
 }
+
+// String constants for KafKaWriterOptions.OverflowPolicy (the struct field is a
+// string, parsed by ParseOverflowPolicy at construction). Use these instead of
+// magic strings for type safety and IDE autocomplete.
+const (
+	// OverflowPolicyDrop: when the channel is full, the record is silently
+	// dropped (IncDropped counter). Zero hot-path overhead. Data is permanently
+	// lost. The correct default for ad-tech / RTB logging (logs are lossy; never
+	// block the bidding loop).
+	OverflowPolicyDrop = "drop"
+	// OverflowPolicyBlock: when full, Write blocks until the channel has space.
+	// Provides backpressure but can stall the application hot path. Pair with a
+	// large BufferSize. Not recommended for latency-critical paths.
+	OverflowPolicyBlock = "block"
+	// OverflowPolicySpill: when full, the record goes to a bounded recovery store
+	// (SpillType: ring in-memory, or file disk-backed, or chain ring→file). The
+	// daemon drains the spill back into the channel when it recovers. No data loss
+	// (file survives process crash). Use for money/critical-state data. Normal
+	// path (channel not full) is identical to drop — zero overhead.
+	OverflowPolicySpill = "spill"
+)
+
+// String constants for KafKaWriterOptions.SpillType.
+const (
+	// SpillTypeRing: in-memory circular buffer. Fast (mutex + slice append). Lost
+	// on process crash. Overwrites oldest when full. Default.
+	SpillTypeRing = "ring"
+	// SpillTypeFile: disk-backed append file, bounded by SpillMaxBytes. Slower
+	// (disk IO) but survives process crash. Records recovered on next Start().
+	SpillTypeFile = "file"
+	// SpillTypeChain: ring (hot, in-memory) → file (cold, persistent) → drop.
+	// Best of both: ring absorbs brief stalls instantly, file catches prolonged
+	// outages. Total space bounded: ring cap + file MaxBytes. Default when
+	// SpillDir is set.
+	SpillTypeChain = "chain"
+)
+
+// String constants for KafKaWriterOptions.DeliveryMode (partition consumer only;
+// for KafKaWriter this field is unused — the writer always uses callback mode
+// internally).
+const (
+	DeliveryModeCallback = "callback"
+	DeliveryModeChannel  = "channel"
+)
 
 // OverflowStats reports overflow accounting (thread-safe) and emits throttled
 // alerts (standard log by default; optional AlertSink for webhook/OA push) on

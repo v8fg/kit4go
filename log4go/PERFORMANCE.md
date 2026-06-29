@@ -1,765 +1,721 @@
-# log4go 性能与架构设计
+# log4go 性能与架构
 
-> 英文版 (English): [PERFORMANCE.en.md](PERFORMANCE.en.md) ｜ 包用法：[doc.go](doc.go)(en) / [doc_zh.md](doc_zh.md)(中)
->
-> 高性能、内存安全、可观测的 Go 日志库。本文件说明架构、各 writer 的实测吞吐与内存、
-> 瓶颈与优化、以及线上（含广告行业 100K / 10M QPS）的配置方法。
+> 高性能、内存安全、可观测的 Go 日志库。涵盖架构、Writer 实测吞吐/内存、瓶颈与优化，
+> 以及生产（含广告行业 100K / 10M QPS）配置。英文版：[PERFORMANCE.en.md](PERFORMANCE.en.md)。
 
 ## 1. 架构
 
 ```
- caller goroutine(s)                 single bootstrap goroutine
+ 调用 goroutine                       单 bootstrap goroutine
  ┌──────────────────┐                ┌──────────────────────────────────┐
  │ Debug/Info/...() │   deliver      │  for rec := range records {       │
  │  format + Caller ├────records────>│    for _, w := range writers {    │
- │  (level filter)  │     chan(4096)  │       w.Write(rec)  ← serial     │
+ │  (level filter)  │     chan(4096)  │       w.Write(rec)  ← 串行        │
  │  atomic counter  │                │    }                             │
- └──────────────────┘                │  } + flush/rotate timers         │
+ └──────────────────┘                │  } + flush/rotate 定时器          │
                                      └──────────────────────────────────┘
-                                                │
-                       ┌────────────┬───────────┴──────────┬───────────────┐
-                       ▼            ▼                      ▼               ▼
-                ConsoleWriter  FileWriter(bufio)     KafKaWriter      (your Writer)
-                  fmt→stdout   WriteString→bufio    bounded chan→   impl Writer
-                               (8192, flush 500ms)  AsyncProducer    interface
-                                                    + overflow框架
 ```
 
-要点：
-- **调用方只做轻量活**：级别过滤、时间格式化、`runtime.Caller`、入 `records` channel（有界 4096）。
-  实测 `deliver` pipeline 约 **1080 ns/op ≈ 923K QPS/核**（见 `Benchmark_LoggerInfo`）。
-- **单 bootstrap goroutine 串行消费**：每条 record 依次调用所有注册 writer 的 `Write`。
-  因此**端到端 QPS ≈ 1 / Σ(各 writer Write 耗时)**。慢 writer 会拖累全部。
-- **OOM 防护**：`records` channel 有界；KafKaWriter 自带独立有界 channel + 多策略溢出框架。
-  全程**绝不在调用方按 record 起 goroutine**（旧版 KafKaWriter 的 OOM 根因已消除）。
+- **调用方只做轻活**：级别过滤、时间格式化、`runtime.Caller`、推入有界 `records` chan（4096）。实测 `deliver` ≈ **1080 ns/op ≈ 923K QPS/核**。
+- **单 bootstrap goroutine，逐条串行**：端到端 QPS ≈ 1/Σ(writer Write 耗时)。任一 writer 慢则整体被拖。
+- **OOM 防护**：`records` chan 有界；KafKaWriter 自带独立有界 chan + 多策略溢出框架。**绝不每条记录起一个 goroutine**（旧 KafKaWriter OOM 的根因，已修复）。
 
-## 2. 各 Writer 实测吞吐与内存（单核，本机 Go 1.26）
+## 2. 各 Writer 吞吐与内存（单核，Go 1.26）
 
-| Writer / 路径 | ns/op | ~QPS/核 | B/op | allocs | 备注 |
+| Writer / 路径 | ns/op | ~QPS/核 | B/op | allocs | 说明 |
 |---|---|---|---|---|---|
-| `deliver` pipeline（discard, caller+format） | 1065 | 939K | 48 | 3 | 调用方开销上限 |
-| `Logger.Filtered`（被级别过滤） | 12 | 83M | 8 | 0 | 过滤几乎零成本 |
-| ConsoleWriter（pipe→discard） | 1705 | 586K | 160 | 6 | 真实终端会慢 1~2 个数量级 |
-| ConsoleWriter + Color | 1908 | 524K | 192 | 6 | ANSI 着色开销小 |
-| FileWriter（bufio 8192） | 127 | **7.9M** | 96 | 1 | 写缓冲，定时 flush 落盘 |
-| KafKaWriter.buildPayload（fast, 无字段） | 276 | 3.6M | 320 | 2 | 框架字段手动 append，零反射 |
-| KafKaWriter.buildPayload（slow, ExtraFields） | 276 | 3.6M | 320 | 2 | 含 1 用户字段，仅值 marshal |
-| KafKaWriter.buildPayload（base fields, 5 字段） | 432 | 2.3M | 768 | 2 | typed + 直接时间 |
-| RingSpiller.Push（溢出兜底） | 10 | 100M | 0 | 0 | 内存环覆盖最旧 |
-| FileSpiller.Push（落盘兜底） | 424 | 2.4M | 148 | 4 | 磁盘溢出 |
+| `deliver` 管线（discard） | 1084 | 923K | 395 | 8 | 调用方侧上界 |
+| `Logger.Filtered`（级别丢弃） | 12 | 83M | 7 | 0 | 近乎免费 |
+| ConsoleWriter（pipe→discard） | 1705 | 586K | 160 | 6 | 真实终端慢 1-2 个数量级 |
+| FileWriter（bufio 8192） | 339 | **2.95M** | 144 | 5 | 带缓冲、定时 flush |
+| KafKaWriter.buildPayload（无字段） | 288 | 3.5M | 288 | 2 | 类型化 append，零反射 |
+| KafKaWriter.buildPayload（5 基础字段） | 1014 | 1.0M | 800 | 3 | Kafka→ES 典型场景（类型化，allocs −63%） |
+| RingSpiller.Push | 10 | 100M | 0 | 0 | 内存环 |
+| FileSpiller.Push | 424 | 2.4M | 148 | 4 | 落盘溢出 |
 
-> 端到端 = 调用方 deliver + bootstrap 串行 writer。例如同时注册 File + Kafka：
-> bootstrap ≈ 339(File) + ~100(Kafka 入队) ≈ 440 ns → 理论 ~2.2M QPS/核；再加 Console(stdout)
-> 会被 stdout I/O 主导（终端下常降到 数千~数万 QPS）。
+> 端到端 = 调用方 deliver + 串行 writer。File + Kafka：bootstrap ≈ 339(File) + ~100(Kafka 入队) ≈ 440ns → ~2.2M QPS/核。
 
-## 3. 瓶颈与优化
+## 3. 瓶颈与修复
 
-| 瓶颈 | 影响 | 处理 |
+| 瓶颈 | 影响 | 修复 |
 |---|---|---|
-| **ConsoleWriter 同步写 stdout** | 终端 I/O 阻塞 bootstrap，拖垮所有 writer | 生产环境**禁用 Console**，仅本地调试 |
-| **bootstrap 单 goroutine 串行** | writer 越多、越慢，端到端越低 | 生产只留 File + Kafka（都不阻塞 bootstrap） |
-| **FileWriter bufio 8192** | 高频下频繁 auto-flush 落盘 | 可调大缓冲（见优化项） |
-| **records channel 满** | 调用方阻塞（背压） | KafKaWriter 已自带 drop/spill；File+Kafka 通常不触达 |
-| **每 record 起 goroutine**（旧 KafKaWriter） | goroutine 堆积 → OOM | **已修复**（零 per-record goroutine） |
+| ConsoleWriter 同步 stdout | 阻塞 bootstrap | 生产关闭（仅调试） |
+| bootstrap 串行 | writer 越多/越慢 → 越低 | 只保留 File + Kafka |
+| records chan 满 | 调用方阻塞（背压） | KafKaWriter drop/spill |
+| 每条记录起 goroutine（旧） | goroutine 堆积 → OOM | **已修复**（零每条记录 goroutine） |
 
-**优化项（已落地 / 建议）：**
-- ✓ KafKaWriter：AsyncProducer + 有界 channel + Drop/Block/Spill(内存环/落盘) 溢出框架。
-- ✓ 所有数据组件：`Metrics()` 快照 + `SetOnEvent` 实时 hook（监控预留）。
-- ✓ `Logger.writers` data race 用 `atomic.Value` 修复。
--  FileWriter：bufio 缓冲当前 8192，高频可调大（需改 `bufio.NewWriterSize`，预留接口）。
--  ConsoleWriter：仅开发用；生产走 File/Kafka。
+## 4. 调参
 
-## 4. 调参清单（均衡参数）
+| 参数 | 默认 | 范围 | 作用 |
+|---|---|---|---|
+| `recordChannelSize` | 4096 | 4096–65536 | records chan 容量 |
+| KafKaWriter `BufferSize` | 1024 | 8192–65536 | 有界 send chan |
+| `OverflowPolicy` | drop | drop/spill/block | 满载策略 |
+| `SpillType` / `SpillSize` / `SpillMaxBytes` | ring/1024/64MB | ring/file | 溢出存储 |
+| `flushTimer` | 500ms | 200ms–1s | bufio flush 间隔 |
 
-| 参数 | 位置 | 默认 | 建议范围 | 作用 |
-|---|---|---|---|---|
-| `recordChannelSize` | Logger 内部 | 4096 | 4096~65536 | records channel 容量，抗突发 |
-| `BufferSize` | KafKaWriterOptions | 1024 | 8192~65536 | KafKaWriter 有界 channel |
-| `OverflowPolicy` | KafKaWriterOptions | drop | drop/spill/block | 满载策略（见 §6） |
-| `SpillType` | KafKaWriterOptions | ring | ring/file | 兜底存储类型 |
-| `SpillSize` | KafKaWriterOptions | 1024 | 4096~65536 | 内存环容量（条） |
-| `SpillMaxBytes` | KafKaWriterOptions | 64MB | 64MB~1GB | 落盘兜底字节上限 |
-| `flushTimer` | Logger 内部 | 500ms | 200ms~1s | FileWriter bufio flush 间隔 |
-| sarama `Producer.Flush` | cfg | 关 | 高吞吐可开 | 批量发送，提升 broker QPS |
-
-## 5. 线上启用（代码）
+## 5. 线上启用
 
 ```go
-import "github.com/xwi88/kit4go/log4go"
-
-// 全局初始化（一次）：
-w := log4go.NewConsoleWriterWithOptions(log4go.ConsoleWriterOptions{Level: log4go.LevelFlagInfo})
-log4go.Register(w)                                  // 本地调试用
 fw := log4go.NewFileWriterWithOptions(log4go.FileWriterOptions{
     Filename: "/var/log/app-%Y%M%D.log", Rotate: true, Daily: true, MaxDays: 30,
 })
-log4go.Register(fw)                                 // 生产落盘
+log4go.Register(fw)
 
-// 业务里直接调用（零 per-record goroutine）：
-log4go.Info("bid req=%s", reqID)
-```
-
-KafKaWriter（高性能 + 防丢 + 防爆）：
-
-```go
 kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
     Brokers: []string{"kafka-1:9092"}, ProducerTopic: "app-log",
-    BufferSize: 65536,
-    OverflowPolicy: "spill", SpillType: "ring", SpillSize: 65536, // 满载兜底内存环
+    BufferSize: 65536, OverflowPolicy: "spill", SpillType: "ring", SpillSize: 65536,
 })
-kw.SetOnEvent(func(name string, delta int64) { /* 接 Prometheus 等 */ })
 log4go.Register(kw)
+log4go.Info("bid req=%s", reqID)
 ```
 
 ## 6. 场景配置（广告行业）
 
-### 6.1 100K QPS（常规广告投放/竞价日志）
-单实例可达（File 2.95M / Kafka buildPayload 1.0~3.5M 视字段数，余量充足）。
-```go
-// records channel 8192 抗突发；File daily rotate；Kafka spill 内存环兜底
-log4go.SetLevel(log4go.INFO)        // 关 DEBUG 降量
-fw := log4go.NewFileWriterWithOptions(log4go.FileWriterOptions{
-    Filename: "/var/log/adx-%Y%M%D.log", Rotate: true, Daily: true, MaxDays: 14})
-log4go.Register(fw)
-kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
-    Brokers: brokers, ProducerTopic: "adx-log", BufferSize: 32768,
-    OverflowPolicy: "spill", SpillType: "ring", SpillSize: 32768})
-log4go.Register(kw)
-// 预期：调用方 ~1µs 返回；bootstrap File+Kafka 串行 ~0.5µs，channel 不堆积，零丢失。
-```
+**100K QPS**（常规竞价日志）：单实例即可（File 2.95M / Kafka buildPayload 1.0–3.5M）。File 按天轮转 + Kafka spill 内存环。
 
-### 6.2 10M QPS（超大规模，如全量曝光/点击流）
-**单进程单 bootstrap 串行是瓶颈**（理论上限约 2~3M QPS/核）。10M 级别需要**水平分片**：
+**10M QPS**（完整曝光/点击流）：单 bootstrap 串行是天花板（~2–3M/核）。**水平分片**：每分片一个 KafKaWriter + `spill=file`，N 个 pod，Kafka 分区数 ≥ 并发度。
 
-- **多 Logger 实例**（按业务线/分片 sharding），每实例独立 bootstrap，并行消费；
-- 每实例目标 **100K~1M QPS**，配 `spill=file`（落盘兜底，抗 broker 抖动，不 OOM）：
-  ```go
-  kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
-      Brokers: brokers, ProducerTopic: "imp-stream", BufferSize: 65536,
-      OverflowPolicy: "spill", SpillType: "file",
-      SpillDir: "/var/log/spill", SpillMaxBytes: 1 << 30}) // 1GB 兜底
-  ```
-- 关闭 Console；FileWriter 按分片独立文件；开启 sarama `Producer.Flush.Frequency`/`Messages` 批量；
-- 部署 N 个 pod / 多机，Kafka 分区数 ≥ 并发度，端到端线性扩展。
+## 7–11. 监控、验证
 
-> 关键：10M 不要堆在单进程。**分片 + 每 shard 一个 KafKaWriter + file 兜底** 是可线性扩展的架构。
+- 拉取：`Metrics()`（按级别）、`kw.Metrics()`（Sent/Errored/Dropped/Spilled/Queued/SpillLen）。
+- 推送：`SetOnEvent(name, delta)` 实时钩子 → Prometheus/statsd。
+- 无需真实 Kafka 本地验证：`go test -bench . -benchmem -run '^$'`；sarama mock 做 e2e；noopAsyncProducer 做 bench。
 
-## 7. 监控接入（预留接口）
+## 12. 各 Writer 吞吐（全 writer，Go 1.26 / M5 10c）
 
-```go
-// 拉取式：周期采集快照
-m := log4go.Metrics()                  // Logger 各级别计数
-kwm := kw.Metrics()                    // KafKaWriter: Sent/Errored/Dropped/Spilled/Queued/SpillLen
+| ConsoleWriter（带缓冲） | ~129ns | 7.8M |
+| FileWriter（async+spill） | ~186ns | 5.4M |
+| KafKaWriter（mock） | ~879ns | 1.1M |
+| NetWriter（TCP 回环） | ~76ns | 13.1M（调用方侧；真实网络受 RTT 限制） |
+| IOWriter（discard） | ~297ns | 3.4M |
+| Record.JSON（goccy，3 字段） | ~210–350ns | 类型化 append |
 
-// 推送式：实时事件 hook（不阻塞）
-kw.SetOnEvent(func(name string, delta int64) {
-    // name: "sent"/"error"；delta: 增量。转发到 Prometheus counter / statsd
-})
-```
-建议采集：`log4go_records_total{level}`、`kafka_sent/dropped/spilled_total`、
-`kafka_queued`（channel 深度，告警阈值 = BufferSize*80%）、`kafka_spill_len`。
+## 13. 内存（100K 条，MemPerWriter）
 
-## 8. 验证手段（本地，不依赖真实 Kafka / Postgres / 网络）
+所有 writer HeapAlloc < 0.005MB，goroutine 常驻 **4**（池复用 + 有界 chan + 有界 spiller）。1M 条：HeapAlloc 1.3MB，NumGC 7，goroutine 3。
 
-```bash
-make test                      # go test -short -race ./...
-make test-bench                # 各 writer / pipeline benchmark（本文表格数据来源）
-go test ./log4go/ -bench . -benchmem -run '^$'
-go test ./log4go/ -run '^Test_MemPerWriter$' -v   # 全 writer 100K 条内存占用（§13）
-# 单 writer 独立进程跑（避免跨 benchmark daemon 干扰，本文 §12 数据源）：
-#   go test ./log4go/ -bench '^Benchmark_FileWriter_AsyncDrop$' -benchmem -run '^$' -benchtime=2s
-# 溢出框架：RingSpiller 10w push 后 Len 仍 = 容量（验证不 OOM）
-# KafKaWriter：sarama mocks.AsyncProducer 端到端（无真实 broker，已知 record 数）
-#              benchmark 用 noopAsyncProducer（b.N 未知，避免 mock expectation 匹配）
-# NetWriter：进程内 TCP loopback（无跨机网络）
-# IOWriter：bytes.Buffer / io.Discard（内存 sink）
-```
+## 16. Round A：类型化字段 + slog + logfmt + 预设 + Panic/Fatal
 
-## 9. 架构演进（并行 writer，按需）
+三层优化：① 类型化 append（无 map/反射/装箱）② `appendISOTimeUTC`（无 time.Format 字符串分配）③ 批量字符串转义（clean-run 单次 append）。JSON/logfmt 降到 **1 alloc**。
 
-当前单 bootstrap **串行**调用 writer，端到端受最慢 writer 限制。File/Kafka 已不阻塞
-bootstrap（File 走 bufio、Kafka 走独立 channel+daemon），单实例数十万 QPS 足够。
-若需单实例数百万 QPS，可演进为 **fan-out 并行**：
-
-- `deliver` 向每个 writer 的**独立 channel 广播**；每个 writer 自带 goroutine 消费；
-- 权衡：丢失跨 writer 全局顺序、每 writer 一份 buffer（内存↑）、背压/溢出策略需各 writer 独立；
-- 范式：KafKaWriter 已是"慢 writer 异步化"的样板（独立 channel + daemon + 溢出框架），
-  可照此给 FileWriter 增加异步层（channel + flush goroutine + spill 兜底）；
-- 建议：作为独立大改动评估并充分 `-race` 测试。
-
-> 实践中：**先用分片（§6.2）横向扩展**，通常比单进程 fan-out 更简单、更可靠、更易线性扩展。
-
-## 10. 溢出子系统（泛型复用 + 多级 + 恢复 + 告警）
-
-溢出框架已**泛型化**（`Spiller[T]`/`RingSpiller[T]`/`FileSpiller[T]` + `SpillCodec[T]`），
-KafKaWriter 与 FileWriter **共享一份逻辑**（消除重复 ring，避免 N 倍空间）。提供
-`ProducerMsgCodec` / `RecordCodec`。
-
-- **多级** `ChainedSpiller[T]`：ring(热内存) → file(冷磁盘) → drop。ring 用
-  `PushNoOverwrite`，满才溢出到 file（不覆盖丢热数据）；file 满（MaxBytes）才 drop。
-  **总空间硬上限 = ringCap + fileMaxBytes**，不会 OOM/飙升。
-- **持续溢出告警**：`OverflowStats` 在首次 + 每 N 次（默认 1000，`SetAlertEvery` 可配）
-  经标准 logger 打 `[log4go] overflow DROP/SPILL ...`（不刷屏、不递归）。运维据此发现
-  持续溢出 → 扩容/限流/反压（`OverflowBlock`）。
-- **中断恢复**：file spill 持久化（`spill.log`），KafKaWriter/FileWriter `Start` 时
-  Drain → 重投，**从中断处继续**（内存 ring 不参与恢复）。见
-  `Test_FileSpiller_RecoverAcrossInstances`。
-- **配置**：`OverflowPolicy` = drop/block/spill；spill 下 `SpillType` = ring/file/chain
-  （默认 chain = ring→file），`SpillSize`/`SpillDir`/`SpillMaxBytes` 控制各级上限。
-
-## 11. 性能压测与调参建议（Go 1.26.0 / Apple M5 10 核 GOMAXPROCS=10）
-
-> 压测环境：Go 1.26.0，darwin/arm64（Apple M5），NumCPU=10，GOMAXPROCS=10。
-> ns/op 为每条日志耗时，B/op 为每条分配内存，QPS=1e9/ns。多核 ShardLogger 的 ns/op 为并行 wall/total（已含多核并行）。
-> 数据来源：`go test ./log4go/ -bench . -benchmem -run '^$' -benchtime=2s` + `Test_MemSustained_1M`。
-
-### 单线程极限
-| 模式 | ns/op | ~QPS/核 | 内存 B/op | alloc | 说明 |
-|---|---|---|---|---|---|
-| caller（file:line）| 1580 | ~633K | 336 | 7 | 默认，保定位 |
-| no-caller（`WithCaller(false)`）| 1017 | ~983K | **16** | **1** | 极致（失 file:line）|
-| filtered | 11.5 | ~87M | 8 | 0 | 级别过滤近零成本 |
-
-caller 路径受 `runtime.Caller` 开销主导；no-caller 仅 1 次 alloc、~983K/核，逼近 1M/核物理极限。
-
-### 多核 ShardLogger（10 核，并行 wall/total）
-| shard | ns/op | ~QPS | 内存 B/op | 备注 |
-|---|---|---|---|---|
-| 1 | 1752 | 571K | 289 | 退化单 logger |
-| 2 | 1028 | 973K | 292 | |
-| **4** | **614** | **~1.63M** | 303 | **最佳（≈ 核数/2）** |
-| 8 | 714 | 1.40M | 306 | |
-| 16 | 1565 | 639K | 310 | 超核数 1.6×，调度反噬 |
-
-**shard ≈ 核数/2~核数最佳**；超过核数调度反噬。本机 10 核下 4 shard 达 ~1.63M，已稳定破 1M。
-
-### Writer 吞吐（单核，单 writer 独立进程实测）
-| writer | ns/op | ~QPS | 内存 B/op |
+| Bench | 峰值 ns | allocs | 说明 |
 |---|---|---|---|
-| File（sync bufio）| 140 | ~7.1M | 80 |
-| Console（pipe→discard）| 1620 | ~617K | 96 |
+| Record.JSON（3 字段） | ~195 | **1** | 对比 5801/6 基线（**−95% / −83%**） |
+| Record.Logfmt（3 字段） | ~229 | **1** | |
+| Kafka buildPayload（5 基础字段） | ~432 | 2 | |
+| SlogHandler.Handle | ~1270 | 7 | slog 桥接（+19% vs 原生） |
+| Logger.WithInt（类型化） vs With(iface) | ~138 vs ~140 | 3 vs 3 | 类型化避免 type-switch |
+| Field append int / float | ~15 / ~45 | **0** | 零分配标量 |
 
-File（bufio 缓冲）最快；Console 受 stdout I/O 限制，生产建议禁用。**全 writer 实测对比（含 async/Kafka/Net/IO/JSON）见 §12**。
-
-### 进程内存实测（1M 条日志，MemSustained_1M，Go 1.26.0，10 核）
-| 指标 | 值 | 说明 |
-|---|---|---|
-| Sys | 19.0 MB | 进程系统内存（含 Go runtime/栈）|
-| HeapAlloc | 0.8 MB | 1M 条日志堆分配（pool 复用，极低）|
-| HeapInuse | 1.7 MB | 堆使用 |
-| NumGC | 6 | 1M 条仅 6 次 GC（pool 复用减 GC）|
-| Goroutines | 3 | bootstrap + writers，不随 QPS 增长 |
-
-高 QPS 下内存**不飙升**：records channel 有界 + Record/bufPool 复用 + spiller 有界。实测 1M 条仅 0.8MB 堆、6 次 GC、3 个常驻 goroutine。
-
-### 建议参数
-| 场景 | 配置 | 预期 |
-|---|---|---|
-| 生产（保定位）| 单 logger caller，`recordChannelSize` 8192，level INFO | ~633K/核 |
-| 极致（舍定位）| 单 logger `WithCaller(false)` | ~983K/核 |
-| 多核扩展 | `ShardLogger(≈GOMAXPROCS/2)` | 10 核 4 shard ~1.63M |
-
-### 突破 1000K
-单线程物理极限 ~983K（no-caller）。**多核 `ShardLogger`（shard≈核数/2）是唯一正路**，干净环境线性扩展可超 1M。防丢用 overflow `spill`（ring→file），防 OOM 用 buffer/spiller 有界。
-
-> 注：上表为本机（M5 / Go 1.26.0）实测值；CI/生产干净环境数值可能更高。完整压测见
-> `Benchmark_LoggerInfo` / `Benchmark_LoggerInfoNoCaller` / `Benchmark_ShardLoggerScale` / `Test_MemSustained_1M`。
-> **全 writer 实测表见 §12，内存占用见 §13，场景选型见 §14，业界对比见 §15**。
-
-## 12. 结构化能力（字段 / 采样 / context / JSON 格式）
-
-本节覆盖对标 zap/zerolog 的结构化能力，及其性能开销。
-
-### 12.1 结构化字段（With / WithField / WithFields）
-
-`Logger.With("k", v)` 返回携带字段的子 logger，链式调用累加字段；`Record.String()` 在文本格式下追加 JSON 字段对象，`KafKaWriter` 提升到 JSON 顶层。**无 With 的热路径零开销**（`Record.String` 仅在 `len(r.fields)>0` 时追加）。
-
-### 12.2 采样（WithSampling）
-
-`Logger.WithSampling(initial, thereafter)` — 前 `initial` 条全记，之后每 `thereafter` 条记 1 条。按 level 独立计数（atomic，热路径无锁）。**被采样丢弃的 record 不计入 Metrics**（在 Metrics 增加之前 return），避免监控误报写入速率。
-
-### 12.3 context.Context（zerolog 风格）
-
-- `Logger.IntoContext(ctx)` / `FromContext(ctx)` — 把 logger 绑到 ctx，handler 内 `log4go.FromContext(r.Context())` 自动带 requestID/traceID（zerolog 模式）
-- `AddContextExtractor(fn)` — 叠加多个 extractor（trace/span/requestID/uid/baggage，last-writer-wins），无硬 otel 依赖
-- `RequestIDMiddleware` — HTTP 中间件，从 header 取/生成 requestID，绑定带字段的 logger
-- `WithContext(ctx)` — 提取字段到子 logger（默认探测扩展 key 集：trace_id/span_id/request_id/user_id/tenant_id 等）
-
-### 12.4 JSON 格式（FormatJSON，对标 zap/zerolog 完整标配）
-
-`SetFormat(FormatJSON)` → 每条 record 输出一个 JSON 对象：`{"time":"...","level":"INFO","msg":"...","file":"...","fields":{...}}`。格式在 `deliverRecordToWriter` 决定一次并缓存到 `r.jsonBytes`，**所有 writer 直接输出预序列化字节**（不重复序列化）。time 用 `timestampLayout`（ISO，带时区），fields 为空时省略。
-
-### 12.5 JSON 编解码器对比（Go 1.26.0 / Apple M5 10 核）
-
-`SetJSONCodec(JSONCodecGoccy|JSONCodecStd|JSONCodecSonic)` 切换编码器。默认 **Goccy**（最快可移植，已依赖）。实测（含 3 个字段的 record）：
-
-| 编解码器 | ns/op | B/op | allocs | 说明 |
-|---|---|---|---|---|
-| **Goccy（默认）** | **792** | 993 | 6 | 最快可移植，无 cgo |
-| Std（encoding/json）| 1028 | 1120 | 12 | 标准库，兼容性完整（慢 ~30%，allocs 2x）|
-| Sonic（bytedance）| 1260 | 1039 | 7 | amd64 SIMD 最快；arm64 有 fallback 开销 |
-| JSON 无字段（Goccy）| 205 | 400 | 3 | 常见无 With 路径，极快 |
-
-JSON 目标 ≤ 1500ns/op 达成（Goccy 792ns）。JSON 比 text（~291ns File）慢约 2-3x（json.Marshal 开销），但仍是亚微秒级，对绝大多数场景可接受。压测见 `Benchmark_Record_JSON_*`。
-
-## 12. 各 Writer 实测吞吐（全 writer，Go 1.26.0 / Apple M5 10 核）
-
-> 压测环境：Go 1.26.0，darwin/arm64（Apple M5），NumCPU=10，GOMAXPROCS=10。
-> 每个 writer 单独跑 `go test ./log4go/ -bench '^Benchmark_<Writer>_$' -benchmem -run '^$' -benchtime=2s`（单 writer 独立进程，避免跨 benchmark 的 daemon/goroutine 互相干扰）。
-> 接收端均为 I/O 噪音隔离：Console→pipe(discard)、File→tmpfile、Kafka→noopAsyncProducer（不连真 broker）、Net→进程内 TCP(loopback)、IO→bytes.Buffer/io.Discard。
-> ns/op = 每条日志耗时，B/op = 每条分配内存，~QPS = 1e9/ns/op（单核）。async writer 的 ns/op 是**调用方 Write 返回耗时**（daemon 异步落盘/发网络不计入）。
-
-| Writer | ns/op | ~QPS/核 | B/op | allocs | 场景推荐 |
-|---|---|---|---|---|---|
-| **File（sync bufio）** | **140** | **~7.1M** | 80 | 1 | 单核最快落盘（同步 bufio，无 daemon）|
-| File（async drop） | 219 | ~4.6M | 128 | 1 | 生产高吞吐落盘（daemon 异步，drop 兜底）|
-| File（async spill） | 217 | ~4.6M | 127 | 1 | 生产落盘 + ring 兜底（抗突发不丢热数据）|
-| **NetWriter（TCP，进程内 loopback）** | **137** | **~7.3M** | 114 | 1 | 远程收集（调用方仅入队；真实网络受 RTT 限制，见下）|
-| Console（buffered） | 294 | ~3.4M | 80 | 1 | 容器 stdout 收集（bufio 减 syscall）|
-| IOWriter（io.Discard） | 204 | ~4.9M | 96 | 2 | 测试/自定义最快 sink |
-| IOWriter（bytes.Buffer） | 649 | ~1.5M | 396 | 2 | 测试捕获（buffer 自身扩容开销）|
-| Console（unbuffered） | 1620 | ~617K | 96 | 2 | 开发调试（每条 syscall）|
-| Console（unbuffered + color） | 2961 | ~338K | 192 | 6 | 开发调试 + ANSI 着色 |
-| **Kafka（noop producer）** | **831** | **~1.2M** | 496 | 5 | 生产发 kafka（buildPayload 手动 append 主导，见下）|
-| Record.JSON（goccy，3 字段） | 1021 | ~980K | 993 | 6 | JSON 结构化（默认 codec，全 writer 通用）|
-| Record.JSON（std） | 1049 | ~953K | 1120 | 12 | 标准库兼容（慢 ~3%，allocs 2x）|
-| Record.JSON（sonic） | 1359 | ~736K | 1038 | 7 | amd64 SIMD 最快；arm64 fallback 有开销 |
-| Record.JSON（goccy，无字段） | 250 | ~4.0M | 400 | 3 | 常见无 With 路径，极快 |
-| Record.String（text，3 字段） | 1685 | ~594K | 769 | 7 | 文本格式化基线（含字段 JSON 对象）|
-
-> **端到端** = 调用方 deliver（~1085ns caller / ~1049ns no-caller）+ bootstrap 串行 writer。生产只注册 File + Kafka：bootstrap ≈ 219(File async) + ~100(Kafka 入队) ≈ 320ns → 理论 ~3M QPS/核；JSON 格式额外 +1021ns（goccy，一次性序列化缓存到 r.jsonBytes，多 writer 不重复）。
-
-### Kafka 为何慢于 File
-
-Kafka `Write` 热路径 = `buildPayload`（288ns 无字段 / 522ns 含 1 字段 / 1006ns 含 5 个 base field，手动 byte append，零 map 中间层）+ 入队（~100ns）+ ProducerMessage 分配。对比 File async（219ns，仅 copy record + 入队），Kafka 慢约 4x，主因是每条 record 必须序列化为 JSON（File 文本路径无需）。早期版本经 `map[string]interface{}` 中间层 + `json.Marshal` 达 2582ns/27 allocs，现已改为框架字段直接 append、仅用户字段值单独 marshal；慢路径（含 Base Field 的 Kafka→ES 典型场景）回落到 ~500ns 级。进一步方向：对字符串类用户字段走快速 escape-append，省去 per-field `Marshal` 调用。
-
-### NetWriter 真实网络吞吐
-
-上表 NetWriter 137ns 是**进程内 loopback**（调用方仅入队，daemon 异步写 loopback TCP）。真实跨机网络受 RTT 限制：
-
-| 部署 | 单连接预估 QPS | 说明 |
-|---|---|---|
-| 同主机 loopback | ~1M-7M | 上表实测（仅入队开销）|
-| 同机房 TCP | ~50K-200K | RTT ~0.1-1ms 主导 |
-| 跨机房 / WAN | ~5K-50K | RTT ~10-100ms 主导 |
-
-> NetWriter 强制 async + 有界 channel + drop/spill：网络抖动**永不阻塞调用方**（业务流转不受影响），channel 满则 drop（默认，推荐）或 spill（ring 缓冲恢复后重发）。生产高吞吐用 File + Kafka，NetWriter 仅低量收集。
-
-### 防阻塞设计（async writer 通用）
-
-- **强制 async**：File(async) / Kafka / Net 均独立 daemon goroutine + 有界 channel。`Write` 在 drop/spill 下**永不阻塞调用方**。
-- **OverflowPolicy（drop/spill/block）**：channel 满 → drop（默认）/ spill（ring→file 多级兜底）/ block（背压）。复用泛型溢出框架 `Spiller[T]`（见 §10）。
-- **连接超时 + 重连退避**（NetWriter）：`Timeout`（默认 3s）设 `SetWriteDeadline`；写失败关连接，下条 record lazy 重连（`ReconnectBackoff` 默认 1s）。
-- **JSON/Text 自适应**：`Logger.format=FormatJSON` 时 File/Console/Net/IO 直接发 `r.jsonBytes`（零额外序列化）；Kafka buildPayload 仍独立序列化（兼容其顶层 hoist 语义）。
-
-### 12.6 多目的地告警（WebhookWriter + RateAlerter）
-
-一个 logger 可注册多个 writer，**各自带 level 过滤**，实现多目的地不同级别分发（对标 zap `Tee` + logrus `Hook`）：
-
-| 目的地 | 级别 | 说明 |
-|---|---|---|
-| KafKaWriter | INFO+ | 全量 → Kafka→ES（buildPayload 手动 append，见 §12） |
-| NetWriter | WARN+ | 热线 → TCP/UDP 收集器 |
-| WebhookWriter | ERROR+ | 仅严重错误 → lark/dingtalk/wechat |
-
-**WebhookWriter** 把 `AlertSink`（`WebhookAlertSink`，已带异步/重试/限流）包成 Writer，三层可组合触发：
-- **级别**（始终）：`r.level <= w.level` 才转发；
-- **Filter**（可选）：`func(*Record) bool` 谓词，关键字/字段命中才发；
-- **Gate**（可选）：`*RateAlerter` 阈值门控，超阈值才放行（防风暴/阈值汇总）。
-
-实测热路径（mock sink，Apple M5）：
-
-| 场景 | ns/op | allocs | 说明 |
-|---|---|---|---|
-| PassThrough（级别+filter+gate 全过 → Send） | 71 | 0 | gate.Allow() 占大头（一次锁） |
-| LevelSkip（级别不过，快速跳过） | 3.7 | 0 | 仅一次整数比较 |
-
-零分配，不成为吞吐瓶颈。`Logger.Close()` 经 `io.Closer` 路径自动关闭 WebhookWriter 的 sink daemon，`defer log4go.Close()` 一次清理全部。
-
-**RateAlerter**：秒级桶环形数组滑动窗口，`Allow()` O(1) 摊销、无 per-event 分配，可安全挂热路径。`NewRateAlerter(window, threshold)` + `SetCooldown`。
-
-## 13. 各 Writer 内存占用（100K 条，MemPerWriter，Go 1.26.0）
-
-> 数据来源：`Test_MemPerWriter`（每个 writer 直接 Write 100K 条，前后各一次 GC，取 HeapAlloc/HeapInuse delta）。接收端 I/O 噪音隔离（同 §12）。**所有 writer 100K 条 HeapAlloc < 0.05MB**——records/channel 有界 + Record 池复用 + spiller 有界，高 QPS 下内存不飙升。
-
-| Writer | 100K 条 HeapAlloc(MB) | HeapInuse(MB) | NumGC | Goroutines | 说明 |
-|---|---|---|---|---|---|
-| discard（基线） | 0.00 | 0.00 | 1 | 4 | 无 writer 开销 |
-| Console（buffered） | 0.00 | 0.00 | 3 | 4 | bufio 缓冲，flush timer |
-| File（async drop） | 0.00 | 0.00 | 5 | 4 | daemon + 有界 channel |
-| File（async spill） | 0.00 | 0.00 | 5 | 4 | daemon + ring 兜底 |
-| **Kafka（noop producer）** | 0.00 | 0.00 | **14** | 4 | buildPayload 手动 append（5 allocs，旧 map 路径 27）|
-| NetWriter（TCP loopback） | 0.00 | 0.00 | 6 | 4 | daemon + 有界 channel |
-| IOWriter（bytes.Buffer） | 0.00 | 0.04 | 5 | 4 | buffer 自身扩容（sink 持有，非 writer）|
-
-**要点**：
-- **HeapAlloc 全部 < 0.05MB**：100K 条日志几乎零堆增长。Record 池复用 + records/channel 有界（4096）+ async writer 的 messages channel 有界 + spiller 有界 = OOM 防护闭环。
-- **Goroutines 恒为 4**（bootstrap + 各 daemon），不随 QPS 增长——零 per-record goroutine（旧 KafKaWriter 的 OOM 根因已消除）。
-- **Kafka NumGC=14**：buildPayload 框架字段手动 byte append（5 allocs/record，旧 `map`+`json.Marshal` 路径 27），100K 条 GC 次数从 55 降到 14。FormatJSON 预序列化（r.jsonBytes）可进一步降低多 writer 场景的重复序列化（见 §12）。
-- **IOWriter HeapInuse=0.04MB**：bytes.Buffer 作为 sink 持有全部 100K 条输出文本（非 writer 自身开销，是 sink 特性）。
-
-> 对比 §11 的 `Test_MemSustained_1M`（1M 条 discard，HeapAlloc=0.8MB / NumGC=6 / Goroutines=3）：100K 条是 1M 的 1/10，内存仍线性可控。Kafka 因 JSON 序列化 GC 更频，但 HeapAlloc 仍近零（GC 及时回收）。
-
-## 14. 场景选型指南
-
-| 场景 | 推荐 writer | 配置 | 预期 QPS（单核）| 说明 |
-|---|---|---|---|---|
-| **本地开发** | Console（unbuffered）| 默认 | ~600K | 即时可见，每条 syscall 可接受 |
-| **生产落盘** | File（async + drop）| `Async:true, AsyncBufferSize:1<<14, OverflowPolicy:"drop"` | ~4.6M | daemon 异步，调用方仅入队 |
-| **生产落盘（抗突发）** | File（async + spill）| `Async:true, OverflowPolicy:"spill", SpillType:"ring", SpillSize:1<<14` | ~4.6M | ring 兜底不丢热数据 |
-| **生产发 kafka** | Kafka（async + spill）| `BufferSize:1<<14, OverflowPolicy:"spill", SpillType:"ring"` | ~387K | JSON buildPayload 主导；FormatJSON 预序列化可加速 |
-| **容器 stdout 收集** | Console（buffered）| `Buffered:true`（bufio 4KB）| ~3.4M | bufio 减 syscall，flush timer 落盘 |
-| **远程日志收集** | NetWriter（async drop）| `Network:"tcp", BufferSize:1<<14, OverflowPolicy:"drop", Timeout:3s` | ~50K-200K（真实网络）| loopback ~7M；跨机受 RTT 限制 |
-| **结构化 JSON** | SetFormat(JSON) + goccy | 全 writer 通用（r.jsonBytes 预序列化）| ~980K（序列化）/ 叠加 writer | 默认 codec 最快可移植 |
-| **多核高吞吐** | ShardLogger(核数/2) + File | `NewShardLogger(GOMAXPROCS/2)` + `RegisterFunc` 每 shard 独立 FileWriter | ~1.6M+（10 核 4 shard）| 唯一突破单核 ~1M 的正路 |
-| **测试/自定义** | IOWriter(bytes.Buffer / io.Discard) | `NewIOWriter(w, level)` | ~1.5M-4.9M | 最薄 adapter，捕获/直写 |
-| **极致（舍定位）** | no-caller + File(async) | `WithCaller(false)` | ~4.6M（writer）+ ~1049ns（deliver）| 失 file:line，16 B/op 1 alloc |
-| **低量 + 告警推送** | Kafka(spill=file) + WebhookAlertSink | `SpillType:"file", SpillMaxBytes:1<<30` | ~387K | 落盘兜底 + 溢出告警（lark/dingtalk）|
-
-### 选型决策树
-
-```
-需要落盘？ ───────────────── YES ──→ File（async + drop 抗突发用 spill）
-   │ NO                           │ 生产高吞吐：ShardLogger(核数/2) + RegisterFunc（每 shard 独立 File）
-   ↓                              
-需要发 kafka？ ──────── YES ──→ Kafka（async + spill=ring/file）
-   │ NO                           
-   ↓                              
-容器 stdout 收集？ ── YES ──→ Console（buffered）
-   │ NO                           
-   ↓                              
-远程收集（低量）？ ── YES ──→ NetWriter（async drop）
-   │ NO                           
-   ↓                              
-测试/自定义 sink ──────────→ IOWriter
-```
-
-### 关键约束
-
-1. **生产禁用 Console（unbuffered）**：同步写 stdout 阻塞 bootstrap，拖垮所有注册 writer。仅本地调试用。
-2. **bootstrap 单 goroutine 串行**：注册 writer 越多、越慢，端到端越低（端到端 ≈ Σ 各 writer Write）。生产只留 File + Kafka。
-3. **ShardLogger(n>1) 不能共享 FileWriter**：用 `RegisterFunc` 每 shard 建独立实例（否则 bufio/file/daemon 跨 shard 竞争损坏输出，Register 会 panic）。
-4. **NetWriter 仅低量**：真实网络吞吐受 RTT 限制（~50K-200K 同机房），高吞吐必须 File + Kafka。
-
-## 15. 业界对比（vs zap / zerolog / logrus）
-
-| 能力 | log4go | zap（uber）| zerolog（rs）| logrus | 说明 |
-|---|---|---|---|---|---|
-| **结构化字段**（With/WithField） | ✓ | ✓（ SugaredLogger）| ✓（Context）| ✓（Fields）| log4go: 子 logger 链式累加，热路径零开销（无 With 不付费）|
-| **JSON 格式** | ✓ goccy/std/sonic 可切换 | ✓（强项，零反射）| ✓（强项，零 alloc）| ✓（encoding/json）| log4go 默认 goccy ~980K/s；zap/zerolog ~数百万/s（零反射优势）|
-| **采样（Sampling）** | ✓ WithSampling(initial, thereafter) | ✓（core level）| ✓（Sampling）|  | log4go 按 level 独立 atomic 计数，采样丢弃不计 Metrics |
-| **context.Context** | ✓ IntoContext/FromContext + RequestIDMiddleware | （需 helper）| ✓（zerolog.Ctx）|  | log4go 无硬 otel 依赖，AddContextExtractor 可叠加 trace/baggage |
-| **日志旋转（Rotate）** | ✓ 内置 daily/hourly/minutely + MaxDays/MaxHours | （需 lumberjack）| （需 lumberjack）| （需 lumberjack）| log4go 内置，无需第三方 |
-| **多 sink 并发**（多 writer）| ✓ Register 多 writer（bootstrap 串行）| ✓（core chain）| （Multi-level）| ✓（MultiHook）| log4go: 串行保全局顺序；慢 writer 拖累全部（建议 async writer）|
-| **Kafka writer** | ✓ 内置（AsyncProducer + 溢出框架）| （需自建）| （需自建）| （需自建）| log4go 内置 drop/block/spill(ring/file/chain) 防 OOM |
-| **NetWriter（TCP/UDP）** | ✓ 内置 async + 溢出 | （需自建）| （需自建）| （需自建）| log4go 内置，async + 有界 + drop/spill 防阻塞 |
-| **溢出/防 OOM**（drop/spill/block）| ✓ 泛型 Spiller[T]（ring→file→drop 多级）|  |  |  | log4go 独有：channel 满 ring 兜底 → file 兜底 → drop，总空间硬上限 |
-| **多核分片**（ShardLogger）| ✓ NewShardLogger(n) round-robin | （多实例自管）| （多实例自管）|  | log4go: 10 核 4 shard ~1.6M QPS，唯一突破单核 ~1M 正路 |
-| **告警钩子**（SetOnEvent / AlertSink）| ✓ 实时事件 + webhook（lark/dingtalk/feishu）| （hooks 弱）|  | ✓（Hook）| log4go: 溢出首次 + 每 N 次告警，不刷屏不递归 |
-| **崩溃恢复**（file spill drain）| ✓ 启动 Drain 重投 |  |  |  | log4go: 中断后从 spill.log 续投（ring 不参与恢复）|
-| **Metrics** | ✓ 各级别计数 + writer 运行指标 | （需自建）|  |  | log4go: Logger.recordsByLevel + FileWriter/KafKaWriter/NetWriter Metrics 快照 |
-| **吞吐（单核，JSON）** | ~980K（goccy）/ ~7.1M（File text）| ~数百万/s | ~数百万/s（零 alloc）| ~100K-300K | zap/zerolog 零反射 JSON 最快；log4go goccy 次之；logrus 最慢 |
-| **吞吐（多核）** | ~1.6M（4 shard）| 需自管多实例 | 需自管多实例 | — | log4go ShardLogger 内置分片，线性扩展 |
-| **内存（100K 条）** | < 0.05MB HeapAlloc / 恒 4 goroutine | ~零 alloc（zerolog 更优）| ~零 alloc | 较高 | log4go 池复用 + 有界 channel，OOM 防护闭环 |
-| **依赖** | goccy/go-json（可选 sonic）| 仅 zapcore | 零依赖 | 多依赖 | log4go 默认 goccy（可移植），sonic 仅 amd64 最优 |
-
-### 选型总结
-
-- **选 zap/zerolog**：纯追求极致 JSON 吞吐 + 零 alloc，且不介意自建 rotate/kafka/net/溢出。
-- **选 log4go**：需要**开箱即用**的完整生产栈（rotate + kafka + net + 溢出防 OOM + 多核分片 + 告警 + 崩溃恢复），且吞吐够用（单核 File ~7M / JSON ~980K，多核 4 shard ~1.6M）。
-- **选 logrus**：已用且性能不敏感（吞吐最低，~100K-300K）。
-
-> log4go 的**差异化优势**是内置的**溢出防 OOM 框架**（ring→file→drop 多级 + 告警 + 崩溃恢复）和**多核 ShardLogger**——这两项 zap/zerolog 均需自建且易踩 OOM/竞争坑。
-
-## 16. Round A 升级：类型化字段 + slog + logfmt + 预设 + Panic/Fatal
-
-对标 zap.Field / slog.Attr 的**类型化字段**（零装箱）+ 标准库 slog 接入 + logfmt + 生产/开发预设 + Panic/Fatal/Recover。性能对比（Apple M5，基线 = dev `67d62a7`，改造后）：
-
-| Benchmark | 基线 ns / allocs | 改造后 ns / allocs | Δ |
-|---|---|---|---|
-| Record.JSON（3 字段） | 5801 / 6 | **494 / 2** | **−91% / −67%** |
-| DeliverPipeline_NoCaller | 7054 / 1 | 1160 / 1 | −84% |
-| DeliverPipeline_Discard | 1835 / 7 | 1090 / 7 | −41% |
-| Record.JSON（无字段） | 469 / 3 | 372 / 2 | −21% / −33% |
-| Kafka buildPayload（1 字段） | 573 / 3 | 570 / 3 | ≈ |
-| Kafka buildPayload（5 base fields） | 1032 / 8 | 1014 / **3** | −2% / **−63%** |
-| Logger.With（int, interface） | — | 223 / 4 | 基线 |
-| Logger.WithInt（typed） | — | **125 / 3** | **−44% / −1 alloc vs With** |
-
-**关键收益**：`Record.JSON` −91%（typed append 取代 map+反射+装箱，6→2 allocs）；typed `WithInt` 比接口版快 44% 且少 1 装箱 alloc；Kafka base-fields 路径 allocs −63%。
-
-### 新增能力
-- **类型化字段**：`Field` + `String/Int/Int64/Uint64/Bool/Float64/Duration/Time/ErrorField/Any` 构造器；`Logger.WithString/WithInt/.../WithAttrs`（实例+包级，零装箱）；旧 `With(key, interface{})` 内部 `fieldOf` 类型推断，常见标量自动零装箱，完全向后兼容。
-- **logfmt**：`SetFormat(FormatLogfmt)` → `time=... level=... msg="..." key=val`，Loki/Promtail/docker 原生格式；`r.jsonBytes` 改名 `r.formattedBytes`（格式无关，JSON/logfmt 共用预序列化）。
-- **slog.Handler**：`NewSlogHandler(logger)` 让标准库 slog（net/http、第三方库）日志进 log4go 管线（writer/溢出/告警/监控）。`slog.SetDefault(slog.New(log4go.NewSlogHandler(...)))`。
-- **预设**：`NewProduction()`（JSON+INFO+采样+caller）/ `NewDevelopment()`（彩色 Text+DEBUG+funcname），对标 zap。
-- **Panic/Fatal/Recover**：CRITICAL 输出 → `Sync()`（drain+flush）→ panic/exit；`Recover` 捕获 panic→日志（可挂 WebhookWriter sentry 风格）→ re-raise。
+**codec 对比**：goccy/std/sonic 对标量记录都是 240B/1alloc，codec 选择对标量无影响（只有 kindAny 才会命中）。
 
 ## 17. 类型覆盖与健壮性（对标 zap/zerolog/slog）
 
-### 17.1 字段类型覆盖（fieldOf 自动推断 + typed 构造器）
+fieldOf 映射：string/bool/int*/uint*/uintptr/float/[]byte/complex/duration/time/error → 类型化（零装箱）；其余 kindAny。
 
-| 类型 | 推断路径 | JSON 输出 | logfmt 输出 |
-|---|---|---|---|
-| string / bool | typed（零装箱） | 原生 | 原生/引号 |
-| int / int8-64 | typed | 整数 | 整数 |
-| uint / uint8-64 / uintptr | typed | 整数 | 整数 |
-| float32 / float64 | typed | 小数（NaN/Inf→null） | 小数（NaN/Inf→`-`） |
-| complex64 / 128 | typed→string | `"a+bi"`（NaN→null） | `a+bi` |
-| time.Duration | typed | 纳秒整数 | 纳秒整数 |
-| time.Time | typed | ISO 字符串 | ISO 字符串 |
-| []byte | typed（base64） | base64 字符串 | base64 |
-| error | typed | `.Error()` 字符串（typed-nil 安全） | 同 |
-| 其他（struct/map/slice/chan/func…） | kindAny | codec marshal，失败→null | 失败→`-` |
-
-### 17.2 健壮性保证（任何字段值都不击穿日志管线）
-
-| 风险 | 处理 | 测试 |
-|---|---|---|
-| 自定义 `MarshalJSON` panic | `safeJSONMarshal` defer recover → null | Test_Field_AnyMarshalPanic |
-| typed-nil error 接收者 panic | `safeErrorString` recover → null | Test_Field_TypedNilErrorDegrades |
-| chan / func 不可 marshal | kindAny 失败 → null | Test_Field_UnmarshallableKinds |
-| NaN / ±Inf（非法 JSON） | 位掩码检测 → null | Test_Field_NaNInfIsValidJSON |
-| complex NaN 分量 | → null | Test_Field_Complex |
-
-> 性能取舍：recover/检查只挂在 kindAny / kindError（慢路径）；标量热路径零额外开销；float 的 NaN/Inf 用**单次位掩码 AND**（比 IsNaN+IsInf 更快）。
-
-### 17.3 Round A 新增路径实测（Apple M5，typed + 时间格式 + 批量转义）
-
-> 三轮优化叠加：① typed append（消除 map/反射/装箱）② `appendISOTimeUTC`（消除 `time.Format` string 分配）③ 批量字符串转义（clean run 一次 append，取代逐字节）。JSON/logfmt 全部降到 **1 alloc**（只剩 buf 本身）。
->
->  **可信度说明**：本机 M5 长跑有热降频，ns/op 在多次 `-count` 间可漂移 2–5×（如 Record.Logfmt 267→2940）。**allocs/op 是热无关的稳定信号**（下表 allocs 列在所有重复中恒定）；ns 取**冷机隔离**最优值，作峰值吞吐参考。
-
-| Benchmark | 峰值 ns/op | allocs | 说明 |
-|---|---|---|---|
-| **Record.Logfmt（3 字段）** | **~229** | **1** | typed append + 零 string alloc |
-| **Record.JSON（3 字段）** | ~210–350 | **1** | typed + 批量转义（基线 5801/6，**−95% / allocs −83%**） |
-| Record.JSON（无字段） | ~330 | 1 | |
-| Kafka buildPayload（5 base fields） | ~560 | 2 | typed + 直接时间格式 |
-| Kafka buildPayload（1 字段, ExtraFields） | ~540–1000 | 2 | 噪声大（map 路径）；typed 主路径更稳 |
-| SlogHandler.Handle | ~1282 | 7 | slog 桥接（+19% vs 原生） |
-| Logger.WithAttrs（3 typed） | ~160 | 3 | 零标量装箱 |
-| Logger.WithInt（typed） vs With（interface） | ~118 vs ~136 | 3 vs 3 | typed 略快（Go 优化了变量 int 装箱，差距收窄） |
-| Logger deliver（3 typed + JSON，端到端） | ~1386 | 6 | 结构化日志完整热路径 |
-| Field append（float，NaN-safe） | ~42 | 0 | 位掩码 NaN 检查，零分配 |
-| Field append（int，基线） | ~15–19 | 0 | 标量基线（批量转义后 key append 更快） |
-
-**codec 对比（3 字段 Record.JSON）**：typed 后 goccy/std/sonic 均为 **240B/1 alloc、峰值 260–300ns**——标量不走 codec（只 `kindAny` 走），**codec 选择对标量记录几乎无影响**；只在大量任意类型字段时才有差异（sonic amd64 最快）。
-
-**剩余 1 alloc（buf 本身）**：`Record.JSON` 的 `make([]byte,...)`。架构使然（record 池 + 多 writer 持有 `formattedBytes`，buf 生命周期跨异步 writer，难以安全 pool）。这是当前架构下的合理下限——zerolog 用扁平复用 buffer 才到 0 alloc，但少了多 writer/async/溢出/恢复。
-
-## 18. 多核分片策略与多环境部署（含业内对比）
-
-### 18.1 何时分片、分多少（两种工况）
-
-ShardLogger 的收益取决于 **writer 是否把单 bootstrap 喂成瓶颈**：
-
-| 工况 | writer 单次耗时 | 单 bootstrap | 分片收益 |
-|---|---|---|---|
-| **快 writer**（内存/discard/NetWriter loopback） | <1µs | 跟得上，非瓶颈 |  只增派发开销（round-robin 原子 + 多 channel），单 Logger 更优 |
-| **慢 writer**（磁盘/Kafka/远程） | ~µs–ms | 成瓶颈 | ✓ 分片并行消费，吞吐近线性扩展到 ~GOMAXPROCS/2 |
-
-实测（M5/10 核，slowWriter ~1µs/record，并行生产者，取最优）：
-
-| shards | ns/op | 聚合 ops/s | 相对单分片 |
-|---|---|---|---|
-| 1 | ~3.3µs | ~300K | 1.0× |
-| 2 | ~1.7µs | ~590K | **2.0×** |
-| 4 | ~1.1µs | ~930K | **3.1×（peak）** |
-| 8 | ~2.7µs | ~370K | 1.2×（竞争反噬） |
-
-> 快 writer 工况下 discardWriter 实测分片反而略慢（派发开销）——这是正常的，不是 bug。**慢 writer 才是分片的用武之地**。
-
-### 18.2 自动配置（`AutoShardCount`）
-
-```
-shards = max(2, GOMAXPROCS / 2)
-```
-
-- `/2`：每分片占 1 个 bootstrap goroutine，留另一半核给生产者（业务）+ runtime/OS
-- 下限 `2`：分片至少 2 才有并行消费收益
-- 无硬 cap：随核数 scale（/2 留生产者核，永不过订阅）；想固定数用 NewShardLogger(n)
-
-| GOMAXPROCS（有效核） | auto shards | 典型环境 |
-|---|---|---|
-| 1 | 2 | 单核容器（floor） |
-| 2 | 2 | 2 核 VM/容器 |
-| 4 | 2 | 4 核云主机（常见） |
-| 8 | 4 | 8 核 |
-| 10 | 5 | 本机 M5 |
-| 16 | 8 | 16 核 |
-| 32 | 16 | 32 核（随核数 scale，无硬 cap） |
-| 64 | 32 | 64 核（大机消化更强，分片更多） |
-| 128 | 64 | 128 核 |
-
-> **无硬 cap**：shard = max(2, GOMAXPROCS/2)，随核数线性。之前 cap=8 是 10 核实测（8 shard 占 80% 核→过订阅反噬）；但反噬点是 shard/核数比，不是绝对值——64 核 shard=8 只占 12%，反而消化不足（生产者 56 核 vs 8 消费者→背压）。/2 永不过订阅（留一半核给生产者）。想固定数用 `NewShardLogger(n)`。
-
-用法：
-
-```go
-sl := log4go.NewShardLogger(0)   // 0 = 自动（推荐）
-// 或显式：sl := log4go.NewShardLoggerAuto()
-sl.RegisterFunc(func() log4go.Writer { /* 每分片独立 FileWriter */ })
-```
-
-### 18.3 多环境部署（本地 / VM / 云主机 / 容器 / k8s）
-
-`AutoShardCount` 读 `runtime.GOMAXPROCS(0)`，其准确性因环境而异：
-
-| 环境 | GOMAXPROCS 准确性 | 建议 |
-|---|---|---|
-| 本地 / 裸机 VM / 云主机 | ✓ = 物理核 | 直接用 auto |
-| 容器 / k8s（Go 1.25+） | ✓ 尊重 cgroup CPU quota | 直接用 auto |
-| 容器 / k8s（Go <1.25 或上报异常） |  可能 = 宿主机核数（过度分片） | `import _ "github.com/v8fg/kit4go/maxprocs"`（封装 automaxprocs，应用级一次性修正；log4go 自身不依赖） |
-
-要点：
-- **k8s CPU limit**：Go 1.25 起 GOMAXPROCS 默认按 cgroup quota 算（如 limit=4 → GOMAXPROCS=4 → 2 shards）；旧版本会上报宿主核数 → auto 读准确 GOMAXPROCS；建议 automaxprocs。
-- **CPU burst（requests < limits）**：GOMAXPROCS 按 limit 算，分片偏多；/2 自适应（留半核给生产者）。
-- **确定性需求**：`NewShardLogger(n)` 显式钉死，绕过 auto。
-
-### 18.4 业内对比（定位）
-
-| 维度 | log4go | zap | zerolog | slog（标准库） |
-|---|---|---|---|---|
-| 类型化字段（零装箱） | ✓ Round A | ✓ Field | ✓ | ✓ Attr |
-| 单核 JSON 吞吐 | ~490 ns/3字段（typed append） | ~快（参考公开） | **最快**（零分配基准） | ~中等 |
-| 零分配 record | ✓（无字段 / typed） | ✓ | ✓ 极致 | 部分 |
-| 多目的地不同级别 | ✓ Writer 各自 level | ✓ Tee | ✓ | ✓ Handler |
-| **溢出防 OOM（ring→file→drop）** | ✓ **内置** | 需自建 | 需自建 |  |
-| **崩溃恢复（Drain 重投）** | ✓ **内置** |  |  |  |
-| **多核分片（ShardLogger）** | ✓ **内置** |  多实例手搓 |  |  |
-| **严格排序（unixNano+seq）** | ✓ |  |  |  |
-| **告警 webhook（级别/阈值）** | ✓ WebhookWriter+RateAlerter | Hook 手搓 | Hook | — |
-| slog 生态接入 | ✓ NewSlogHandler | 桥 |  | 原生 |
-| 字段值健壮性（panic/NaN/typed-nil 安全） | ✓ |  |  |  |
-
-> 性能数字：zerolog 是公认的零分配吞吐基准（参见 zerolog README benchmark）；zap 是结构化+高性能；slog 是 Go 1.21+ 标准库。log4go 在 typed 字段后标量零分配、JSON ~490ns/3字段，性能进入较快，而 **可靠性/运维栈（溢出/恢复/分片/排序/告警）是 zap/zerolog/slog 都需自建的独有优势**。跨库精确对比需同环境实测（各库版本/编码器差异大），上表为定位性参考。
-
-**选型**：纯追极致 JSON 吞吐且自建运维 → zerolog/zap；要**开箱即用的生产级可靠性**（防 OOM、崩溃不丢、多核线性、错误告警）且性能较快 → **log4go**。
-
-## 19. 监控指标与诊断（零热路径开销）
-
-### 19.1 启动诊断（核数 / 分片）
-
-`NewShardLogger`（含 `NewShardLoggerAuto`）启动时输出一行，让运维一眼看到 log4go 实际用到的并行度：
-
-```
-[log4go] ShardLogger started: GOMAXPROCS=8 shards=4
-```
-
-> GOMAXPROCS 在 Go 1.25+ 自动尊重 cgroup CPU quota；`shards = max(2, GOMAXPROCS/2)`（§18.2）。用标准 log 输出，避免 log4go 引导自身。
-
-### 19.2 运行时指标（`RuntimeStats`，按需采集）
-
-```go
-m := log4go.RuntimeStats()
-// m.GOMAXPROCS / m.NumGoroutine / m.HeapAlloc / m.HeapInuse / m.HeapObjects
-// m.HeapSys / m.NumGC / m.StackInuse / m.GCCPUFraction
-```
-
-**性能保证**：`RuntimeStats` 调 `runtime.ReadMemStats`（有亚毫秒级 STW），**log4go 内部从不调用它**，只在监控采集时调（如 Prometheus scrape 每 10–30s），**绝不进入每条 record 的日志热路径**。
-
-### 19.3 暴露给 Prometheus（示例）
-
-```go
-var (
-	heapAlloc = promauto.NewGauge(prometheus.GaugeOpts{Name: "log4go_heap_alloc_bytes"})
-	goroutines = promauto.NewGauge(prometheus.GaugeOpts{Name: "log4go_goroutines"})
-	gcCPU     = promauto.NewGauge(prometheus.GaugeOpts{Name: "log4go_gc_cpu_fraction"})
-)
-// collector：scrape 时采集（ReadMemStats 的 STW 在 scrape 节点，不影响日志）
-go func() {
-    for range time.Tick(15 * time.Second) {
-        m := log4go.RuntimeStats()
-        heapAlloc.Set(float64(m.HeapAlloc))
-        goroutines.Set(float64(m.NumGoroutine))
-        gcCPU.Set(m.GCCPUFraction)
-    }
-}()
-```
-
-### 19.4 日志量指标（已有，per-level）
-
-```go
-m := log4go.Metrics()           // 各级别 record 计数（per-level counters）
-kwm := kw.Metrics()             // KafKaWriter: Sent/Errored/Dropped/Spilled/Queued/SpillLen
-```
-
-> 推荐指标：`log4go_records_total{level}`、`log4go_heap_alloc_bytes`、`log4go_goroutines`（恒定=健康，上升=泄漏）、`log4go_gc_cpu_fraction`（持续 >0.2 需降配/扩容）、`kafka_dropped/spilled_total`（>0 触发告警）。
-
-### 19.5 关于"看着比 zerolog 慢"
-
-zerolog 是公认的零分配 JSON 吞吐基准（扁平 event buffer + 复用）。log4go 的 `Record` 抽象换来了 zerolog 没有的能力：多 writer 串行派发、async/溢出/崩溃恢复、池化复用、严格排序 —— 这层中转有固定开销。优化后单核 JSON ~460ns/1alloc（3 字段）、logfmt ~267ns/1alloc，进入较快；**可靠性/运维栈（溢出/恢复/分片/告警）是 zerolog/zap/slog 需自建的独有优势**。纯追 JSON p99 且无需运维栈 → zerolog；要开箱即用生产级可靠性 → log4go。
-
-### 17.4 Pipeline alloc 下限（pprof 定位 + caller 缓存）
-
-`LoggerInfo`（带 caller + 格式化参数）allocs 演进：7 →（caller 路径 `path.Base`→切片、`Itoa`→`AppendInt`）6 →**（caller 缓存）3**。pprof 定位并逐项消除：
-
-| alloc 来源 | 处理 |
+| 风险 | 处理 |
 |---|---|
-| ~~`runtime.Caller` 的 file 路径串~~ | ✓ 改 `runtime.Callers` 只取 PC（不分配 file 串） |
-| ~~`fi.String()`（file:line 拼接）~~ | ✓ **caller 缓存**：PC→file:line memoize，同调用点首次后 0 alloc |
-| `fmt.Sprintf(msg, args)` 结果串 | （用户格式串；无参 `Info("msg")` 已跳过） |
-| variadic `interface{}` 装箱（`Info(fmt,i)` 装 i + args 切片） |  **Go 语言下限**（无参则 0） |
+| panic 的 MarshalJSON | `safeJSONMarshal` recover → null |
+| typed-nil error | `safeErrorString` recover → null |
+| chan/func 不可序列化 | kindAny 失败 → null |
+| NaN/±Inf（非法 JSON） | 位掩码 → null |
+| complex 的 NaN 分量 | → null |
 
-**caller 缓存**（`callerFileLine`）：`runtime.Callers(3, pcs)` 取 PC（零 file alloc），`map[callerKey]string` 按 `(pc, fullPath, withFunc)` 缓存 "base.go:line[ func]"。同调用点首次 miss（算一次 FileLine + 拼接），之后命中 = 一次 RLock map 查询。缓存条目数 = 日志调用点数（有限）。zap 同样缓存 caller。
+> 只在 kindAny/kindError（慢路径）做 recover；标量热路径零开销；float NaN/Inf 用单次位掩码 AND 判定。
 
-**结论（实测）**：
-| 路径 | allocs | B/op | 构成 |
-|---|---|---|---|
-| `hasCaller=true` + `Info(fmt, i)` | **3** | 49 | Sprintf(1) + variadic 装箱(2) — Go 下限 |
-| `WithCaller(false)` + no-arg `Info("msg")` | **1** | ~17 | 仅 record 通道相关 |
-| `Record.JSON`（3 字段） | **1** | 240 | buf（多 writer/async 架构下限） |
+## 17.4 管线分配下限（pprof）
 
-> 要突破 3 allocs（消除 variadic 装箱 + Sprintf）需 builder API（zerolog 链式 `Str()/Int()`，typed 参数不装箱）——与 `Info("msg")` 易用性冲突，故保留双模式的可能性但不替换现有 API。
+`LoggerInfo`（caller + format 参数）：7 → 6（path.Base→slice，Itoa→AppendInt）→ **3**（caller 缓存：PC→file:line 通过 runtime.Callers 记忆化）。
 
-## 20. 高性能 vs 易用 用法对比（cookbook）
-
-> 对应 doc.go "# High-performance vs easy usage"。allocs 是热无关稳定信号，ns 为冷机峰值（M5/Go1.26）。**默认档已较快**，极致吞吐只需几个开关。
-
-### 20.1 四档用法 + 实测
-
-| 档 | 用法 | allocs | ns/op(峰) | QPS/核 | 易用 | 适用 |
-|---|---|---|---|---|---|---|
-| **A 易用** | `NewProduction()` + `Info("msg")` | **1** | ~1100 | ~910K | 高 | 99% 业务 |
-| A 易用 | `NewProduction()` + `With(k,v).Info(fmt,i)` | 3 | ~1200 | ~830K | 高 | 结构化 |
-| **B 高性能结构化** | `WithString/WithInt/WithAttrs(...).Info` | 2-3 | ~1250 | ~800K | 中 | 高频+字段 |
-| B 序列化 | `Record.JSON`（3 typed 字段） | **1** | ~210-350 | — | — | JSON 基准 |
-| **C 极致吞吐** | `WithCaller(false)` + 无参 `Info("x")` + async File | **1** | ~1100 | **~923K** | 低 | 超高频 |
-| **D 多核线性** | `ShardLogger(0)` + `RegisterFunc` async File | — | shard×单核 | 4 shard ~3× | 低 | 10M 级 |
-
-### 20.2 allocs 构成（为何这些是下限）
-
-`Info(fmt, args)` 带 caller = **3 allocs**（Go 语言下限）：
-- `fmt.Sprintf` 结果串（1）—— 用户格式串，不可避免；无参 `Info("msg")` 跳过 → 省
-- variadic `interface{}` 装箱：args 切片 + i 装箱（2）—— Go 签名成本；无参则 0
-- ~~caller（runtime.Caller file 串 + file:line 拼接）~~ → **已由 caller 缓存消除**（PC→file:line memoize，命中 0 alloc）
-
-无参 `Info("msg")` + `WithCaller(false)` = **1 alloc**（record 通道相关，单核最大吞吐）。
-
-### 20.3 开关收益排序
-
-| 开关 | 收益 | 代价 |
+| 路径 | allocs | 组成 |
 |---|---|---|
-| `WithCaller(false)` | −2 allocs | 丢 file:line |
-| 无参 `Info("msg")`（vs `Info(fmt,i)`） | −2 allocs | 无格式化 |
-| typed `WithString/WithInt`（vs `With(k,v)`） | 标量零装箱、类型安全 | 链式稍长 |
-| `FileWriter{Async:true}` | daemon 隔离磁盘，不阻塞 bootstrap | 异步（flush 时机） |
-| `OverflowPolicy:"spill"` | 防 OOM + 不丢热数据 | 多占 ring/file 空间 |
-| `ShardLogger(0)` | 慢 writer 下多核线性 | 多 goroutine + 仅慢 writer 有效 |
-| `ConsoleWriter{Buffered:true}` | bufio 减 syscall | 需定时 flush |
+| hasCaller + `Info(fmt,i)` | **3** | Sprintf(1) + 可变参装箱(2)，Go 下限 |
+| WithCaller(false) + 无参 `Info("msg")` | **1** | 单核最大吞吐 |
+| Record.JSON（3 字段） | **1** | buf（多 writer/异步下限） |
 
-### 20.4 选型决策
+> 低于 3 需要 builder API（zerolog 链式，避免可变参装箱），代价是牺牲 `Info("msg")` 的易用性；未采纳。
 
-- **默认**：`NewProduction()` + `With/Info` —— 较快性能 + 全套可靠性，**除非测出瓶颈否则别动**
-- **单核 >900K QPS**：档 C（`WithCaller(false)` + 无参 + async File）
-- **10M QPS 级 / 慢 writer**：档 D（`ShardLogger(0)` + `RegisterFunc`）
-- **高频结构化**：档 B（typed 字段）
+## 18. 分片策略与多环境（对标 zap/zerolog/slog）
 
-### 20.5 反模式
+当 **writer 成为单 bootstrap 的瓶颈**（慢 writer ~µs 级）时分片才划算。实测（M5/10c，slowWriter ~1µs）：1→2 分片 ~2×，4 分片 ~3.1×（峰值），8 分片退化（竞争）。快 writer（discard/内存）下分片只增加调度开销。
 
-- 生产 unbuffered Console（阻塞 bootstrap）
-- 跨 shard 共享 `*FileWriter`（race；必须 `RegisterFunc`）
-- 高频 `With("count", i)`（装箱；用 `WithInt`）
-- 每条 log `Sprintf` 大对象（预格式化或字段）
-- NetWriter 高吞吐（RTT-bound；用 File + Kafka）
+**AutoShardCount** = `max(2, GOMAXPROCS/2)`。`/2` 给生产者留核；下限 2。无硬上限，分片数随核数增长（64 核机器需要更多并行消费者，封顶 8 会成为瓶颈）。
+
+| GOMAXPROCS | 分片 | 环境 |
+|---|---|---|
+| 1 | 2 | 单核容器 |
+| 4 | 2 | 常见云 |
+| 8 | 4 | |
+| 16 | 8 | |
+| 32 | 16 | 随核数增长 |
+| 64 | 32 | 大机器，更多消费者 |
+| 128 | 64 | |
+
+多环境：Go 1.25+ 原生识别 cgroup CPU 配额；更老/异常环境 → `import _ "github.com/v8fg/kit4go/maxprocs"`。
+
+| log4go | zap | zerolog | slog | |
+|---|---|---|---|---|
+| 类型化零装箱 | 是 | 是 | 是 | 是 |
+| 溢出防 OOM | 是 内置 | 否 自建 | 否 | 否 |
+| 崩溃恢复 | 是 内置 | 否 | 否 | 否 |
+| 多核分片 | 是 内置+自动 | 否 | 否 | 否 |
+| 严格顺序 | 是 | 否 | 否 | 否 |
+| 告警 webhook | 是 | Hook | Hook | — |
+| 字段健壮性 | 是 | 否 | 否 | 否 |
+
+## 19. 监控与诊断
+
+- 启动：`[log4go] ShardLogger started: GOMAXPROCS=N shards=M`。
+- `RuntimeStats()` → GOMAXPROCS/NumGoroutine/HeapAlloc/HeapInuse/HeapObjects/NumGC/GCCPUFraction。会调 ReadMemStats（亚毫秒级 STW），**绝不在热路径上调用**；按采集周期取。
+- Prometheus collector 示例见 PERFORMANCE.en.md §19.3。
+
+## 20. 高性能 vs 易用（cookbook）
+
+| 档位 | 用法 | allocs | 峰值 ns | QPS/核 | 易用 | 适用 |
+|---|---|---|---|---|---|---|
+| **A 易用** | `NewProduction()` + `Info("msg")` | **1** | ~1100 | ~910K | 高 | 99% 日志 |
+| A | `With(k,v).Info(fmt,i)` | 3 | ~1200 | ~830K | 高 | 结构化 |
+| **B 性能结构化** | `WithString/WithInt/WithAttrs` | 2-3 | ~1250 | ~800K | 中 | 高频+字段 |
+| **C 最大吞吐** | `WithCaller(false)` + 无参 + 异步 File | **1** | ~1100 | **~923K** | 低 | 超高频 |
+| **D 多核** | `ShardLogger(0)` + `RegisterFunc` | — | 分片×核 | 4 分片 ~3× | 低 | 10M 级 |
+
+**收益排序**：`WithCaller(false)` −2 alloc（单项最大）→ 无参 `Info("msg")` −2 alloc → 类型化字段（标量零装箱）→ `FileWriter{Async:true}` → `OverflowPolicy:"spill"` → `ShardLogger(0)`。
+
+**反模式**：生产用无缓冲 Console；跨分片共享一个 `*FileWriter`（用 RegisterFunc）；高频 `With("count",i)`（用 WithInt）；高量用 NetWriter。
+
+> **默认档位已经很扎实**（类型化字段、caller 缓存、零反射，+ 溢出/恢复/分片/告警）。除非测出瓶颈（单核 >900K QPS 或 10M 级），否则用默认即可，把精力放在业务上。
+
+## 21. 压测与持续负载验证（2026-06-28，Apple M5 10c，Go 1.26）
+
+v0.1.0 多模块拆分 + golangci-lint 迁移后的完整压测复跑。除特别说明外所有数字取自
+`go test -bench -benchmem`。
+
+### Deliver 管线——多核扩展（广告行业热路径）
+
+| Benchmark | 1 CPU | 4 CPU | 8 CPU | allocs/op |
+|---|---|---|---|---|
+| `LoggerInfo`（caller + writer） | 6056 ns | 1492 ns | **1468 ns** | 3 |
+| `LoggerInfoNoCaller`（writer） | 5995 ns | 1441 ns | **1374 ns** | **1** |
+| `DeliverPipeline_Discard` | 5974 ns | 1473 ns | 1473 ns | 3 |
+| `DeliverPipeline_SampledActive` | 5916 ns | 1537 ns | 1519 ns | 1 |
+| `DeliverPipeline_Filtered` | 13.1 ns | 11.5 ns | 11.5 ns | **0** |
+| `DeliverPipeline_SampledOut` | 3.27 ns | 3.27 ns | 3.27 ns | **0** |
+
+- **1 → 4 CPU ≈ 4× 扩展**（~165K → ~690K rec/s/核），**4–8 CPU 进入平台期**，即文档所述
+  的 channel 调度瓶颈。`ShardLogger` 是突破平台期的路径。
+- 热路径 **≤1 alloc/op**（无 caller）；过滤/采样丢弃路径 **0 alloc**。
+
+### 持续负载（Soak）——吞吐稳定性 + 泄漏
+
+- **8 CPU 持续 10s**：`LoggerInfo` 1468 ns/op，`NoCaller` 1374 ns/op，**与 2s 基线一致**，
+  持续负载下吞吐无衰减。
+- **堆（1,000,000 条 + GC）**：`前 603 KB → 后 607 KB，Δ +3 KB`（约 3 字节/条残留，分配器碎片），**无内存泄漏**。
+- **goleak**（`shutdown_leak_test.go`）：Close 后 **0 goroutine 泄漏**。
+- **stress/**（`TestStress_AllClients`、`TestStress_ConcurrentSafety`）：10K ops × 5 种 client，
+  **`-race` 下通过**，无数据竞争。
+
+### codec 与字段（关键处零分配）
+
+| Benchmark | ns/op | B/op | allocs |
+|---|---|---|---|
+| `Field_IntJSON` | 15.2 | 0 | **0** |
+| `Field_FloatJSON` | 37.0 | 0 | **0** |
+| `KafKaCodec_JSON` | 196 | 384 | 2 |
+| `KafKaCodec_Proto` | 250 | 288 | 3 |
+| `Logger_DeliverTypedFields`（6 字段） | 1542 | 696 | 6 |
+
+**结论**：所有性能声明成立——带 writer 时 ~700K rec/s/核，丢弃路径零分配，多核线性扩展，
+持续负载稳定，无泄漏，无竞争。满足 100k–1M+ QPS 广告行业目标。仓库级数据（微服务基建 + 各 client）
+见根目录 `BENCHMARKS.md`。
+
+## 22. KafKaWriter 批处理守护模式（2026-06-29，Apple M5 10c，Go 1.26）
+
+`BatchMode`（可选，默认**关闭**）让守护 goroutine 攒批，在 `BatchSize`（**默认 1024**，
+`DefaultKafkaBatchSize`，原为 100；压测矩阵显示 1024 是最佳默认：franz-go 需 batch ≥1024 才接
+近峰值，sarama 持平，无额外内存，见 `kafka/STRESS_MATRIX.md`）/ `BatchFlushInterval`（50ms）/
+关机时通过 `producer.SendBatch` 一次性 flush，而不是每条记录一次 `producer.Send`。**Write 热路径
+不变**（攒批完全在守护 goroutine 内）；`Producer`/`SyncProducer` 接口和逐条默认路径均不动。
+
+### 管线基准——完整路径（Write → channel → 守护 → mock producer），`block` 策略
+
+| Benchmark | ns/op | B/op | allocs |
+|---|---|---|---|
+| `KafKaWriter_Pipeline_PerRecord` | 624 | 1033 | 2 |
+| `KafKaWriter_Pipeline_Batch`（size 200, 10ms） | 696 | 1152 | 2 |
+
+**如实解读：对 no-op mock，批处理慢约 11%。** 当 `producer.Send` 几乎瞬时，没有真实的每次调用
+成本可摊销，攒批的开销（slice 累积 + flush）是纯额外开销。
+
+### 真实 broker 吞吐（apache/kafka 3.8.0 KRaft，默认 10ms linger，`block` 策略）
+
+| 模式 | rec/s（3 次） | batch / per-record |
+|---|---|---|
+| per-record（默认） | 35,154 / 36,072 / 35,465 | — |
+| batch（size 200, 10ms） | 35,607 / 35,291 / 35,554 | **0.98–1.01×（噪声范围内，≈持平）** |
+
+**定论：在 kafka 后端默认 10ms linger 下，log4go 批处理模式吞吐无可见收益**（跨次 0.98–1.01×，
+≈ 持平，本机单 broker 均 ~35K rec/s）。后端的 linger 会把逐条 `Send` 和 `SendBatch` 合并成同样的
+broker 级批次，因此守护调 Send 还是 SendBatch 对 broker 不可见。**这就是 `BatchMode` 默认关闭的
+原因**：在默认 linger 下是纯额外开销（mock −11%；broker ≈ 持平），换不来吞吐。
+
+### BatchMode 何时才划算——关键在每次调用成本
+
+异步生产者的 `Send` 是近乎免费的入队，`SendBatch` 没有每次调用成本可摊销，因此持平。但当
+**生产者调用本身有成本时（同步生产者、broker 过载导致守护积压、或单次调用做重活），攒批收益极大**。
+由 `Test_KafKaWriter_BatchFasterWhenSendCostly` 证明：mock 对每次*调用*（每次 Send/SendBatch，非
+每条记录）收费 50µs：
+
+| 模式（5000 条，50µs/调用） | rec/s | 提速 |
+|---|---|---|
+| per-record | 13,754 | — |
+| batch（size 100） | 266,535 | **19.4×** |
+
+所以 BatchMode 是正确且有价值的，它摊销每次调用成本，只是对 log4go 默认的免费入队异步生产者
+没什么可摊销的。当守护的生产者调用（或可能）成为瓶颈时开启它。
+
+### `ProducerLinger` 旋钮（在 `KafKaWriterOptions` 上暴露）
+
+`ProducerLinger` 调的是 kafka **后端**的批次 flush 延迟（延迟/吞吐旋钮）：`0` = 后端默认（10ms）；
+`>0` = 显式 linger；`kafka.LingerOff` = 关闭后端时间攒批。它**不会**让 log4go 的 `BatchMode` 更快，
+后端对两种模式都按条数攒批（`Flush.Messages` = `MaxBufferedRecords`），所以 Send 与 SendBatch 仍 ≈ 持平。
+
+**`LingerOff` 死锁坑（sarama 后端，已修复）**：只设 `Flush.Frequency=0` 而 `Flush.Messages` 保持默认
+1000 时，最后的不满一批永远到不了条数阈值，又没有定时器 flush → 在 `OverflowPolicy:"block"` 下
+writer 死锁（实测卡在 offset 9257/10000）。log4go 做了防护：`ProducerLinger=kafka.LingerOff` **同时**
+强制 `MaxBufferedRecords=1`（`Flush.Messages=1`），后端收到即 flush，真正"不攒批"，安全。所以
+`LingerOff` = 逐条 flush（最低延迟、最高逐条开销），不是批处理吞吐杠杆。
+
+数据丢失：硬崩溃时未 flush 的那批会丢；`Stop()` 在优雅关机时 flush（由
+`Test_KafKaWriter_BatchMode_ShutdownFlush` 验证）。保持 `BatchFlushInterval` 较小。监控：
+`WriterMetrics.Batches`（flush 次数）和 `BatchMax`（最大单批），逐条模式下为 0。
+
+**kafka→log4go 监控桥**：`WriterMetrics` 还暴露底层 `kafka.Producer` 的实时缓冲深度：
+`InFlight`（linger 积压条数）、`BufferedBytes`（缓冲内存）、`Backend`（"sarama"/"franz-go"），
+这些是 `Queued`（channel 深度）单独看不到的。完整深度（UTC `Timestamp`、`Linger`、
+`MaxBufferedRecs`、各字节计数器）调 `KafKaWriter.ProducerSnapshot()` → `kafka.ProducerSnapshot`
+（nil 安全；对生产者做 `kafka.SnapshotHistory` 类型断言可取趋势样本）。由
+`Test_KafKaWriter_ProducerMetricsBridge` 验证。
+
+随附的健壮性修复：`k.run` 现在在守护 goroutine 启动*之前*于 `Start()` 中设置，使 `Stop()` 在
+`Start()` 返回后立即可用（之前若守护尚未调度，Stop 会 no-op 并丢弃未 flush 的批次，这是 shutdown
+测试在 `-cover` 下暴露的竞争）。
+
+## 23. 溢出策略：drop vs spill——性能与数据影响（2026-06-29）
+
+### 热路径（channel 未满，99%+ 时间）
+
+**drop 与 spill 完全一致，零差异。** 两者都做一次非阻塞 channel send。策略只在 channel 溢出时才有区别。
+
+### 溢出行为（channel 满）
+
+| | drop | spill（ring） | spill（file） |
+|---|---|---|---|
+| Write 成本 | O(1)：计数器自增 | O(1)：mutex + slice append | O(disk)：文件写 |
+| 数据 | **永久丢失** | 存入内存环 | **写入磁盘** |
+| 进程崩溃 | 丢失 | 丢失 | **存活**（下次 Start 恢复） |
+| 恢复成本 | 无 | 守护从环重投 | 守护从文件重投 |
+| 内存 | 零 | 环容量 × 记录大小 | 零（在盘上） |
+| 磁盘 | 零 | 零 | 受 SpillMaxBytes 限制 |
+
+### 100K QPS 下真实数据丢失（BufferSize=1024）
+
+| 事件 | 时长 | 积压 | drop 丢 | spill(ring 1024) 丢 | spill(file) 丢 |
+|---|---|---|---|---|---|
+| GC 暂停 | 10ms | 1,000 | 0 | 0 | 0 |
+| broker 变慢 | 100ms | 10,000 | ~9,000 | ~8,000 | **0** |
+| broker 宕机 | 10s | 1,000,000 | ~999,000 | ~998,000 | 受 SpillMaxBytes 限制 |
+| 进程崩溃 | — | — | 全部 | 全部（内存） | **磁盘记录存活** |
+
+### 配置常量（用这些代替魔法字符串）
+
+```go
+// 溢出策略
+OverflowPolicyDrop    // "drop"  — 快、丢数据。默认。广告/RTB 日志。
+OverflowPolicyBlock   // "block" — 背压，可能拖慢热路径。不适合 RTB。
+OverflowPolicySpill   // "spill" — 持久化恢复。金钱/关键数据。
+
+// spill 类型（policy == spill 时）
+SpillTypeRing         // "ring"  — 内存、快、崩溃丢失。默认。
+SpillTypeFile         // "file"  — 落盘、抗崩溃。
+SpillTypeChain        // "chain" — ring→file→drop。兼顾两者。
+```
+
+### 按档位推荐配置
+
+```go
+// RTB 日志：drop（最快，可丢）
+log4go.KafKaWriterOptions{
+    OverflowPolicy: log4go.OverflowPolicyDrop,
+    BufferSize:     1024,
+    Acks:           kafka.AcksLeader,
+}
+
+// 转化/花费：spill(file) + acks=all（持久）
+log4go.KafKaWriterOptions{
+    OverflowPolicy: log4go.OverflowPolicySpill,
+    SpillType:      log4go.SpillTypeFile,
+    SpillDir:       "/var/log/kafka-spill",
+    SpillMaxBytes:  256 << 20, // 256MB
+    BufferSize:     8192,
+    Acks:           kafka.AcksAll,
+}
+```
+
+## 24. 广告事件策略、漏斗与容量估算（2026-06-30）
+
+广告事件类型在量、价值、丢得起程度上各不相同。log4go + kafka 栈支持按 writer 配置，让每条流
+得到合适的持久化/吞吐权衡。本节把事件价值与行业漏斗比例对应起来，在三个规模上估算
+payload / 磁盘 / 内存 / 带宽 / CPU，最后给出具体配置与合规说明。
+
+### 事件价值矩阵——各档位为何如此
+
+| 事件类型 | 量级 | 单条价值 | 丢得起程度 | 计费影响 | 档位 |
+|---|---|---|---|---|---|
+| RTB 竞价 RR（请求/响应） | 极大（~1M QPS） | 仅调试 | 高 | 无 | 档位 1：最大吞吐 |
+| 曝光 | 很高（~100K-500K/s） | 低（CPM 聚合） | 中（MRC 允许 1-5% 丢失） | 单条极小 | 档位 1：最大吞吐 |
+| 点击 | 中（~1K-10K/s） | 中（CPC 计费 + 反欺诈） | 低 | 每次点击收入 | 档位 2：均衡 |
+| 转化 | 低（~10-100/s） | 高（CPA 收入归因） | 很低 | 直接收入损失 | 档位 3：持久 |
+| 预算/花费更新 | 很低（~1-10/s） | 关键（超支风险） | 无 | 直接金钱损失 | 档位 3+：最大持久 |
+
+### 来源
+
+- [AWS RTB Fabric](https://aws.amazon.com/blogs/industries/next-generation-programmatic-advertising-how-aws-rtb-fabric-redefines-the-game/): 90% 不出价；OpenRTB 竞价请求均值 ~3KB
+- [Digital Applied](https://www.digitalapplied.com/blog/programmatic-advertising-statistics-2026-data-points): DSP 胜出率 6.3%（公开竞价），14.7%（PMP）
+- [SmartInsights 2024](https://www.smartinsights.com/internet-advertising/internet-advertising-analytics/display-advertising-clickthrough-rates/): 展示广告 CTR 0.46%
+- [CXL](https://cxl.com/guides/click-through-rate/benchmarks/): 展示广告 CTR 0.57%
+- [Enstacked](https://enstacked.com/average-conversion-rate-for-google-ads/): 展示广告点击到留资 CVR 0.89%
+- [Google Ad Manager](https://support.google.com/admanager/answer/1733124): 压缩后 25-35 字节/事件
+- [AdMonsters LLD](https://www.admonsters.com/use-cases-log-level-data/): LLD 0.5-2KB Avro，2-5KB JSON
+- [IAB OpenRTB 2.6](https://iabtechlab.com/wp-content/uploads/2022/04/OpenRTB-2-6_FINAL.pdf): 规范
+
+### 行业漏斗——已核实的转化率
+
+| 步骤 | 从 → 到 | 区间 | 均值 | 占顶层 | 来源 |
+|---|---|---|---|---|---|
+| 竞价 | 请求 → 响应 | 5-40% | **15%** | 15% | AWS: 90% 不出价 |
+| 胜出 | 响应 → 胜出 | 1-20% | **6.3%** | 0.95% | Digital Applied |
+| 投递 | 胜出 → 曝光 | 85-99% | **93%** | 0.88% | 行业共识 |
+| CTR | 曝光 → 点击 | 0.08-1.5% | **0.46%** | 0.0041% | SmartInsights/CXL |
+| CVR | 点击 → 转化 | 0.5-5% | **1.5%** | 0.000061% | Enstacked |
+| 回传 | 转化 → 回传 | 100-300% | **200%** | 0.00012% | 行业共识 |
+
+### 各阶段 payload 大小
+
+| 阶段 | Payload | 典型字段 | 来源 |
+|---|---|---|---|
+| RTB RR 日志 | **500B** | req_id, SSP, auction_id, bid_price, creative_id, user_hash, device, ts（15-20 字段） | 由 3KB OpenRTB 压缩（AWS） |
+| 竞价响应日志 | **300B** | req_id, resp_price, creative, deal_id, ts（10-12 字段） | RR 的子集 |
+| 胜出通知 | **150B** | req_id, clearing_price, currency, ts（5-7 字段） | 无 |
+| 曝光 | **400B** | imp_id, creative, placement, user_hash, price, geo, device, ts（15 字段） | GAM: 200-500B 未压缩 |
+| 点击 | **750B** | click_id, imp_id, user_hash, landing_url, referrer, device, ts（20 字段） | LLD: 0.5-2KB Avro |
+| 转化 | **1,500B** | conv_id, click_id, imp_id, revenue, currency, product, attribution, PII, ts（25 字段） | LLD: 2-5KB JSON |
+| 回传 | **750B** | postback_id, conv_id, partner, event_type, SKAN, ts（15 字段） | 无 |
+
+### 三个规模估算：100K / 500K / 1M 竞价 QPS
+
+漏斗比例恒定，绝对量随竞价 QPS 线性增长。
+
+#### 100K 竞价 QPS（中小 DSP）
+
+| 阶段 | 转化 | QPS | Payload | MB/s | GB/天 | GB/天 RF3+LZ4 | 内存 | TTL | 磁盘 |
+|---|---|---|---|---|---|---|---|---|---|
+| RTB RR | — | 100K | 500B | **47.7** | 4,111 | 6,166 | 3.9MB | 1天 | **6.2TB** |
+| 竞价响应 | 15% | 15K | 300B | 4.3 | 370 | 555 | 2.4MB | 1天 | 0.6TB |
+| 胜出 | 6.3% | 945 | 150B | 0.13 | 11.6 | 17.4 | 1.7MB | 7天 | 0.12TB |
+| 曝光 | 93% | 879 | 400B | 0.34 | 29.1 | 43.6 | 4.9MB | 30天 | 1.3TB |
+| 点击 | 0.46% | 4.0 | 750B | 0.003 | 0.25 | 0.38 | 4.6MB | 90天 | 34GB |
+| 转化 | 1.5% | 0.06 | 1.5KB | 0.0001 | 0.008 | 0.012 | 9.2MB | 365天 | 4.4GB |
+| 回传 | 200% | 0.12 | 750B | 0.0001 | 0.008 | 0.012 | 2.3MB | 365天 | 4.4GB |
+| **合计** | | | | **52.5** | **4,522** | **6,784** | **29MB** | | **~8.3TB** |
+
+#### 500K 竞价 QPS（中大 DSP）
+
+| 阶段 | 转化 | QPS | Payload | MB/s | GB/天 | GB/天 RF3+LZ4 | 内存 | TTL | 磁盘 |
+|---|---|---|---|---|---|---|---|---|---|
+| RTB RR | — | 500K | 500B | **238.4** | 20,553 | 30,830 | 3.9MB | 1天 | **30.8TB** |
+| 竞价响应 | 15% | 75K | 300B | 21.4 | 1,849 | 2,774 | 2.4MB | 1天 | 2.8TB |
+| 胜出 | 6.3% | 4,725 | 150B | 0.67 | 57.9 | 86.9 | 1.7MB | 7天 | 0.6TB |
+| 曝光 | 93% | 4,394 | 400B | 1.68 | 144.8 | 217.2 | 4.9MB | 30天 | 6.5TB |
+| 点击 | 0.46% | 20.2 | 750B | 0.014 | 1.24 | 1.86 | 4.6MB | 90天 | 167GB |
+| 转化 | 1.5% | 0.30 | 1.5KB | 0.0004 | 0.039 | 0.059 | 9.2MB | 365天 | 22GB |
+| 回传 | 200% | 0.60 | 750B | 0.0004 | 0.039 | 0.059 | 2.3MB | 365天 | 22GB |
+| **合计** | | | | **262.2** | **22,637** | **33,911** | **29MB** | | **~40.9TB** |
+
+#### 1000K（1M）竞价 QPS（大型 DSP）
+
+| 阶段 | 转化 | QPS | Payload | MB/s | GB/天 | GB/天 RF3+LZ4 | 内存 | TTL | 磁盘 |
+|---|---|---|---|---|---|---|---|---|---|
+| RTB RR | — | 1M | 500B | **476.8** | 41,106 | 61,660 | 3.9MB | 1天 | **61.7TB** |
+| 竞价响应 | 15% | 150K | 300B | 42.7 | 3,698 | 5,548 | 2.4MB | 1天 | 5.5TB |
+| 胜出 | 6.3% | 9,450 | 150B | 1.34 | 115.8 | 173.7 | 1.7MB | 7天 | 1.2TB |
+| 曝光 | 93% | 8,789 | 400B | 3.35 | 289.6 | 434.4 | 4.9MB | 30天 | 13.0TB |
+| 点击 | 0.46% | 40.4 | 750B | 0.029 | 2.47 | 3.71 | 4.6MB | 90天 | 334GB |
+| 转化 | 1.5% | 0.61 | 1.5KB | 0.0009 | 0.078 | 0.117 | 9.2MB | 365天 | 43GB |
+| 回传 | 200% | 1.21 | 750B | 0.0009 | 0.078 | 0.117 | 2.3MB | 365天 | 43GB |
+| **合计** | | | | **524.3** | **45,270** | **67,621** | **29MB** | | **~81.8TB** |
+
+### 并排对比
+
+| 指标 | 100K QPS | 500K QPS | 1M QPS | 规模 |
+|---|---|---|---|---|
+| RTB RR MB/s | 47.7 | 238.4 | 476.8 | 1× / 5× / 10× |
+| 曝光 QPS | 879 | 4,394 | 8,789 | |
+| 点击 QPS | 4.0 | 20.2 | 40.4 | |
+| 转化 QPS | 0.06 | 0.30 | 0.61 | |
+| 总 GB/天（RF3+LZ4） | 6,784 | 33,911 | 67,621 | |
+| 总磁盘（含 TTL） | 8.3TB | 40.9TB | 81.8TB | |
+| 总 log4go 内存 | 29MB | 29MB | 29MB | **恒定** |
+| 所需 Kafka broker | 3-5 | 6-12 | 12-20 | 随 RTB 量增长 |
+
+**内存在所有规模下恒定（29MB）**，buffer/spill 大小由配置固定，不随 QPS 变。只有 Kafka 磁盘和
+broker 数随竞价 QPS 增长。
+
+### 各阶段配置（所有规模通用）
+
+| 阶段 | Batch | Size | Buffer | 溢出 | Spill | Acks | 内存 |
+|---|---|---|---|---|---|---|---|
+| RTB RR | true | 2048 | 8192 | drop | — | leader | 3.9MB |
+| 竞价响应 | true | 1024 | 8192 | drop | — | leader | 2.4MB |
+| 胜出 | true | 128 | 4096 | spill | 8192 | leader | 1.7MB |
+| 曝光 | true | 128 | 4096 | spill | 8192 | all | 4.9MB |
+| 点击 | true | 8 | 2048 | spill | 4096 | all | 4.6MB |
+| 转化 | false | — | 4096 | spill | 2048 | all | 9.2MB |
+| 回传 | false | — | 2048 | spill | 1024 | all | 2.3MB |
+
+```go
+// 档位 1（RTB/曝光）：drop + leader，永不阻塞竞价循环
+log4go.KafKaWriterOptions{
+    ProducerTopic:  "impressions",
+    OverflowPolicy: log4go.OverflowPolicyDrop,
+    BufferSize:     4096,
+    BatchMode:      true,
+    BatchSize:      128,
+    Acks:           kafka.AcksLeader, // 默认；接受偶发 leader 故障丢数据
+}
+
+// 档位 3（转化/预算）：spill(chain) + acks=all，持久化的金钱数据
+log4go.KafKaWriterOptions{
+    ProducerTopic:  "conversions",
+    OverflowPolicy: log4go.OverflowPolicySpill,
+    SpillType:      log4go.SpillTypeChain, // ring -> file -> drop
+    SpillSize:      2048,
+    SpillDir:       "/mnt/spill",          // 容器内必须是挂载卷
+    SpillMaxBytes:  128 << 20,             // 128MB
+    BufferSize:     4096,
+    BatchMode:      false,                 // 量小；逐条发送
+    Acks:           kafka.AcksAll,         // 等待所有 ISR 副本
+}
+```
+
+### 各档位设计理由
+
+- **档位 1（drop + leader）**：最快路径，永不阻塞竞价循环。广告服务端日志本身按 MRC 就有
+  ~1-5% 丢失，丢一条曝光日志不会让 CPM 聚合失真。Kafka RF=2，min.insync=1。
+- **档位 2（点击，大 buffer + 小 batch）**：点击量比曝光低 10-100×，更大的 buffer 能在 broker
+  卡顿时多扛一会儿不丢；更小的 batch 降低反欺诈管线的延迟。Kafka RF=3，min.insync=1（点击丢失
+  可通过与广告服务端对账发现）。
+- **档位 3（spill + acks=all）**：每条转化在 ack 前复制到 RF=3。spill(chain) 在 broker 宕机期间
+  缓冲记录不丢；小批量/不攒批让归因延迟更低。Kafka RF=3，min.insync=2，预算状态用
+  cleanup.policy=compact。
+
+### BatchMode 阈值取决于 acks
+
+acks=all 的每次调用往返（~2ms）比 acks=leader（~0.3ms）慢约 7×。因此 acks=all 下攒批在低得多的
+QPS 就开始划算：
+
+| acks | 每次调用 | BatchMode 在此之上划算 | 例子 |
+|---|---|---|---|
+| leader | ~0.3ms | ~5K/s | 曝光、RTB |
+| all | ~2ms | ~50/s | 点击，乃至低量 |
+
+### SpillSize 公式
+
+SpillSize = QPS × 最大停顿秒数。QPS 越低，同样的环能扛更长的停顿。
+
+| 阶段 | QPS | 目标停顿 | SpillSize | 环内存 |
+|---|---|---|---|---|
+| 曝光 | 25K | 500ms | 16384 | 6.5MB |
+| 点击 | 200 | 30s | 8192 | 6.1MB |
+| 转化 | 6 | 10 分钟 | 4096 | 6.1MB |
+
+### 容器环境——持久化策略
+
+容器（Docker/K8s）里，本地文件 spill 除非在挂载卷上，否则不可靠。正确的持久化模型：
+
+| 层 | 保护什么 | 容器内安全？ |
+|---|---|---|
+| kafka acks=all + RF=3 | broker ack 后的记录 | ✅ 始终安全 |
+| log4go spill(ring) | broker 宕机期间的记录（进程存活） | ✅ 内存 |
+| log4go spill(file) 在 overlay FS | broker 宕机期间的记录（进程存活） | ⚠️ 容器重建即丢 |
+| log4go spill(file) 在挂载 emptyDir | broker 宕机 + 容器重启期间的记录 | ✅ 仅同 pod |
+| log4go spill(file) 在挂载 PV（EBS/NFS） | 记录在 pod 重调度后存活 | ✅ 完全持久 |
+
+**建议**：对金钱/关键数据，以 kafka acks=all + RF=3 作为主要持久化保证。用 spill(ring) 做
+broker 宕机时的临时缓冲。只有在 broker 预计长时间不可达时，才在正确挂载的 PV 上用 spill(file)。
+
+### Kafka 集群侧配置（非 kit4go，但策略需要）
+
+| 档位 | RF | min.insync | compaction | 说明 |
+|---|---|---|---|---|
+| 档位 1（曝光） | 2 | 1 | delete（TTL 3-7天） | 高吞吐、短留存 |
+| 档位 2（点击） | 3 | 1 | delete（TTL 30天） | 反欺诈窗口 |
+| 档位 3（转化） | 3 | 2 | delete（TTL 90天+） | 审计/合规留存 |
+| 预算状态 | 3 | 2 | compact | 只留最新状态（不留历史） |
+
+### 磁盘：1 天 vs 全留存（RF=3，LZ4 压缩）
+
+**1 天量（所有阶段、所有规模）**
+
+| 阶段 | 100K QPS | 500K QPS | 1M QPS | TTL |
+|---|---|---|---|---|
+| RTB RR | 6,166 GB | 30,830 GB | 61,660 GB | 1天 |
+| 竞价响应 | 555 GB | 2,774 GB | 5,548 GB | 1天 |
+| 胜出 | 2.5 GB | 12.4 GB | 24.8 GB | 1天 |
+| 曝光 | 1.5 GB | 7.2 GB | 14.5 GB | 1天 |
+| 点击 | 0.004 GB | 0.021 GB | 0.041 GB | 1天 |
+| 转化 | 0.00003 GB | 0.00016 GB | 0.00032 GB | 1天 |
+| 回传 | 0.00003 GB | 0.00016 GB | 0.00032 GB | 1天 |
+| **1 天合计** | **6,725 GB** | **33,624 GB** | **67,248 GB** | |
+| | **6.6 TB** | **32.8 TB** | **65.7 TB** | |
+
+**全留存量（各阶段按自身 TTL）**
+
+| 阶段 | TTL | 100K QPS | 500K QPS | 1M QPS |
+|---|---|---|---|---|
+| RTB RR | 1天 | 6.2 TB | 30.8 TB | 61.7 TB |
+| 竞价响应 | 1天 | 0.6 TB | 2.8 TB | 5.5 TB |
+| 胜出 | 7天 | 17.4 GB × 7 = 0.12 TB | 86.9 GB × 7 = 0.6 TB | 173.7 GB × 7 = 1.2 TB |
+| 曝光 | 30天 | 43.6 GB × 30 = 1.3 TB | 217.2 GB × 30 = 6.5 TB | 434.4 GB × 30 = 13.0 TB |
+| 点击 | 90天 | 0.38 GB × 90 = 34 GB | 1.86 GB × 90 = 167 GB | 3.71 GB × 90 = 334 GB |
+| 转化 | 365天 | 0.012 GB × 365 = 4.4 GB | 0.059 GB × 365 = 22 GB | 0.117 GB × 365 = 43 GB |
+| 回传 | 365天 | 0.012 GB × 365 = 4.4 GB | 0.059 GB × 365 = 22 GB | 0.117 GB × 365 = 43 GB |
+| **总磁盘** | | **8.3 TB** | **40.9 TB** | **81.8 TB** |
+
+**要点**：RTB RR 日志在任何规模都占磁盘 >90%。压缩 RTB RR 或把它的 TTL 从 1 天降到 12 小时，
+总磁盘近乎减半。所有下游漏斗阶段（胜出到回传）加起来即使在 1M QPS 也 <3%。
+
+### 网络带宽（生产者 → broker，未压缩）
+
+| 阶段 | Payload | 100K QPS | 500K QPS | 1M QPS |
+|---|---|---|---|---|
+| RTB RR | 500B | 47.7 MB/s（381 Mbps） | 238 MB/s（1,905 Mbps） | 477 MB/s（3,810 Mbps） |
+| 竞价响应 | 300B | 4.3 MB/s（34 Mbps） | 21.4 MB/s（172 Mbps） | 42.7 MB/s（342 Mbps） |
+| 胜出 | 150B | 0.13 MB/s（1.1 Mbps） | 0.67 MB/s（5.4 Mbps） | 1.34 MB/s（10.7 Mbps） |
+| 曝光 | 400B | 0.34 MB/s（2.7 Mbps） | 1.68 MB/s（13.4 Mbps） | 3.35 MB/s（26.8 Mbps） |
+| 点击 | 750B | 0.003 MB/s | 0.014 MB/s | 0.029 MB/s |
+| 转化 | 1.5KB | 0.0001 MB/s | 0.0004 MB/s | 0.0009 MB/s |
+| 回传 | 750B | 0.0001 MB/s | 0.0004 MB/s | 0.0009 MB/s |
+| **合计** | | **52.5 MB/s（420 Mbps）** | **262 MB/s（2,100 Mbps）** | **524 MB/s（4,194 Mbps）** |
+
+LZ4（~50%）下线路带宽减半。RF=3 复制：broker 间 × 3。
+
+### CPU 估算（log4go 守护 goroutine）
+
+| 阶段 | QPS | Acks | 每次调用 | 不攒批 CPU | 攒批后 | Batch |
+|---|---|---|---|---|---|---|
+| RTB RR | 500K | leader | ~0.3ms | 15,000% 不可能 | **7%** | 2048 |
+| 竞价响应 | 75K | leader | ~0.3ms | 2,250% 不可能 | **11%** | 1024 |
+| 胜出 | 4.7K | leader | ~0.3ms | 142% 偏紧 | **7%** | 128 |
+| 曝光 | 4.4K | all | ~2ms | 880% 不可能 | **7%** | 128 |
+| 点击 | 20 | all | ~2ms | 4% 可接受 | **1%** | 8 |
+| 转化 | 0.3 | all | ~2ms | 0.06% | 0.06% | off |
+| 回传 | 0.6 | all | ~2ms | 0.12% | 0.12% | off |
+
+### Kafka 分区（生产者侧建议）
+
+| 阶段 | QPS 区间 | 分区 | 理由 |
+|---|---|---|---|
+| RTB RR | 100K-1M | 30-100 | 并行写；按 SSP 或小时分区 |
+| 竞价响应 | 15K-150K | 12-48 | 同 topic 或与 RTB 共用 |
+| 胜出 | 945-9.5K | 6-24 | 按推广计划或 SSP 分区 |
+| 曝光 | 879-8.8K | 6-24 | 按版位或 user_hash 分区 |
+| 点击 | 4-40 | 3-12 | 量小；按推广计划分区 |
+| 转化 | 0.06-0.6 | 3-6 | 极小；按 advertiser_id 分区 |
+| 回传 | 0.12-1.2 | 1-3 | 微量；单分区即可 |
+
+经验：分区 ≈ 峰值 QPS / 1000（每个分区 ~1K QPS 上限）。
+
+### TCP 连接（每个 DSP 实例）
+
+7 个 KafKaWriter 实例 × 各 1 个生产者 = 7 条 bootstrap 连接 + 每个生产者最多 2 条
+分区 leader 连接 = **~7-21 条 TCP 连接**。对现代内核可忽略。
+
+### 各阶段数据丢失风险
+
+| 阶段 | 风险来源 | 缓解 | 残余风险 |
+|---|---|---|---|
+| RTB RR | 溢出即 drop | 无（可丢） | 突发时可丢到 buffer 满 |
+| 胜出 | broker 不可达 | spill(ring 8192) | 4.7K/s 下宕机 >1.7s 即溢出 |
+| 曝光 | broker 不可达 | spill(ring 8192) + acks=all | 宕机 >1.9s 即溢出 |
+| 点击 | broker 不可达 | spill(ring 4096) + acks=all | 宕机 >203s（3.4 分钟）即溢出 |
+| 转化 | broker 不可达 | spill(ring 2048) + acks=all | 宕机 >17 小时即溢出 |
+| 进程崩溃 | 所有阶段 | broker ack 后 acks=all；裸金属用 spill(file) | 内存丢失；挂载 PV 则文件存活 |
+
+### 云成本粗估（AWS，量级估算）
+
+| 项目 | 100K QPS | 500K QPS | 1M QPS |
+|---|---|---|---|
+| Kafka broker（m5.2xl × RF=3） | 3 台（$870/月） | 9 台（$2,600/月） | 18 台（$5,200/月） |
+| EBS 存储（gp3，全留存） | 8.3 TB（$190/月） | 40.9 TB（$940/月） | 81.8 TB（$1,880/月） |
+| S3 冷存档（RTB RR，>1天） | 3 TB（$70/月） | 15 TB（$340/月） | 30 TB（$690/月） |
+| 网络出口 | 含 | 含 | ~$200/月 |
+| **合计（粗估）** | **~$1,130/月** | **~$3,880/月** | **~$7,970/月** |
+
+### 行业合规说明
+
+- MRC（媒体评级委员会）：曝光测量允许广告服务端日志 1-5% 丢失。档位 1（drop + acks=leader）
+  在此容忍范围内。
+- IAB ads.txt/sellers.json：点击级数据完整性对供应链反欺诈重要。档位 2（更大 buffer）减少点击丢失。
+- GDPR/CCPA：转化数据可能含 PII。档位 3（acks=all + RF=3）确保合规审计所需的数据完整性。
+- SOC 2 / ISO 27001：金融事件日志（转化、预算）需要持久、可验证的投递。acks=all + RF=3 + min.insync=2
+  达标。
+
+### 单个 DSP 实例总内存（全部 7 个 writer）
+
+合计 ~29MB，在 1-4GB 容器内游刃有余。任何规模都无内存压力，因为内存恒定——buffer/spill 大小
+由配置固定，不随 QPS 变。
+
+## 25. Buffer 与 BatchSize——关系与默认值（2026-06-29）
+
+### 三层缓冲
+
+```
+Write() → [BufferSize channel] → 守护 → [BatchSize 攒批] → SendBatch → [Linger 后端] → broker
+```
+
+| 层 | 配置 | 默认 | 作用 |
+|---|---|---|---|
+| Buffer（channel） | BufferSize | 1024 | 解耦 Write 与守护，守护短暂卡顿时 Write 不阻塞 |
+| Batch（守护） | BatchSize | 1024 | 摊销生产者调用，攒 N 条后一次 SendBatch |
+| Linger（后端） | ProducerLinger | 10ms | 摊销 broker RPC，后端攒到 10ms 发一次请求 |
+
+Buffer 与 BatchSize 相互独立。Buffer 防止 Write 阻塞；BatchSize 降低每次调用开销。内存：各自
+持有自己的记录（1024 × 200B 约 200KB）。
+
+### 默认配置（广告行业，BatchMode 关闭）
+
+```go
+// 隐式默认，无需任何选项
+log4go.KafKaWriterOptions{
+    // BufferSize:          1024,   // 默认
+    // BatchMode:           false,  // 默认（逐条 Send）
+    // OverflowPolicy:      "drop", // 默认
+    // Acks:                "",     // 默认 = leader
+}
+```
+
+BatchMode 关闭：BufferSize 是唯一的 buffer。1024 条在 100K QPS 下 ≈ 10ms 余量。drop 策略下
+10ms 的守护停顿零丢失；100ms 停顿约丢 9K 条（曝光可接受，转化不可）。
+
+### 何时改默认值
+
+| 场景 | BufferSize | BatchSize | BatchMode | 原因 |
+|---|---|---|---|---|
+| RTB 日志/曝光（默认） | 1024 | 1024 | false | 可丢、最简 |
+| 高吞吐曝光 | 4096 | 1024 | true | BatchMode 减少生产者调用 |
+| 点击（反欺诈敏感） | 4096 | 512 | true | 更大 buffer、更小 batch 降延迟 |
+| 转化（金钱） | 8192 | 256 | true | 最大 buffer 余量、spill(chain) + acks=all |
+| BatchMode 关 + block 策略 | 8192+ | 无 | false | block 需要大 buffer 以免过早背压 |
+
+经验：BufferSize >= BatchSize。Buffer 吸收守护停顿；BatchSize 控制生产者调用频率，两者不共享内存。

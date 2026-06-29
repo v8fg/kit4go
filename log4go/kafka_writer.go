@@ -67,9 +67,12 @@ type KafKaWriterOptions struct {
 	ProducerTimeout time.Duration `json:"producer_timeout" mapstructure:"producer_timeout"`
 	Brokers         []string      `json:"brokers" mapstructure:"brokers"`
 
-	// OverflowPolicy: "drop"(default)|"block"|"spill" — behavior when full.
+	// OverflowPolicy: OverflowPolicyDrop(default)|OverflowPolicyBlock|
+	// OverflowPolicySpill — behavior when the channel is full. See the constants
+	// in kafka_overflow.go for tradeoffs (drop=fast+lossy, spill=durable).
 	OverflowPolicy string `json:"overflow_policy" mapstructure:"overflow_policy"`
-	// SpillType: "ring"(default)|"file" — recovery store when policy == "spill".
+	// SpillType: SpillTypeRing(default)|SpillTypeFile|SpillTypeChain — recovery
+	// store when policy == spill. See constants in kafka_overflow.go.
 	SpillType string `json:"spill_type" mapstructure:"spill_type"`
 	// SpillSize: ring capacity (records) for "ring".
 	SpillSize int `json:"spill_size" mapstructure:"spill_size"`
@@ -77,6 +80,48 @@ type KafKaWriterOptions struct {
 	SpillDir string `json:"spill_dir" mapstructure:"spill_dir"`
 	// SpillMaxBytes: byte cap for "file" spill (<=0 -> 64MB).
 	SpillMaxBytes int64 `json:"spill_max_bytes" mapstructure:"spill_max_bytes"`
+
+	// BatchMode: when true the daemon accumulates records and flushes via
+	// producer.SendBatch (fewer producer calls → lower daemon CPU at high QPS)
+	// instead of one producer.Send per record. Default false (per-record Send,
+	// lowest latency, current behavior). Enable for high-throughput pipelines.
+	// Note: the kafka backend already batches at the broker via ProducerLinger
+	// (default 10ms), so this mainly cuts daemon-side per-call overhead.
+	// DATA-LOSS RISK: records buffered in the un-flushed batch are lost if the
+	// process crashes before Stop() flushes them — keep BatchFlushInterval small.
+	BatchMode bool `json:"batch_mode" mapstructure:"batch_mode"`
+	// BatchSize: max records per batch; flush immediately when reached.
+	// <=0 → DefaultKafkaBatchSize (1024). 1024 is the stress-matrix sweet spot:
+	// near-peak QPS for franz-go (needs batch ≥1024), flat for sarama, no extra
+	// memory (in-flight buffer bounded by the backend MaxBufferedRecords). See
+	// kafka/STRESS_MATRIX.md.
+	BatchSize int `json:"batch_size" mapstructure:"batch_size"`
+	// BatchFlushInterval: max time to hold a partial batch before flushing
+	// (linger); flush when elapsed. <=0 → 50ms. Pairs with BatchSize (whichever
+	// fires first). Worst-case latency for the last record in a partial batch.
+	BatchFlushInterval time.Duration `json:"batch_flush_interval" mapstructure:"batch_flush_interval"`
+
+	// ProducerLinger tunes the kafka BACKEND's batch flush delay — the latency/
+	// throughput knob on the underlying producer. 0 (default) = the kafka package
+	// default (10ms): the backend batches at the broker level, so log4go BatchMode
+	// then adds little (see PERFORMANCE.en.md §22). <0 (e.g. kafka.LingerOff) =
+	// disable backend batching (flush every record): pair with BatchMode=true so
+	// log4go-level batching becomes the ONLY batching layer — this is where
+	// BatchMode actually pays off (amortizes per-record produce cost). >0 =
+	// explicit linger (e.g. 5ms).
+	ProducerLinger time.Duration `json:"producer_linger" mapstructure:"producer_linger"`
+
+	// Acks controls the kafka producer's required acknowledgments. Empty (default)
+	// = leader (unified across both backends). Set "all" for durability (enables
+	// franz-go's idempotent producer; slower under RF>1). See kafka.AcksLeader /
+	// kafka.AcksAll / kafka.AcksNone constants.
+	Acks string `json:"acks" mapstructure:"acks"`
+
+	// ProducerSnapshotHistory enables the underlying kafka.Producer's Snapshot
+	// history ring (retains the last N Snapshot() samples for trend analysis).
+	// 0 (default) = disabled. Set to e.g. 60 for 1 min at 1s scrape cadence.
+	// Access via ProducerSnapshot() + type-assert for kafka.SnapshotHistory.
+	ProducerSnapshotHistory int `json:"producer_snapshot_history" mapstructure:"producer_snapshot_history"`
 
 	MSG KafKaMSGFields `json:"msg"`
 }
@@ -99,13 +144,27 @@ type KafKaWriter struct {
 	onEvent         func(name string, delta int64)
 	producerFactory func() (kafka.Producer, error)
 	drainInterval   time.Duration
-	wg              sync.WaitGroup
-	codecMu         sync.RWMutex
-	codec           KafkaCodec // default KafkaCodecJSON; swap via SetKafkaCodec (rare)
+	// batch-mode tuning (resolved from KafKaWriterOptions in NewKafKaWriter).
+	// batchMode=false (default) → per-record Send; true → accumulate + SendBatch.
+	batchMode          bool
+	batchSize          int
+	batchFlushInterval time.Duration
+	batches            uint64 // atomic: SendBatch call count (0 in per-record mode)
+	batchMax           uint64 // atomic: largest batch size flushed (single writer: the daemon)
+	wg                 sync.WaitGroup
+	codecMu            sync.RWMutex
+	codec              KafkaCodec // default KafkaCodecJSON; swap via SetKafkaCodec (rare)
 
 	run  atomic.Bool // set true once the daemon starts
 	quit chan struct{}
 }
+
+// DefaultKafkaBatchSize is the SendBatch size applied when KafKaWriterOptions.
+// BatchSize is <= 0. 1024 is the stress-matrix sweet spot (kafka/STRESS_MATRIX.md):
+// near-peak QPS for franz-go (which needs batch ≥1024), flat for sarama, and no
+// extra memory (in-flight buffer is bounded by the backend's MaxBufferedRecords,
+// not the SendBatch size).
+const DefaultKafkaBatchSize = 1024
 
 // NewKafKaWriter new kafka writer
 func NewKafKaWriter(options KafKaWriterOptions) *KafKaWriter {
@@ -114,11 +173,20 @@ func NewKafKaWriter(options KafKaWriterOptions) *KafKaWriter {
 		defaultLevel = getLevelDefault(options.Level, defaultLevel, "")
 	}
 	w := &KafKaWriter{
-		options:       options,
-		quit:          make(chan struct{}),
-		level:         defaultLevel,
-		policy:        ParseOverflowPolicy(options.OverflowPolicy),
-		drainInterval: 200 * time.Millisecond,
+		options:            options,
+		quit:               make(chan struct{}),
+		level:              defaultLevel,
+		policy:             ParseOverflowPolicy(options.OverflowPolicy),
+		drainInterval:      200 * time.Millisecond,
+		batchMode:          options.BatchMode,
+		batchSize:          options.BatchSize,
+		batchFlushInterval: options.BatchFlushInterval,
+	}
+	if w.batchSize <= 0 {
+		w.batchSize = DefaultKafkaBatchSize // 1024 — see PERFORMANCE.en.md §22 / kafka STRESS_MATRIX.md
+	}
+	if w.batchFlushInterval <= 0 {
+		w.batchFlushInterval = 50 * time.Millisecond
 	}
 	w.codec = KafkaCodecJSON{} // default codec
 	w.stats.SetAlertEvery(1000, 1000)
@@ -400,6 +468,11 @@ func (k *KafKaWriter) producerNotNil() bool {
 // daemon forwards channel messages to the producer and periodically drains the
 // spiller so recovered records get re-sent. Success/error accounting is via the
 // kafka.Producer OnEvent hook (installed at daemon start, below).
+//
+// In batch mode (KafKaWriterOptions.BatchMode) it accumulates records into a
+// reusable slice and flushes via producer.SendBatch on BatchSize /
+// BatchFlushInterval / shutdown — cutting daemon-side per-call overhead at high
+// QPS. Per-record mode (default) Sends each immediately (lowest latency).
 func (k *KafKaWriter) daemon() {
 	k.run.Store(true)
 
@@ -422,21 +495,63 @@ func (k *KafKaWriter) daemon() {
 	ticker := time.NewTicker(k.drainInterval)
 	defer ticker.Stop()
 
+	// Batch mode state. flushC is nil unless batch mode → its select case never
+	// fires. flush captures `batch` by reference; batch[:0] reuses the backing
+	// array (the backend copies records out of SendBatch before it returns, so
+	// reuse is safe — no aliasing of Value []bytes across flushes).
+	var batch []kafka.Message
+	var flushC <-chan time.Time
+	flush := func() {}
+	if k.batchMode {
+		batch = make([]kafka.Message, 0, k.batchSize)
+		ft := time.NewTicker(k.batchFlushInterval)
+		flushC = ft.C
+		defer ft.Stop()
+		flush = func() {
+			if len(batch) == 0 {
+				return
+			}
+			if k.producerNotNil() {
+				_ = k.producer.SendBatch(context.Background(), batch)
+			}
+			n := uint64(len(batch))
+			atomic.AddUint64(&k.sent, n)
+			atomic.AddUint64(&k.batches, 1)
+			if n > atomic.LoadUint64(&k.batchMax) { // daemon is the sole writer: Load/Store is safe
+				atomic.StoreUint64(&k.batchMax, n)
+			}
+			if k.onEvent != nil {
+				k.onEvent("sent", int64(n))
+			}
+			batch = batch[:0]
+		}
+	}
+
 	for {
 		select {
 		case mes, ok := <-k.messages:
 			if !ok {
+				flush() // flush any buffered batch before spill recovery on shutdown
 				k.drainSpillToProducer()
 				k.quit <- struct{}{}
 				return
 			}
-			if k.producerNotNil() {
-				_ = k.producer.Send(context.Background(), mes)
+			if k.batchMode {
+				batch = append(batch, mes)
+				if len(batch) >= k.batchSize {
+					flush()
+				}
+			} else {
+				if k.producerNotNil() {
+					_ = k.producer.Send(context.Background(), mes)
+				}
+				atomic.AddUint64(&k.sent, 1)
+				if k.onEvent != nil {
+					k.onEvent("sent", 1)
+				}
 			}
-			atomic.AddUint64(&k.sent, 1)
-			if k.onEvent != nil {
-				k.onEvent("sent", 1)
-			}
+		case <-flushC:
+			flush()
 		case <-ticker.C:
 			k.drainSpill()
 		}
@@ -453,6 +568,36 @@ func (k *KafKaWriter) drainSpillToProducer() {
 	}
 }
 
+// kafkaProducerOpts builds the kafka.Option list for the underlying producer from
+// KafKaWriterOptions. Extracted from Start so the option wiring (notably
+// ProducerLinger) is unit-testable without a broker. ProducerLinger is forwarded
+// only when the caller set it (!=0); a bare 0 is left to the kafka package
+// default (10ms), and a negative value (kafka.LingerOff) disables backend
+// batching.
+func (k *KafKaWriter) kafkaProducerOpts() []kafka.Option {
+	opts := []kafka.Option{
+		kafka.WithBrokers(k.options.Brokers...),
+		kafka.WithTopic(k.options.ProducerTopic),
+		kafka.WithReturnSuccesses(true),
+	}
+	if k.options.SpecifyVersion && k.options.VersionStr != "" {
+		opts = append(opts, kafka.WithVersion(k.options.VersionStr))
+	}
+	if k.options.ProducerLinger != 0 {
+		opts = append(opts, kafka.WithProducerLinger(k.options.ProducerLinger))
+		if k.options.ProducerLinger == kafka.LingerOff {
+			opts = append(opts, kafka.WithMaxBufferedRecords(1))
+		}
+	}
+	if k.options.ProducerSnapshotHistory > 0 {
+		opts = append(opts, kafka.WithSnapshotHistory(k.options.ProducerSnapshotHistory))
+	}
+	if k.options.Acks != "" {
+		opts = append(opts, kafka.WithAcks(k.options.Acks))
+	}
+	return opts
+}
+
 // Start start the kafka writer
 func (k *KafKaWriter) Start() (err error) {
 	log.Printf("[log4go] kafka writer starting (policy=%s)", k.policy)
@@ -462,15 +607,7 @@ func (k *KafKaWriter) Start() (err error) {
 	if k.producerFactory != nil {
 		k.producer, err = k.producerFactory()
 	} else {
-		opts := []kafka.Option{
-			kafka.WithBrokers(k.options.Brokers...),
-			kafka.WithTopic(k.options.ProducerTopic),
-			kafka.WithReturnSuccesses(true),
-		}
-		if k.options.SpecifyVersion && k.options.VersionStr != "" {
-			opts = append(opts, kafka.WithVersion(k.options.VersionStr))
-		}
-		k.producer, err = kafka.NewProducer(opts...)
+		k.producer, err = kafka.NewProducer(k.kafkaProducerOpts()...)
 	}
 	if err != nil {
 		log.Printf("[log4go] kafka.NewProducer err, message=%s", err.Error())
@@ -486,14 +623,14 @@ func (k *KafKaWriter) Start() (err error) {
 	// init the recovery store for spill policy.
 	if k.policy == OverflowSpill {
 		switch k.options.SpillType {
-		case "file":
+		case SpillTypeFile:
 			k.spiller, err = NewFileSpiller[kafka.Message](k.options.SpillDir, k.options.SpillMaxBytes, ProducerMsgCodec)
 			if err != nil {
 				return err
 			}
-		case "ring":
+		case SpillTypeRing:
 			k.spiller = NewRingSpiller[kafka.Message](k.options.SpillSize)
-		default: // "" or "chain": ring (hot) -> file (cold, persistent)
+		default: // SpillTypeChain or "": ring (hot) -> file (cold, persistent)
 			ring := NewRingSpiller[kafka.Message](k.options.SpillSize)
 			if k.options.SpillDir != "" {
 				if file, ferr := NewFileSpiller[kafka.Message](k.options.SpillDir, k.options.SpillMaxBytes, ProducerMsgCodec); ferr == nil {
@@ -520,8 +657,29 @@ func (k *KafKaWriter) Start() (err error) {
 		}
 	}
 
+	// Mark running BEFORE launching the goroutine so Stop() works immediately
+	// after Start returns — otherwise a Stop issued before the daemon schedules
+	// would no-op (k.run still false) and drop the un-flushed batch (a race the
+	// shutdown-flush test exercises under -cover instrumentation).
+	k.run.Store(true)
 	go k.daemon()
-	log.Printf("[log4go] kafka writer started (buffer=%d, spill=%v)", size, k.spiller != nil)
+	linger := "10ms (default)"
+	if k.options.ProducerLinger == kafka.LingerOff {
+		linger = "off"
+	} else if k.options.ProducerLinger > 0 {
+		linger = k.options.ProducerLinger.String()
+	}
+	acks := k.options.Acks
+	if acks == "" {
+		acks = kafka.AcksLeader + "(default)"
+	}
+	backend := "sarama(default)"
+	if k.producerNotNil() {
+		backend = k.producer.Backend()
+	}
+	log.Printf("[log4go] kafka writer started (backend=%s, buffer=%d, spill=%v, batchMode=%v batchSize=%d "+
+		"producerLinger=%s acks=%s) — for durability set Acks=kafka.AcksAll",
+		backend, size, k.spiller != nil, k.batchMode, k.batchSize, linger, acks)
 	return err
 }
 
@@ -556,6 +714,16 @@ type WriterMetrics struct {
 	Spilled  uint64 // moved to the spill store (spill policy)
 	Queued   int    // records currently buffered in the channel
 	SpillLen int    // records currently held in the spill store
+	Batches  uint64 // SendBatch flush count (0 in per-record mode)
+	BatchMax int    // largest batch size flushed (0 in per-record mode)
+	// Producer-derived (bridged from the underlying kafka.Producer, nil-safe =
+	// zero when no producer). These surface the backend's real-time buffer
+	// depth — the linger backlog + batch memory — which Queued (channel depth)
+	// alone does NOT show. For full depth (Timestamp/Linger/MaxBufferedRecs/
+	// Bytes counters/History) use ProducerSnapshot().
+	InFlight      uint64 // producer in-flight records (Enqueued−Success−Failed) — linger backlog depth
+	BufferedBytes uint64 // producer buffer memory (BytesEnqueued−Bytes−BytesFailed)
+	Backend       string // underlying client ("sarama"/"franz-go"); "" if no producer
 }
 
 // Metrics returns a snapshot of operational counters for monitoring.
@@ -568,14 +736,37 @@ func (k *KafKaWriter) Metrics() WriterMetrics {
 	if k.spiller != nil {
 		spillLen = k.spiller.Len()
 	}
-	return WriterMetrics{
+	m := WriterMetrics{
 		Sent:     atomic.LoadUint64(&k.sent),
 		Errored:  atomic.LoadUint64(&k.errored),
 		Dropped:  k.stats.Dropped(),
 		Spilled:  k.stats.Spilled(),
 		Queued:   queued,
 		SpillLen: spillLen,
+		Batches:  atomic.LoadUint64(&k.batches),
+		BatchMax: int(atomic.LoadUint64(&k.batchMax)),
 	}
+	if k.producerNotNil() {
+		pm := k.producer.Metrics()
+		m.InFlight = pm.InFlight
+		m.BufferedBytes = pm.BufferedBytes
+		m.Backend = k.producer.Backend()
+	}
+	return m
+}
+
+// ProducerSnapshot returns the underlying kafka.Producer's full monitoring
+// snapshot — Timestamp (UTC), all ProducerMetrics (Enqueued/Success/Failed/
+// Bytes/BytesFailed/BytesEnqueued/BatchCount/BatchMax/InFlight/BufferedBytes),
+// Linger, MaxBufferedRecs, BatchMaxBytesCfg, Backend. Use this for deep
+// monitoring / point-in-time inspection beyond the scrape-level WriterMetrics.
+// Returns the zero value if the producer is nil (e.g. a test that bypassed
+// Start). For trend samples, type-assert the producer against kafka.SnapshotHistory.
+func (k *KafKaWriter) ProducerSnapshot() kafka.ProducerSnapshot {
+	if !k.producerNotNil() {
+		return kafka.ProducerSnapshot{}
+	}
+	return k.producer.Snapshot()
 }
 
 // SetOnEvent installs a real-time metric hook (reserved for monitoring
