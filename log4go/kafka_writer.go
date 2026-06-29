@@ -91,7 +91,7 @@ type KafKaWriterOptions struct {
 	// process crashes before Stop() flushes them — keep BatchFlushInterval small.
 	BatchMode bool `json:"batch_mode" mapstructure:"batch_mode"`
 	// BatchSize: max records per batch; flush immediately when reached.
-	// <=0 → DefaultKafkaBatchSize (1024). 1024 is the stress-matrix sweet spot:
+	// <=0 → DefaultKafkaBatchSize (1024). 1024 is the stress-matrix best default:
 	// near-peak QPS for franz-go (needs batch ≥1024), flat for sarama, no extra
 	// memory (in-flight buffer bounded by the backend MaxBufferedRecords). See
 	// kafka/STRESS_MATRIX.md.
@@ -160,7 +160,7 @@ type KafKaWriter struct {
 }
 
 // DefaultKafkaBatchSize is the SendBatch size applied when KafKaWriterOptions.
-// BatchSize is <= 0. 1024 is the stress-matrix sweet spot (kafka/STRESS_MATRIX.md):
+// BatchSize is <= 0. 1024 is the stress-matrix best default (kafka/STRESS_MATRIX.md):
 // near-peak QPS for franz-go (which needs batch ≥1024), flat for sarama, and no
 // extra memory (in-flight buffer is bounded by the backend's MaxBufferedRecords,
 // not the SendBatch size).

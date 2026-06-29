@@ -115,8 +115,8 @@ franz-go 100B 在 leader 下比 all 快 7.3×（337K vs 46K）：小 payload 下
 
 | acks | 何时用 | 权衡 |
 |---|---|---|
-| AcksLeader（acks=1）| 广告、RTB、遥测、日志、指标 | 吞吐优先；leader 在复制前宕机会丢记录。sarama 默认。 |
-| AcksAll（acks=all）| 金融、支付、订单、审计、合规 | 持久优先；配 RF=3 + min.insync=2 + franz-go 幂等。更慢，尤其小 payload。franz-go 默认。 |
+| AcksLeader（acks=1）| 广告、RTB、遥测、日志、指标 | 吞吐优先；leader 在复制前宕机会丢记录。两后端的 kit4go 默认。 |
+| AcksAll（acks=all）| 金融、支付、订单、审计、合规 | 持久优先；配 RF=3 + min.insync=2 + franz-go 幂等。更慢，尤其小 payload。 |
 | AcksNone（acks=0）| 极限吞吐、完全容忍丢失（部分指标、尽力而为）| fire-and-forget，broker 不回执。 |
 
 吞吐优先（广告/日志）选 leader；资金和关键状态选 all（配 RF=3）。RF=1 集群 acks 无意义，用 leader。

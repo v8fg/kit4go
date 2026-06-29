@@ -471,7 +471,7 @@ func Benchmark_DeliverPipeline_Filtered(b *testing.B) {
 }
 
 // Benchmark_ShardLogger_4 measures multi-shard parallel deliver throughput with
-// 4 shards (≈ cores/2 on a 10-core machine — the documented sweet spot).
+// 4 shards (≈ cores/2 on a 10-core machine — the documented AutoShardCount default).
 func Benchmark_ShardLogger_4(b *testing.B) {
 	s := NewShardLogger(4)
 	s.Register(discardWriter{})

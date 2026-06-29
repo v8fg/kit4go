@@ -113,8 +113,8 @@ auto-disabled since it requires acks=all; set AcksAll to enable it).
 
 | acks | use when | tradeoff |
 |---|---|---|
-| AcksLeader (acks=1) | ad-tech, RTB, telemetry, logs, metrics | throughput-first; a record can be lost if the leader fails before replicating. sarama default. |
-| AcksAll (acks=all) | finance, payments, orders, audit, compliance | durability-first; pair with RF=3 + min.insync=2 + franz-go idempotent producer. Slower, especially at small payloads. franz-go default. |
+| AcksLeader (acks=1) | ad-tech, RTB, telemetry, logs, metrics | throughput-first; a record can be lost if the leader fails before replicating. The kit4go default for both backends. |
+| AcksAll (acks=all) | finance, payments, orders, audit, compliance | durability-first; pair with RF=3 + min.insync=2 + franz-go idempotent producer. Slower, especially at small payloads. |
 | AcksNone (acks=0) | extreme throughput, fully loss-tolerant (some metrics, best-effort) | fire-and-forget, no broker reply. |
 
 Pick leader for throughput (ad-tech/logs), all for money and critical state (with RF=3). On
