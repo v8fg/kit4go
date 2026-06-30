@@ -11,6 +11,21 @@ const (
 	// AlgorithmSlidingWindow selects the sliding-window counter implementation:
 	// at most Rate requests per Window. Burst is ignored.
 	AlgorithmSlidingWindow = "sliding_window"
+
+	// AlgorithmFixedWindow selects the fixed-window counter implementation:
+	// at most Rate requests per Window, resetting at each window boundary.
+	// Simple and fast, but allows bursts at window edges. Burst is ignored.
+	AlgorithmFixedWindow = "fixed_window"
+
+	// AlgorithmLeakyBucket selects the leaky-bucket implementation: requests
+	// "fill" a bucket that drains at Rate; if the bucket is full (capacity =
+	// Burst), the request is denied. Smooths outflow. Requires Burst > 0.
+	AlgorithmLeakyBucket = "leaky_bucket"
+
+	// AlgorithmGCRA selects the Generic Cell Rate Algorithm (local GCRA):
+	// equivalent to the distributed GCRA in kit4go/rate, but in-process.
+	// Tracks a single "theoretical arrival time" per limiter. Requires Burst > 0.
+	AlgorithmGCRA = "gcra"
 )
 
 // LimiterOptions configures a [Limiter]. Pass it to [NewLimiter].
@@ -60,7 +75,9 @@ func defaultLimiterOptions() LimiterOptions {
 // internally consistent if the caller flips Algorithm later.
 func (o LimiterOptions) withDefaults() LimiterOptions {
 	d := defaultLimiterOptions()
-	if o.Algorithm != AlgorithmTokenBucket && o.Algorithm != AlgorithmSlidingWindow {
+	if o.Algorithm != AlgorithmTokenBucket && o.Algorithm != AlgorithmSlidingWindow &&
+		o.Algorithm != AlgorithmFixedWindow && o.Algorithm != AlgorithmLeakyBucket &&
+		o.Algorithm != AlgorithmGCRA {
 		o.Algorithm = d.Algorithm
 	}
 	if o.Rate <= 0 {

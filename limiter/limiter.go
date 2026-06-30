@@ -73,6 +73,12 @@ func NewLimiter(opts LimiterOptions) Limiter {
 		return newTokenBucket(opts.Rate, opts.Burst)
 	case AlgorithmSlidingWindow:
 		return newSlidingWindow(opts.Rate, opts.Window)
+	case AlgorithmFixedWindow:
+		return newFixedWindow(int64(opts.Rate), opts.Window)
+	case AlgorithmLeakyBucket:
+		return newLeakyBucket(opts.Rate, opts.Burst)
+	case AlgorithmGCRA:
+		return newGCRA(opts.Rate, opts.Burst)
 	default:
 		return nil
 	}
