@@ -4,6 +4,7 @@ use (
 	.
 	./email
 	./grpcclient
+	./grpcserver
 	./kafka
 	./log4go
 	./metrics
