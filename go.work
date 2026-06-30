@@ -5,6 +5,7 @@ use (
 	./grpcclient
 	./kafka
 	./log4go
+	./metrics
 	./postgres
 	./rate
 	./redis
