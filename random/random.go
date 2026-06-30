@@ -223,3 +223,23 @@ func RandUniCodeByUIDWithSalt(uid uint64, n int, slat uint64) string {
 	}
 	return *(*string)(unsafe.Pointer(&code))
 }
+
+// digitBytes is the numeric charset for NumericCode.
+const digitBytes = "0123456789"
+
+// NumericCode returns a random n-digit numeric string (leading zeros allowed),
+// e.g. a 6-digit SMS/email verification code. n <= 0 returns "".
+//
+// This is a convenience over the package's math/rand pool and is NOT
+// cryptographically secure; for 2FA use package otp (TOTP/HOTP) or crypto
+// sources (CryptoInt/CryptoRead).
+func NumericCode(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = digitBytes[IntBetween(0, len(digitBytes))]
+	}
+	return string(b)
+}
