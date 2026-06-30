@@ -1,4 +1,4 @@
-go 1.26.0
+go 1.26.2
 
 use (
 	.
@@ -6,4 +6,7 @@ use (
 	./kafka
 	./log4go
 	./postgres
+	./rate
+	./redis
+	./redislock
 )
