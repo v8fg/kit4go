@@ -2,6 +2,7 @@ package log4go
 
 import (
 	"runtime"
+	"sync/atomic"
 )
 
 // RuntimeMetrics is a point-in-time snapshot of the Go runtime + log4go process
@@ -30,6 +31,11 @@ type RuntimeMetrics struct {
 	// LastGCCPU is the fraction of CPU time spent in GC since the program start
 	// (MemStats.GCCPUFraction), a single-number GC-pressure signal.
 	GCCPUFraction float64
+	// MarshalPanics counts field-marshal / error-string panics recovered on the
+	// render path (a buggy MarshalJSON, a typed-nil receiver). Non-zero means a
+	// logged value is silently becoming null instead of crashing the pipeline —
+	// investigate the caller's value. See field.safeJSONMarshal.
+	MarshalPanics uint64
 }
 
 // RuntimeStats returns a snapshot of runtime memory + goroutine metrics for
@@ -52,5 +58,6 @@ func RuntimeStats() RuntimeMetrics {
 		NumGC:         ms.NumGC,
 		StackInuse:    ms.StackInuse,
 		GCCPUFraction: ms.GCCPUFraction,
+		MarshalPanics: atomic.LoadUint64(&marshalPanics),
 	}
 }

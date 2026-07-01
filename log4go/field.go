@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"math"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -312,20 +313,37 @@ func appendFieldJSON(buf []byte, f field) []byte {
 	return buf
 }
 
+// marshalPanics counts field-marshal / error-string panics recovered on the
+// render hot path. Exposed via RuntimeStats().MarshalPanics so a recurring
+// panic (a buggy MarshalJSON, a typed-nil receiver) is observable instead of
+// silently turning the field into null on every record.
+var marshalPanics uint64
+
 // safeJSONMarshal marshals v via the active codec, recovering from any panic
 // (a custom MarshalJSON that panics, a typed-nil receiver, or a codec-internal
 // panic). ok=false on error OR panic so callers emit null — a field value must
-// never crash the log pipeline.
+// never crash the log pipeline. A recovered panic increments marshalPanics so
+// the silent-to-null degradation is visible to monitoring (L5: observable
+// degradation).
 func safeJSONMarshal(v interface{}) (b []byte, ok bool) {
-	defer func() { _ = recover() }()
+	defer func() {
+		if r := recover(); r != nil {
+			atomic.AddUint64(&marshalPanics, 1)
+		}
+	}()
 	b, err := jsonMarshalEncode(v)
 	return b, err == nil
 }
 
 // safeErrorString returns e.Error() without panicking (a nil-receiver method on
-// a typed-nil error panics; this guards it).
+// a typed-nil error panics; this guards it). A recovered panic increments
+// marshalPanics.
 func safeErrorString(e error) (s string, ok bool) {
-	defer func() { _ = recover() }()
+	defer func() {
+		if r := recover(); r != nil {
+			atomic.AddUint64(&marshalPanics, 1)
+		}
+	}()
 	return e.Error(), true
 }
 
