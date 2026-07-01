@@ -1,498 +1,645 @@
-# kit4go Package Quality Rules
+# kit Package Quality Rules
 
-> Industry-calibrated checklist for every kit4go package. Each rule cites a
-> source (Uber/Google/K8s/OTel/golangci-lint) and has a check method,
-> threshold, severity, and acceptance level (Universal / Strong-consensus /
-> Opinionated). Designed for multi-agent parallel review: each role
-> (Architect, SRE, QA, Developer, Security) runs independently.
+> A **language-neutral** quality framework for every kit package. Each rule is
+> stated as a universal principle; the concrete check is given for **Go** (the
+> kit's current language) and instantiated under other languages via the
+> [Cross-language mechanism map](#cross-language-mechanism-map) when the kit
+> expands. Every rule cites a source, a severity (P0-P3), and an acceptance
+> level (Universal / Strong-consensus / Opinionated). Designed for multi-agent
+> parallel review: each role (Architect, SRE, QA, Developer, Security) runs
+> independently.
+
+## Guiding Principles (simplicity-first)
+
+All rules below serve a small set of foundational tenets. When a rule and these
+tenets conflict, prefer the **smaller correct thing**. The ethos is
+simplicity-first engineering (the discipline most associated with Karpathy's
+writing): bias to deletion, to the obvious, and to the present requirement.
+
+1. **Delete-first.** The best code is the code not written, or the code removed.
+   Fewer lines, fewer abstractions, fewer config knobs. When in doubt, cut.
+2. **Flat and boring.** Code is communication for the next human. Obvious,
+   linear, unsurprising. Cleverness is a liability, not a virtue.
+3. **YAGNI.** Build for the present requirement, not an imagined future. No
+   speculative generics, options, or seams — add them when a real second use
+   arrives (see A7). "The fastest code is the code that doesn't run."
+4. **Work → right → fast.** Tight feedback loops over working increments:
+   correctness first, then clarity, then performance. Performance work (D) is
+   earned by a measured need, never guessed.
+5. **Comments explain WHY, not WHAT.** The code already shows what it does; a
+   comment captures intent, invariant, or a non-obvious trade-off — never a
+   restatement of the code.
+6. **Compose, don't configure.** Prefer small things you combine over big things
+   you parameterize. One obvious way to do something; two ways is a smell.
+
+These six are the umbrella; dimensions A-L are their concrete, checkable
+expression. A rule that cannot be tied back to one of them is probably
+over-engineering.
+
+## Multi-language intent
+
+kit4go is Go today. These rules are written **principle-first** so the same
+framework governs future kits in other languages (Rust, Java/JVM, TypeScript),
+and so the engineering principles transfer verbatim. A rule's *Principle* line
+is language-neutral; its *Go* line is the current instantiation. When a second
+language lands, mirror each principle under that language's tooling using the
+mechanism map below — do **not** fork a separate rulebook.
+
+## How to read a rule
+
+```
+### D1. Hot path = zero allocation  [P0]
+- Principle:  <language-neutral statement + why>
+- Go:         <concrete check/threshold for Go today>
+- Sources:    <industry calibration + acceptance level>
+```
+
+Severity: **P0** blocks release; **P1** should-fix; **P2/P3** nice-to-have.
+"Universal" = a real industry consensus; "Strong consensus" = widely adopted;
+"Opinionated" = this kit's stance.
+
+## Cross-language mechanism map
+
+The same principle is checked with different tooling per language. Reference this
+table instead of restating the tool on every rule.
+
+| Mechanism | Go (today) | Java / JVM | Python | Rust | Frontend (React / Vue) |
+|---|---|---|---|---|---|
+| Data-race freedom | `go test -race` | Thread Sanitizer, JFR | GIL mitigates; `threading` locks; pytest | `Send`/`Sync` + Miri | single-threaded; pure render + effect cleanup |
+| Hot-path allocations | `-benchmem` (0 allocs/op) | JMH `-prof gc` | avoid in tight loops (GC'd) | verify no `alloc`/`Box`/`String` | avoid re-render (`useMemo`/`computed`); no allocs in render |
+| Lint baseline | golangci-lint | checkstyle/errorprone/spotbugs | ruff + mypy + black | clippy + rustfmt | eslint + tsc + plugin-react/-vue |
+| CSPRNG | `crypto/rand` | `SecureRandom` | `secrets` | `getrandom` / `rand` | Web Crypto / `crypto.getRandomValues` |
+| Cancellation / timeout | `context.Context` | deadline / `CompletableFuture` | `asyncio` cancel / `threading.Event` | `CancellationToken` (tokio) | `AbortSignal`; React cleanup return; Vue `onScopeDispose` |
+| Error identity / chain | `errors.Is/As` + `%w` | typed exceptions | exception types / groups (3.11) | `thiserror`/`anyhow` `Downcast` | typed `Result` / `Error` subclass / `ErrorBoundary` |
+| Async unit | goroutine + `wg`/goleak | `Executor` / `Thread` | `asyncio.Task` / thread | tokio task / thread | `Promise`/`async`; effect; `watchEffect` |
+| Naming style | MixedCaps | camelCase / PascalCase types | PEP 8 snake / Pascal classes | snake_case / PascalCase types | camelCase; components PascalCase |
+| Module-load side effects | `init()` | `static` initializer | module top-level (guard `__main__`) | (none) | ESM top-level |
+| Forced process exit | `os.Exit` / `log.Fatal` | `System.exit` | `sys.exit` | `process::exit` | n/a browser; Node `process.exit` |
+| Coverage | `go test -cover` | JaCoCo | pytest-cov / coverage.py | tarpaulin / llvm-cov | vitest / jest + c8 |
+| Render purity / effects | n/a | n/a | n/a | n/a | pure render; no side-effects in render; cleanup effects; stable `key`s |
+| Bundle / tree-shake | n/a | n/a | n/a | (binary size) | tree-shakeable; size budget; code-split |
+| Accessibility (a11y) | n/a | n/a | n/a | n/a | semantic HTML; ARIA; keyboard; color contrast |
+
+> **Frontend notes.** React and Vue share the TypeScript/JS substrate; the
+> column shows the framework idiom. Their "concurrency" is not thread-safety
+> but **render purity** (no side-effects during render, effects cleaned up,
+> stable keys, memoised expensive values) and **reactivity correctness** (no
+> stale closures, no infinite re-render). Bundle size, tree-shakeability, and
+> accessibility are first-class performance/quality concerns with no backend
+> analogue (rows 12-14).
+>
+> **Python notes.** The GIL means true data races are rare; concurrency rules
+> (F) map to lock discipline and asyncio task isolation, not a race detector.
+> Python is interpreted/GC'd, so D1 (zero allocation) is not enforced — D
+> applies as "no quadratic loops / no accidental O(n²) in hot paths."
 
 ---
 
 ## A. Architecture & Project Layout (Architect)
 
-### A1. Single Responsibility
-- **Check**: package godoc states one clear purpose; no catch-all names
+### A1. Single Responsibility [P0]
+- **Principle**: each package/module has one clear purpose; no catch-all names
   (`util`, `common`, `helpers`, `shared`, `types`).
-- **Sources**: Google Decisions, K8s, Effective Go — **Universal**.
-- **Pass**: one-sentence purpose fitting ad-tech/finance scope.
-- **Fail**: mixes concerns; named `util`/`common`.
-- **Severity**: P0.
+- **Go**: package godoc states one purpose; no `util`/`common`.
+- **Sources**: Google, K8s, Effective Go — Universal.
 
-### A2. Package Layout
-- **Check**: `package foo` matches directory name; one package per dir; `internal/`
-  for non-public; `cmd/` for entry points.
-- **Sources**: go.dev modules-layout, K8s — **Universal**.
-- **Pass**: package name == dir name; no `util/` or `misc/`.
-- **Severity**: P0.
+### A2. Module Layout [P0]
+- **Principle**: module/package path matches its directory; one unit per dir;
+  private code under an internal/private path; entry points isolated.
+- **Go**: `package foo` == dir name; `internal/` for non-public; `cmd/` for mains.
+- **Sources**: go.dev modules-layout, K8s — Universal.
 
-### A3. Interface Segregation
-- **Check**: exported interfaces ≤3 methods; single-method named with `-er`
-  suffix (`Reader`, `Formatter`); no "fat interface".
-- **Sources**: Go Code Review Comments, Google — **Universal**.
-- **Pass**: small interfaces; caller-side definition where possible.
-- **Fail**: >5 methods, or forces callers to depend on unused methods.
-- **Severity**: P1.
+### A3. Interface Segregation [P1]
+- **Principle**: abstractions are small and role-focused; consumers never depend
+  on members they don't use.
+- **Go**: exported interfaces ≤3 methods; single-method named with `-er`
+  suffix; define at consumer side where possible.
+- **Sources**: Go Code Review Comments, Google — Universal.
 
-### A4. Accept Interfaces, Return Concretes
-- **Check**: exported functions accept interface params, return concrete types.
-- **Sources**: Go Tip #49, Google — **Universal**.
-- **Pass**: `func New(s Store) *Cache` not `func New(s *Store) *Store`.
-- **Severity**: P1.
+### A4. Accept Abstractions, Return Concretes [P1]
+- **Principle**: APIs take the narrowest abstraction and return concrete types
+  (so callers get value/identity, not a hidden contract).
+- **Go**: `func New(s Store) *Cache`, not `func New(s *Store) *Store`.
+- **Sources**: Go Tip #49, Google — Universal.
 
-### A5. Compile-Time Interface Verification
-- **Check**: `var _ I = (*T)(nil)` for exported types implementing API contracts.
-- **Sources**: Uber, Effective Go — **Universal**.
-- **Pass**: every exported type that should implement an interface has the
-  compile-time assertion.
-- **Severity**: P1.
+### A5. Compile-Time Contract Verification [P1]
+- **Principle**: any type claimed to satisfy a contract is asserted at compile
+  time, not by a runtime test.
+- **Go**: `var _ I = (*T)(nil)` for exported types implementing API contracts.
+- **Sources**: Uber, Effective Go — Universal.
 
-### A6. Functional Options
-- **Check**: constructor uses `opts ...Option`; zero-config works with defaults.
-- **Sources**: Uber — **Strong consensus** (widely adopted).
-- **Pass**: `New(opts ...Option)`; no positional constructor with >3 params.
-- **Severity**: P1.
+### A6. Configuration via Options, Zero-Config Works [P1]
+- **Principle**: construction is configurable but the zero-config default is
+  production-usable; no positional constructor with many params.
+- **Go**: `New(opts ...Option)` functional options; defaults applied.
+- **Sources**: Uber — Strong consensus.
 
-### A7. No Over-Engineering
-- **Check**: every exported type/function is used or demonstrably useful; no
-  speculative generics, no "future-proof" interfaces.
-- **Sources**: K8s ("avoid package sprawl"), Google — **Universal**.
-- **Severity**: P1.
+### A7. No Over-Engineering [P1]
+- **Principle**: every exported symbol is used or demonstrably useful; no
+  speculative generics, no "future-proof" abstractions, no unused config knobs.
+- **Sources**: K8s ("avoid package sprawl"), Google — Universal.
 
-### A8. No init() Side Effects
-- **Check**: no `init()` doing I/O, env access, flag registration, or global
-  mutation. Libraries must be configured via Go APIs, not CLI flags.
-- **Sources**: Uber, Google — **Universal**.
-- **Pass**: no `init()` at all, or only for compile-time constants.
-- **Severity**: P0.
+### A8. No Module-Load Side Effects [P0]
+- **Principle**: importing/-loading the module performs no I/O, env access, flag
+  registration, or global mutation. Configure via API, not load-time magic.
+- **Go**: no `init()` doing work (compile-time constants only).
+- **Sources**: Uber, Google — Universal.
 
 ---
 
 ## B. Error Handling (Architect + Security)
 
-### B1. Error is Last Return, Always
-- **Check**: functions taking `context.Context` return `error`; error is last.
-- **Sources**: Google Decisions, Effective Go — **Universal**.
-- **Severity**: P0.
+### B1. Failure is a Value, Propagated Explicitly [P0]
+- **Principle**: operations that can fail expose failure in the type system; the
+  caller cannot ignore it.
+- **Go**: functions return `error` as the last return value.
+- **Sources**: Google, Effective Go — Universal.
 
-### B2. Sentinel Errors with Err Prefix
-- **Check**: exported errors use `Err` prefix (`ErrTimeout`, `ErrInvalidInput`);
-  wrap with `fmt.Errorf("context: %w", err)`.
-- **Sources**: Uber, Google — **Universal**.
-- **Pass**: `errors.Is`/`errors.As` works; wrap chain preserved.
-- **Fail**: bare `errors.New` without wrapping; string-matching errors.
-- **Severity**: P0.
+### B2. Sentinels / Typed Errors, Chain Preserved [P0]
+- **Principle**: callers match errors by identity/type, never by message text;
+  context is added without losing the original.
+- **Go**: exported `Err*` sentinels; wrap with `fmt.Errorf("ctx: %w", err)`;
+  `errors.Is`/`errors.As` works end-to-end. No bare `errors.New` callers must
+  string-match.
+- **Sources**: Uber, Google — Universal.
 
-### B3. No In-Band Errors
-- **Check**: no returning `-1`/`nil`/`""` to signal failure. Use `(value, ok bool)`
-  or `(value, error)`.
-- **Sources**: Google Decisions — **Universal**.
-- **Severity**: P0.
+### B3. No In-Band Sentinel Values [P0]
+- **Principle**: no returning `-1`/`nil`/`""` to mean "failure". Use `(value, ok)`
+  or `(value, error)` / a `Result` type.
+- **Sources**: Google — Universal.
 
-### B4. Handle Errors Once
-- **Check**: don't log + return the same error. Either handle-and-degrade, or
-  wrap-and-return.
-- **Sources**: Dave Cheney, Uber — **Universal**.
-- **Severity**: P1.
+### B4. Handle Errors Once [P1]
+- **Principle**: don't both log and return the same error. Either degrade, or
+  wrap-and-propagate.
+- **Sources**: Dave Cheney, Uber — Universal.
 
-### B5. No panic for Normal Errors
-- **Check**: `panic` only in `Must*` helpers or truly unrecoverable conditions.
-- **Sources**: Uber, Google — **Universal**.
-- **Pass**: bad input returns error, not panic (unless `Must*` constructor).
-- **Severity**: P0.
+### B5. No Exception/Panic for Normal Failures [P0]
+- **Principle**: bad input or expected runtime failure is a value, not an
+  exception/panic. Non-local control flow is reserved for truly unrecoverable
+  programmer error or an explicit `Must*` variant.
+- **Go**: `panic` only in `Must*` helpers or unrecoverable conditions.
+- **Sources**: Uber, Google — Universal.
 
-### B6. No os.Exit / log.Fatal in Library
-- **Check**: `os.Exit`/`log.Fatal` only in `main()`.
-- **Sources**: Uber, Google — **Universal**.
-- **Severity**: P0.
+### B6. No Forced Process Exit in Library Code [P0]
+- **Principle**: a library never terminates the process; only the application
+  entry point may.
+- **Go**: `os.Exit`/`log.Fatal` only in `main()`.
+- **Sources**: Uber, Google — Universal.
 
-### B7. No err.Error() String Inspection
-- **Check**: never match on `err.Error()` string content.
-- **Sources**: Dave Cheney, Google — **Strong consensus**.
-- **Pass**: `errors.Is`/`errors.As` for all error matching.
-- **Severity**: P1.
+### B7. No Error-Message String Matching [P1]
+- **Principle**: never branch on the text of an error/exception message.
+- **Go**: use `errors.Is`/`errors.As`, never `err.Error()` content.
+- **Sources**: Dave Cheney, Google — Strong consensus.
 
 ---
 
-## C. Naming Conventions (Developer)
+## C. Naming & Style — Language-Convention Compliance (Developer)
 
-### C1. MixedCaps, No Underscores
-- **Check**: PascalCase exported, camelCase unexported; no `_` in identifiers
-  except `_test.go` function names and `_test` package suffix.
-- **Sources**: Google, Uber — **Universal**.
-- **Severity**: P0.
+> Naming is **not** universal — it follows each language's canonical style guide.
+> The rules below are the Go instantiation; other languages comply with theirs
+> (Rust API Guidelines, Google Java Style, etc.).
 
-### C2. Initialisms Keep Case
-- **Check**: `URL`/`ID`/`HTTP`/`API`/`DB`, never `Url`/`Id`/`Http`.
-- **Sources**: Google Decisions — **Universal**.
-- **Severity**: P0.
+### C1. Canonical Identifier Style [P0]
+- **Principle**: identifiers follow the language's official style exactly.
+- **Go**: MixedCaps — PascalCase exported, camelCase unexported; no `_` in
+  identifiers (except `_test.go` funcs / `_test` package suffix).
+- **Sources**: Google, Uber — Universal (the rule); Go-specific (the form).
 
-### C3. Receiver Names
-- **Check**: 1-2 letter abbreviation, consistent across all methods; never
-  `this`/`self`/`_`.
-- **Sources**: Google Decisions, Uber — **Universal**.
-- **Pass**: `func (c *Cache)` consistently.
-- **Severity**: P1.
+### C2. Initialisms Keep Case [P0]
+- **Go**: `URL`/`ID`/`HTTP`/`API`/`DB`, never `Url`/`Id`/`Http`.
+- **Sources**: Google — Universal within Go.
 
-### C4. No Get Prefix
-- **Check**: no `GetX()` on getters; use noun directly (`Counts()`, not
-  `GetCounts()`).
-- **Sources**: Google Decisions — **Universal**.
-- **Severity**: P1.
+### C3. Receiver / Self Names [P1]
+- **Go**: 1-2 letter abbreviation, consistent across methods; never
+  `this`/`self`/`_` (e.g. `func (c *Cache)`).
+- **Sources**: Google, Uber — Universal.
 
-### C5. Constants — No K Prefix, No ALL_CAPS
-- **Check**: MixedCaps constants; no `MAX_SIZE`/`kDefaultPort`.
-- **Sources**: Google Decisions — **Universal**.
-- **Severity**: P1.
+### C4. No `Get` Prefix on Accessors [P1]
+- **Go**: `Counts()`, not `GetCounts()`.
+- **Sources**: Google — Universal.
 
-### C6. Mutex Named mu/lock, Never Embedded
-- **Check**: `mu sync.Mutex` as a named field; never anonymous embed; multiple
-  locks get suffix (`stateMu`, `mapMu`).
-- **Sources**: K8s, Uber — **Strong consensus**.
-- **Severity**: P1.
+### C5. Constants — Language-Canonical Case [P1]
+- **Go**: MixedCaps constants; no `MAX_SIZE`/`kDefaultPort`.
+- **Sources**: Google — Universal.
 
-### C7. Package Name — All Lowercase, Not Plural
-- **Check**: `net/url` not `net/urls`; `cache` not `caches`; matches dir name.
-- **Sources**: Google, Uber — **Universal**.
-- **Severity**: P0.
+### C6. Locks Named, Never Embedded [P1]
+- **Go**: `mu sync.Mutex` as a named field; never anonymous embed; multiple locks
+  get a suffix (`stateMu`, `mapMu`).
+- **Sources**: K8s, Uber — Strong consensus.
+
+### C7. Module/Package Name — Canonical Form [P0]
+- **Go**: all-lowercase, singular, matches dir (`net/url`, `cache`).
+- **Sources**: Google, Uber — Universal.
 
 ---
 
 ## D. Performance & Resources (SRE)
 
-### D1. Hot Path = 0 Allocations
-- **Check**: `go test -bench -benchmem`; hot path (Get/Set/Allow/Push) must be
-  0 allocs/op.
-- **Sources**: fasthttp (valyala), bigcache — **Strong consensus** for perf libs.
-- **Pass**: 0 allocs/op.
-- **Acceptable**: ≤2 allocs/op if documented and justified.
-- **Fail**: >2 allocs/op without justification.
-- **Severity**: P0.
+### D1. Hot Path = Zero Allocation [P0]
+- **Principle**: the hottest operations (Get/Set/Allow/Push/Observ­e) allocate no
+  heap memory; garbage is the enemy of tail latency.
+- **Go**: `go test -bench -benchmem`; 0 allocs/op. ≤2 allocs/op acceptable only
+  if documented and justified.
+- **Sources**: fasthttp, bigcache — Strong consensus for perf libs.
 
-### D2. strconv Over fmt
-- **Check**: use `strconv.Itoa`/`strconv.ParseInt`, not `fmt.Sprint`/`fmt.Sprintf`
-  for primitive↔string conversion.
-- **Sources**: Uber (benchmarked: 64ns/1alloc vs 143ns/2allocs) — **Universal**.
-- **Severity**: P1.
+### D2. Prefer Zero-Reflection Primitive Conversion [P1]
+- **Principle**: convert primitives without the reflection-based formatter.
+- **Go**: `strconv.Itoa`/`ParseInt`, not `fmt.Sprint`/`Sprintf`.
+- **Sources**: Uber — Universal.
 
-### D3. Pre-size Slices and Maps
-- **Check**: `make([]T, 0, capacity)` / `make(map[K]V, hint)` when size is known
-  or estimable.
-- **Sources**: Uber — **Universal**.
-- **Severity**: P1.
+### D3. Pre-size Collections [P1]
+- **Principle**: size collections at construction when size is known/estimable.
+- **Go**: `make([]T, 0, cap)`, `make(map[K]V, hint)`.
+- **Sources**: Uber — Universal.
 
-### D4. Hoist Constant Conversions
-- **Check**: `[]byte("constant")` moved out of loops.
-- **Sources**: Uber (benchmarked: 3.25ns vs 22.2ns) — **Universal**.
-- **Severity**: P1.
+### D4. Hoist Constant Work Out of Loops [P1]
+- **Principle**: don't recompute/convert a constant inside a hot loop.
+- **Go**: `[]byte("constant")` hoisted out.
+- **Sources**: Uber — Universal.
 
-### D5. Memory Bounded
-- **Check**: maps/slices/buffers have explicit caps; no unbounded growth.
-- **Sources**: kit4go convention (OOM prevention) — **Universal**.
-- **Pass**: `MaxSize`/`MaxKeys`/capacity parameter.
-- **Severity**: P0.
+### D5. Memory Bounded [P0]
+- **Principle**: every collection/buffer/cache has an explicit cap; no unbounded
+  growth from any input.
+- **Go**: `MaxSize`/`MaxKeys`/capacity parameter; see also I3.
+- **Sources**: kit convention (OOM prevention) — Universal.
 
-### D6. Lock Granularity
-- **Check**: RLock for reads, Lock for writes; no I/O/alloc under lock; CAS for
-  single-variable hot paths.
-- **Sources**: Uber, Go concurrency best practices — **Universal**.
-- **Severity**: P1.
+### D6. Lock Granularity [P1]
+- **Principle**: shared read lock vs exclusive write; no I/O/allocation under a
+  lock; single-variable hot paths use CAS.
+- **Go**: `RLock`/`Lock`; `atomic` CAS where it fits.
+- **Sources**: Uber — Universal.
 
-### D7. Goroutine Hygiene
-- **Check**: every goroutine has a shutdown path (ctx.Done, channel close,
-  wg.Wait); no fire-and-forget; `goleak` test in packages that spawn goroutines.
-- **Sources**: Uber, Google ("goroutine lifetimes") — **Universal**.
-- **Severity**: P0.
+### D7. Async-Unit Hygiene [P0]
+- **Principle**: every background task/goroutine/thread has a shutdown path
+  (cancellation, channel close, or join). No fire-and-forget without ownership.
+  Leak-detected in tests.
+- **Go**: every goroutine exits on `ctx.Done`/channel close/`wg.Wait`; `goleak`
+  in packages that spawn goroutines.
+- **Sources**: Uber, Google ("goroutine lifetimes") — Universal.
 
-### D8. Benchmark Exists
-- **Check**: `bench_test.go` with `b.ReportAllocs()` for hot-path operations.
-- **Sources**: Go bench docs, TwiN — **Universal**.
-- **Pass**: ≥1 Benchmark per hot-path function.
-- **Severity**: P1 for perf-critical; P3 for cold path.
+### D8. Benchmark Exists [P1 perf / P3 cold]
+- **Principle**: hot-path operations have a microbenchmark that reports
+  allocations, checked in CI.
+- **Go**: `bench_test.go` with `b.ReportAllocs()`; ≥1 Benchmark per hot-path fn.
+- **Sources**: Go bench docs — Universal.
 
-### D9. Prefer Synchronous Functions
-- **Check**: package provides synchronous API; caller adds concurrency. No
-  forced background goroutines.
-- **Sources**: Google Decisions — **Strong consensus**.
-- **Severity**: P1.
+### D9. Prefer Synchronous APIs [P1]
+- **Principle**: the package provides a synchronous API; the caller adds
+  concurrency. No forced background tasks baked into the primitive.
+- **Sources**: Google — Strong consensus.
 
 ---
 
 ## E. Testing & Coverage (QA)
 
-### E1. Coverage Threshold
-- **Check**: `go test -cover`.
-- **Pass**: ≥90% (team policy — no industry standard minimum exists per
-  Google/Uber/K8s).
-- **Acceptable**: 80-90% if uncovered code is defensive/unreachable.
-- **Fail**: <80%.
-- **Severity**: P0.
+### E1. Coverage Threshold [P0]
+- **Principle**: high statement/branch coverage with meaningful assertions, not
+  line-padding.
+- **Go**: `go test -cover` ≥90% (team policy; no industry minimum). 80-90%
+  acceptable for defensive/unreachable code; <80% fails.
+- **Sources**: Google/Uber/K8s — Opinionated threshold.
 
-### E2. Race Detection
-- **Check**: `go test -race`.
-- **Sources**: Go race detector, Uber — **Universal**.
-- **Pass**: clean.
-- **Severity**: P0.
+### E2. Race Detection [P0]
+- **Principle**: the data-race detector is clean on every test run.
+- **Go**: `go test -race`.
+- **Sources**: Go race detector, Uber — Universal.
 
-### E3. Table-Driven Tests
-- **Check**: multi-input functions use table-driven with `t.Run`; named rows;
-  no complex branching.
-- **Sources**: Uber, Google, K8s — **Universal**.
-- **Severity**: P1.
+### E3. Table-Driven / Parameterised Tests [P1]
+- **Principle**: multi-input logic is exercised via a named, parameterised table.
+- **Go**: table-driven with `t.Run`, named rows, no complex branching.
+- **Sources**: Uber, Google, K8s — Universal.
 
-### E4. t.Helper() in Test Helpers
-- **Check**: test helpers call `t.Helper()` after context param.
-- **Sources**: Google Decisions — **Universal**.
-- **Severity**: P2.
+### E4. Test Helpers Marked [P2]
+- **Principle**: test helpers report failures at the call site, not inside the
+  helper.
+- **Go**: `t.Helper()` after the context param.
+- **Sources**: Google — Universal.
 
-### E5. No Flaky Tests
-- **Check**: no `time.Sleep` for correctness; use injected clocks / mocks /
-  in-process servers (miniredis, bufconn, httptest).
-- **Sources**: K8s ("wait-and-retry, not sleep-one-second") — **Strong consensus**.
-- **Severity**: P0.
+### E5. No Flaky Tests [P0]
+- **Principle**: tests never rely on wall-clock sleeps for correctness; use
+  injected clocks, fakes, or in-process servers.
+- **Go**: injected clocks/mocks; miniredis, bufconn, httptest; no `time.Sleep`
+  gating assertions.
+- **Sources**: K8s ("wait-and-retry, not sleep-one-second") — Strong consensus.
 
-### E6. Edge Cases
-- **Check**: nil input, empty input, zero/negative, max values, concurrent,
-  resource exhaustion (full buffer).
-- **Pass**: ≥1 test per category.
-- **Severity**: P0 for nil/concurrent; P1 for others.
+### E6. Edge Cases [P0 nil/concurrent, P1 others]
+- **Principle**: nil/empty, zero/negative, max values, concurrency, and resource
+  exhaustion (full buffer) each have ≥1 test.
+- **Sources**: Universal.
 
-### E7. _test Package for Black-Box
-- **Check**: external tests use `package foo_test` for API surface testing.
-- **Sources**: Google, K8s — **Universal**.
-- **Severity**: P2.
+### E7. Black-Box Test Package [P2]
+- **Principle**: a portion of tests exercise only the public API.
+- **Go**: external `package foo_test`.
+- **Sources**: Google, K8s — Universal.
 
-### E8. Lint Clean
-- **Check**: `golangci-lint run` + `go vet` = 0 issues.
-- **Sources**: Uber baseline (errcheck, goimports, revive, govet, staticcheck) —
-  **Universal**.
-- **Severity**: P0.
+### E8. Lint Clean [P0]
+- **Principle**: the language linter + formatter are zero-issue.
+- **Go**: `golangci-lint run` + `go vet` = 0 issues.
+- **Sources**: Uber baseline — Universal.
 
-### E9. Cross-Platform
-- **Check**: tests pass on macOS + Linux; platform-specific uses build tags or
-  `t.Skip`.
-- **Sources**: K8s — **Strong consensus**.
-- **Severity**: P1.
+### E9. Cross-Platform [P1]
+- **Principle**: tests pass on the target platforms; platform-specific code is
+  tagged or conditionally skipped.
+- **Go**: macOS + Linux; build tags or `t.Skip`.
+- **Sources**: K8s — Strong consensus.
 
 ---
 
 ## F. Concurrency Safety (QA)
 
-### F1. Thread Safety Documented
-- **Check**: godoc states "safe for concurrent use" or "not safe; use shard +
-  Merge".
-- **Sources**: kit4go convention — **Strong consensus**.
-- **Severity**: P1.
+### F1. Concurrency Safety Documented [P1]
+- **Principle**: every public type states its concurrency contract ("safe for
+  concurrent use" / "not safe; shard + merge").
+- **Go**: stated in godoc.
+- **Sources**: kit convention — Strong consensus.
 
-### F2. No Race Between Close and Use
-- **Check**: Close uses CAS/once/mutex; Use checks under same lock or atomic;
-  no send-on-closed-channel.
-- **Sources**: Uber ("data race patterns") — **Universal**.
-- **Severity**: P0.
+### F2. No Use-After-Close / Close-Use Race [P0]
+- **Principle**: close/shutdown is race-free with ongoing use; no operation can
+  touch a resource after it is closed.
+- **Go**: Close via CAS/`Once`/mutex; Use checks under the same guard; no
+  send-on-closed-channel.
+- **Sources**: Uber — Universal.
 
-### F3. No Mutable Globals
-- **Check**: no package-level `var` that mutates at runtime; use dependency
-  injection.
-- **Sources**: Uber — **Strong consensus**.
-- **Severity**: P1.
+### F3. No Mutable Globals [P1]
+- **Principle**: no package/module-level mutable state; use dependency injection.
+- **Go**: no runtime-mutating package-level `var`.
+- **Sources**: Uber — Strong consensus.
 
-### F4. Channel Sizes Justified
-- **Check**: channel cap is 0 (unbuffered) or 1 by default; larger requires
-  documented justification (bounded, backpressure strategy).
-- **Sources**: Uber — **Strong consensus**.
-- **Severity**: P1.
+### F4. Queue/Channel Sizes Justified [P1]
+- **Principle**: buffering is intentional and bounded, with a documented
+  backpressure strategy.
+- **Go**: channel cap 0 (unbuffered) or 1 by default; larger needs a documented
+  bound + overflow policy.
+- **Sources**: Uber — Strong consensus.
 
-### F5. Zero-Value Mutex
-- **Check**: `sync.Mutex`/`RWMutex` as a zero-value field; never `new(sync.Mutex)`.
-- **Sources**: Uber — **Universal**.
-- **Severity**: P1.
+### F5. Locks are Zero-Value [P1]
+- **Go**: `sync.Mutex`/`RWMutex` as a zero-value field; never `new(sync.Mutex)`.
+- **Sources**: Uber — Universal.
 
 ---
 
 ## G. Observability (SRE)
 
-### G1. Library Uses OTel API Only, Never SDK
-- **Check**: instrumentation imports `go.opentelemetry.io/otel` (API), not
-  `.../otel/sdk`.
-- **Sources**: OpenTelemetry library guide — **Universal**.
-- **Pass**: API is no-op without SDK → zero cost when unconfigured.
-- **Severity**: P0 for instrumented packages.
+### G1. Library Uses the Telemetry API, Never the SDK [P0 instrumented]
+- **Principle**: instrumentation depends only on the telemetry **API**, so it is
+  a no-op when the application hasn't wired the SDK.
+- **Go**: import `go.opentelemetry.io/otel` (API), not `.../otel/sdk`.
+- **Sources**: OpenTelemetry library guide — Universal.
 
-### G2. No Direct Logging in Library
-- **Check**: no `log.Printf`/`slog.Info` in library code; use callbacks/interfaces
-  (`SetOnEvent`, `OnEvent`).
-- **Sources**: OTel guide, golangci-lint (`sloglint: no-global`) — **Strong consensus**.
-- **Severity**: P0.
+### G2. No Direct Logging in Library Code [P0]
+- **Principle**: a library emits no logs itself; it exposes callbacks/interfaces
+  (`SetOnEvent`, `OnEvent`) for the host to observe.
+- **Go**: no `log.Printf`/`slog.Info`; callbacks instead.
+- **Sources**: OTel guide — Strong consensus.
 
-### G3. Metrics/Snapshot Exposure
-- **Check**: `Metrics()`/`Snapshot()` returning atomic counters; or documented
+### G3. Metrics / Snapshot Exposure [P1 infra / P3 algo]
+- **Principle**: long-lived components expose counters/snapshots, or document
   "no metrics by design".
-- **Sources**: kit4go convention — **P1** for infra; P3 for algorithms.
+- **Go**: `Metrics()`/`Snapshot()` returning atomic counters.
+- **Sources**: kit convention.
 
-### G4. Tracer Naming
-- **Check**: tracer name = library name + version (`"kit4go/kafka"`).
-- **Sources**: OTel guide — **Universal** for instrumented packages.
-- **Severity**: P1.
+### G4. Telemetry Naming [P1 instrumented]
+- **Principle**: tracer/meter names follow `library-name/version` form.
+- **Go**: `"kit4go/kafka"`.
+- **Sources**: OTel guide — Universal.
 
-### G5. Span Lifecycle
-- **Check**: `span.End()` always in `defer`; `RecordException` + `SetStatus(ERROR)`
-  on error paths.
-- **Sources**: OTel guide — **Universal**.
-- **Severity**: P0 for instrumented packages.
+### G5. Span Lifecycle [P0 instrumented]
+- **Principle**: spans always end (deferred); errors are recorded + status set.
+- **Go**: `span.End()` in `defer`; `RecordError` + `SetStatus(ERROR)` on errors.
+- **Sources**: OTel guide — Universal.
 
-### G6. Check span.IsRecording()
-- **Check**: skip expensive attribute computation when span not recording.
-- **Sources**: OTel guide — **Strong consensus**.
-- **Severity**: P1 for instrumented packages.
+### G6. Cheap When Inactive [P1 instrumented]
+- **Principle**: skip expensive attribute building when telemetry isn't recording.
+- **Go**: guard on `span.IsRecording()`.
+- **Sources**: OTel guide — Strong consensus.
 
 ---
 
 ## H. API & Developer Experience (Developer)
 
-### H1. Zero-Value is Useful
-- **Check**: types work without `New*()` where possible (`var c Cache`).
-- **Sources**: Uber, Go stdlib convention — **Universal**.
-- **Pass**: zero-value is a valid, usable state.
-- **Severity**: P1.
+### H1. Zero-Value / Default is Useful [P1]
+- **Principle**: a type is usable from its default/zero state without a
+  constructor where feasible.
+- **Go**: `var c Cache` works without `New*()`.
+- **Sources**: Uber, stdlib — Universal.
 
-### H2. No nil vs Empty Slice Distinction
-- **Check**: check `len(s) == 0`, never `s == nil`; return `nil`, not `[]T{}`.
-- **Sources**: Google Decisions, Uber — **Universal**.
-- **Severity**: P1.
+### H2. No nil-vs-empty Ambiguity [P1]
+- **Go**: check `len(s) == 0`, never `s == nil`; return `nil`, not `[]T{}`.
+- **Sources**: Google, Uber — Universal.
 
-### H3. Copy Slices/Maps at Boundaries
-- **Check**: when receiving a slice/map and storing it; when returning internal
-  state.
-- **Sources**: Uber — **Strong consensus**.
-- **Severity**: P1.
+### H3. Copy Collections at Boundaries [P1]
+- **Principle**: when receiving or returning internal collections, copy to avoid
+  aliasing.
+- **Go**: copy slices/maps when storing caller input or exposing internal state.
+- **Sources**: Uber — Strong consensus.
 
-### H4. context.Context First Param
-- **Check**: ctx is first param; never stored in struct fields.
-- **Sources**: Google Decisions — **Universal**.
-- **Severity**: P0.
+### H4. Cancellation is the First Concern [P0]
+- **Principle**: every blocking operation accepts cancellation/timeout via the
+  language's idiom; it is never stashed in a struct for later.
+- **Go**: `context.Context` first param; never stored in a struct field.
+- **Sources**: Google — Universal.
 
-### H5. README
-- **Check**: README.md with what/how/API table/example/ad-tech use/testing.
-- **Pass**: all sections present.
-- **Severity**: P0.
+### H5. README [P0]
+- **Principle**: every package has a README with what/how/API table/example/domain
+  use/testing.
+- **Sources**: kit convention — Universal.
 
-### H6. Godoc Examples
-- **Check**: `example_test.go` with runnable `Example` functions.
-- **Sources**: Effective Go — **Universal**.
-- **Severity**: P1.
+### H6. Runnable Examples [P1]
+- **Principle**: the public API has executable, tested examples.
+- **Go**: `example_test.go` with `Example` functions.
+- **Sources**: Effective Go — Universal.
 
 ---
 
 ## I. Security & Robustness (Security)
 
-### I1. crypto/rand for Security-Sensitive Randomness
-- **Check**: tokens, nonces, IDs use `crypto/rand`, not `math/rand`.
-- **Sources**: Google Decisions — **Universal**.
-- **Severity**: P0.
+### I1. CSPRNG for Security-Sensitive Randomness [P0]
+- **Principle**: tokens, nonces, IDs, secrets use a CSPRNG, never a fast PRNG.
+- **Go**: `crypto/rand`, not `math/rand`.
+- **Sources**: Google — Universal.
 
-### I2. Input Validation
-- **Check**: exported functions validate nil/empty/negative/overflow.
-- **Sources**: Go community — **Universal**.
-- **Severity**: P0.
+### I2. Input Validation [P0]
+- **Principle**: exported functions validate nil/empty/negative/overflow.
+- **Sources**: Universal.
 
-### I3. Resource Exhaustion Resistance
-- **Check**: bounded buffers, max sizes; no unbounded growth from user input.
-- **Sources**: Go community — **Universal**.
-- **Severity**: P0.
+### I3. Resource-Exhaustion Resistance [P0]
+- **Principle**: bounded buffers, max sizes; no unbounded growth from untrusted
+  input (connects D5, F4, L3).
+- **Sources**: Universal.
 
-### I4. gosec Linter Enabled
-- **Check**: `golangci-lint` config includes `gosec`.
-- **Sources**: golangci-lint golden config — **Strong consensus**.
-- **Severity**: P1.
+### I4. Security Linter Enabled [P1]
+- **Go**: `gosec` in the linter config.
+- **Sources**: golangci-lint golden config — Strong consensus.
 
-### I5. HTTP Body Close + No-ctx Checks
-- **Check**: `bodyclose`, `noctx`, `rowserrcheck`, `sqlclosecheck` linters.
-- **Sources**: golangci-lint golden config — **Strong consensus**.
-- **Severity**: P1 for packages doing I/O.
+### I5. Resource-Cleanup Checks [P1 I/O packages]
+- **Principle**: resources (HTTP bodies, DB rows, sockets, files) are always
+  closed; requests carry cancellation.
+- **Go**: `bodyclose`, `noctx`, `rowserrcheck`, `sqlclosecheck`.
+- **Sources**: golangci-lint golden config — Strong consensus.
 
-### I6. No Hardcoded Secrets
-- **Check**: no passwords, API keys, connection strings in code.
-- **Sources**: Universal — **P0**.
+### I6. No Hardcoded Secrets [P0]
+- **Principle**: no passwords, keys, or connection strings in source.
+- **Sources**: Universal.
 
 ---
 
 ## J. Dependency Hygiene (Architect)
 
-### J1. Root Module Purity
-- **Check**: root `go.mod` unchanged after adding a root-module package.
-- **Sources**: kit4go convention — **P0**.
+### J1. Root Module Purity [P0]
+- **Go**: root `go.mod` unchanged after adding a root-module package.
+- **Sources**: kit convention.
 
-### J2. Module Isolation
-- **Check**: own-module packages have `go.mod`; deps listed there only.
-- **Sources**: go.dev modules-layout — **Universal**.
-- **Severity**: P0.
+### J2. Module Isolation [P0]
+- **Principle**: heavy-dependency components live in their own module so the
+  dependency is opt-in.
+- **Go**: own-module packages have `go.mod`; deps listed there only.
+- **Sources**: go.dev modules-layout — Universal.
 
-### J3. No Side-Effect Imports
-- **Check**: no `import _ "..."` in library code (only in main/tests).
-- **Sources**: Google Decisions — **Universal**.
-- **Severity**: P1.
+### J3. No Side-Effect Imports [P1]
+- **Go**: no `import _ "..."` in library code (only in main/tests).
+- **Sources**: Google — Universal.
 
-### J4. No Dot Imports
-- **Check**: no `import . "..."` except in `_test` packages.
-- **Sources**: Google Decisions, Uber — **Universal**.
-- **Severity**: P0.
+### J4. No Dot Imports [P0]
+- **Go**: no `import . "..."` except in `_test` packages.
+- **Sources**: Google, Uber — Universal.
 
-### J5. Depguard Deny-List
-- **Check**: block deprecated deps (`satori/go.uuid`, `golang/protobuf`,
-  `math/rand` for security).
-- **Sources**: golangci-lint golden config — **Strong consensus**.
-- **Severity**: P1.
+### J5. Dependency Deny-List [P1]
+- **Principle**: block known-deprecated/insecure dependencies.
+- **Go**: depguard denies `satori/go.uuid`, `golang/protobuf`, `math/rand` for
+  security use.
+- **Sources**: golangci-lint golden config — Strong consensus.
 
 ---
 
-## K. golangci-lint Configuration (All Roles)
+## K. Lint & Style Baseline (All Roles)
 
-### K1. Always-On Linters (Universal Baseline)
-`errcheck`, `govet`, `staticcheck`, `unused`, `gosimple`, `ineffassign`,
+> The baseline is **language-neutral in intent** (zero lint issues, formatted,
+> tuned complexity). The concrete config below is Go today; each new language
+> adopts its equivalent (Rust: clippy/rustfmt; JVM: checkstyle/errorprone;
+> TS: eslint/tsc).
+
+### K1. Always-On (Universal Baseline)
+**Go**: `errcheck`, `govet`, `staticcheck`, `unused`, `gosimple`, `ineffassign`,
 `revive`, `gocritic`, `goimports`, `gosec`.
 
 ### K2. Production-Grade Additional (Strong Consensus)
-`bodyclose`, `noctx`, `errorlint`, `errname`, `misspell`, `unconvert`,
+**Go**: `bodyclose`, `noctx`, `errorlint`, `errname`, `misspell`, `unconvert`,
 `predeclared`, `reassign`, `usestdlibvars`, `exhaustive`, `nilerr`,
-`nilnesserr`, `wastedassign`, `unparam`, `spancheck`, `testifylint`,
-`sloglint`.
+`nilnesserr`, `wastedassign`, `unparam`, `spancheck`, `testifylint`, `sloglint`.
 
-### K3. Tuned Thresholds (from golden config)
-| Metric | Threshold |
+### K3. Tuned Thresholds
+| Metric | Go threshold |
 |---|---|
-| `funlen` | 100 lines / 50 statements |
-| `golines` max-len | 120 |
-| `cyclop` max-complexity | 30 (avg 10) |
-| `gocognit` min-complexity | 20 |
-| `nakedret` | 0 (ban naked returns) |
-| `govet` enable-all | true (except fieldalignment) |
+| function length | 100 lines / 50 statements |
+| line length | 120 |
+| cyclo complexity | 30 (avg 10) |
+| cognitive complexity | 20 |
+| naked return | banned (0) |
+| `govet enable-all` | true (except fieldalignment) |
 | `staticcheck` | all (except ST1000/ST1016/QF1008) |
-| `errcheck.check-type-assertions` | true |
+| errcheck type-assertions | true |
 | `sloglint.no-global` | all |
 | `nolintlint.require-explanation` | true |
+
+---
+
+## L. Hot-Path Infrastructure — Do-No-Harm (SRE + Security)
+
+> Applies to components that sit on **every caller's hot path** and carry a
+> "do-no-harm" contract: loggers, metrics exporters, tracers, async pipelines,
+> circuit breakers. Such infrastructure must not become the cause of a host crash
+> or business impact — not from its own bugs, and not from a downstream
+> (broker/sink/network) failure. Isolation is achieved **by design**, not by
+> blanket exception/panic swallowing.
+
+### L1. No-Throw / No-Panic Hot Path [P0]
+- **Principle**: a diagnostic or infra call must never crash the host on
+  pathological input (a user value whose encoder throws/panics, a typed-nil
+  receiver). Encode/marshal failures degrade to a null/placeholder, never
+  propagate. This is the **only** sanctioned internal recovery — and it must be
+  observable (see L5).
+- **Go**: recover around `MarshalJSON`/encode; see also B5 (no panic for normal
+  errors elsewhere).
+- **Sources**: zap, zerolog consensus — Strong consensus.
+
+### L2. Non-Blocking Ingress [P0]
+- **Principle**: the caller's submit/log/observe call **never blocks** on a slow
+  or stuck sink. Backpressure resolves to drop (counted) or bounded buffer, never
+  to stalling the business path.
+- **Go**: non-blocking channel send with `default` drop (e.g. `OverflowDrop`),
+  never a blocking send on an unbounded queue.
+- **Sources**: kit convention, async-logger consensus — Universal.
+
+### L3. Bounded Resources [P0]
+- **Principle**: every buffer, queue, spill file, and connection pool is capped.
+  The component cannot OOM the host or fill its disk.
+- **Go**: bounded channels, `SpillMaxBytes`, max-conn options.
+- **Sources**: Universal (connects D5, I3).
+
+### L4. Downstream Isolation [P1]
+- **Principle**: a dead/slow/erroring downstream (broker, sink) is contained: a
+  circuit breaker or bounded retry stops hammering it, and an optional fail-open
+  fallback (local file/stderr) keeps data flowing. Downstream failure never
+  propagates to the caller.
+- **Go**: error counters + optional breaker + fallback sink.
+- **Sources**: resilience-pattern consensus (Release-It!, istio) — Strong consensus.
+
+### L5. Observable Degradation [P0]
+- **Principle**: **every** recovered throw, dropped record, tripped breaker, and
+  dead background worker is counted and surfaced via metrics/event hook. Silent
+  degradation is a bug — if the component fails, the host must be able to see it.
+- **Go**: `errored`/`dropped`/`recovered` counters in `Metrics()`, daemon-death
+  via `SetOnEvent`.
+- **Sources**: kit convention — Universal.
+
+### L6. Safe Lifecycle / Bounded Shutdown [P0]
+- **Principle**: Close/flush/drain is bounded by a deadline; it cannot deadlock
+  the process on shutdown. The flush guarantee (best-effort vs durable) is
+  documented and honored.
+- **Go**: shutdown timeout; no unbounded `wg.Wait`; document flush semantics.
+- **Sources**: Universal.
+
+### L7. Business-Data Protection [P1 critical paths]
+- **Principle**: for business-critical records (audit, billing, transactions),
+  loss is bounded and visible, critical paths have a guaranteed flush, and the
+  drop rate / latency / breaker-open duration are exposed as metrics so business
+  owners can see impact. Extends L1-L6 with a data-integrity stance.
+- **Go**: critical-level bypass of sampling + drop; durable flush on
+  Panic/Fatal; loss/failover metrics.
+- **Sources**: kit convention — Opinionated.
 
 ---
 
 ## Multi-Agent Review Design
 
 Each role agent receives the package source + its dimension's rules + available
-tools. Agents run in parallel:
+tools. Agents run in parallel. Tooling is language-neutral in role; the Go
+instantiation is shown.
 
-| Agent | Dimensions | Key Tools |
+| Agent | Dimensions | Key tools (Go today) |
 |---|---|---|
-| **Architect** | A, B, J | import analysis, godoc review, go.mod diff |
-| **SRE** | D, G | `go test -bench -benchmem`, go vet, code review |
-| **QA** | E, F | `go test -race -cover`, test file review |
+| **Architect** | A, B, J | import analysis, godoc review, `go.mod` diff |
+| **SRE** | D, G, L | `go test -bench -benchmem`, `go vet`, resilience review |
+| **QA** | E, F | `go test -race -cover`, test-file review |
 | **Developer** | C, H | README check, godoc, example review |
-| **Security** | I | gosec, input validation audit, resource exhaustion review |
+| **Security** | I | security linter, input-validation & resource-exhaustion audit |
 
-Each agent outputs:
+Each agent emits, per rule:
 ```
-{rule, severity, PASS/FAIL, detail, source}
+{rule, severity, PASS/FAIL/WARN, detail, source}
 ```
 
-Final synthesis: collect, sort by severity (P0 first), produce go/no-go.
+Final synthesis: collect, sort by severity (P0 first), produce a go/no-go.
 
 ### Go/No-Go Decision
 - **GO**: 0 P0 failures.
-- **GO with conditions**: P0 failures are defensive/unreachable (documented).
+- **GO with conditions**: P0 failures are on defensive/unreachable paths and
+  documented.
 - **NO-GO**: any P0 failure on a live code path.
+
+### When the kit adds a second language
+1. Add the language to the [mechanism map](#cross-language-mechanism-map).
+2. Under each rule, add a `<Lang>:` line mirroring the principle with that
+   language's tooling — do **not** duplicate the principle or fork the rulebook.
+3. Add a lint-baseline section under K for that language.
+4. Keep severities and acceptance levels identical across languages.
