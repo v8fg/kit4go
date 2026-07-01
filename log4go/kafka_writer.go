@@ -117,6 +117,24 @@ type KafKaWriterOptions struct {
 	// kafka.AcksAll / kafka.AcksNone constants.
 	Acks string `json:"acks" mapstructure:"acks"`
 
+	// BreakerDisabled opts out of the inline producer circuit breaker (L4).
+	// Default false (breaker ON): under a sustained broker outage the daemon
+	// diverts records to the spill store (OverflowSpill) instead of futile
+	// Sends, so a kafka-side failure doesn't lose records or stall the caller.
+	// Disable only if you handle downstream errors yourself.
+	BreakerDisabled bool `json:"breaker_disabled" mapstructure:"breaker_disabled"`
+	// BreakerFailRate is the error/sent ratio that trips the breaker over
+	// BreakerWindow. <=0 → 0.5 (50% — trips on real outages, not transient blips).
+	BreakerFailRate float64 `json:"breaker_fail_rate" mapstructure:"breaker_fail_rate"`
+	// BreakerMinSamples is the minimum sends in a window before the rate is
+	// trusted. <=0 → 20. Guards against tripping on tiny low-volume windows.
+	BreakerMinSamples uint64 `json:"breaker_min_samples" mapstructure:"breaker_min_samples"`
+	// BreakerWindow is the rolling evaluation window. <=0 → 2s.
+	BreakerWindow time.Duration `json:"breaker_window" mapstructure:"breaker_window"`
+	// BreakerCooldown is how long the breaker stays open before probing
+	// recovery (half-open). <=0 → 5s.
+	BreakerCooldown time.Duration `json:"breaker_cooldown" mapstructure:"breaker_cooldown"`
+
 	// ProducerSnapshotHistory enables the underlying kafka.Producer's Snapshot
 	// history ring (retains the last N Snapshot() samples for trend analysis).
 	// 0 (default) = disabled. Set to e.g. 60 for 1 min at 1s scrape cadence.
@@ -134,11 +152,13 @@ type KafKaWriter struct {
 	messages chan kafka.Message
 	options  KafKaWriterOptions
 
-	policy  OverflowPolicy
-	spiller Spiller[kafka.Message]
-	stats   OverflowStats
-	sent    uint64
-	errored uint64
+	policy     OverflowPolicy
+	spiller    Spiller[kafka.Message]
+	breaker    *kafkaBreaker // inline circuit breaker; nil only when disabled (L4)
+	stats      OverflowStats
+	sent       uint64
+	errored    uint64
+	failovered uint64 // records diverted to spill on breaker-open / sync send-error (L4)
 	// onEvent is an optional real-time metric hook (reserved for monitoring
 	// integration). Nil disables it. Must be non-blocking.
 	onEvent         func(name string, delta int64)
@@ -190,6 +210,10 @@ func NewKafKaWriter(options KafKaWriterOptions) *KafKaWriter {
 	}
 	w.codec = KafkaCodecJSON{} // default codec
 	w.stats.SetAlertEvery(1000, 1000)
+	// inline circuit breaker (default ON; opt out via BreakerDisabled). Opens on
+	// a sustained broker-error rate so the daemon can fail records over to the
+	// spill store instead of losing them (L4: downstream isolation).
+	w.breaker = newKafkaBreakerFromOptions(options, time.Now())
 	return w
 }
 
@@ -442,6 +466,59 @@ func (k *KafKaWriter) send(msg kafka.Message) {
 	}
 }
 
+// sendOne delivers a single message under the breaker. When the breaker is open
+// and a spill store exists (OverflowSpill), the record is diverted to spill
+// instead of a futile Send that would async-fail and be lost. A sync client-side
+// Send error is also failover'd to spill under Spill policy (at-least-once).
+func (k *KafKaWriter) sendOne(msg kafka.Message) {
+	if k.breaker != nil && k.breaker.isOpen() && k.spiller != nil {
+		k.failover(msg)
+		return
+	}
+	var err error
+	if k.producerNotNil() {
+		err = k.producer.Send(context.Background(), msg)
+	}
+	if k.breaker != nil {
+		k.breaker.recordSend()
+	}
+	if err != nil {
+		if k.breaker != nil {
+			k.breaker.recordError()
+		}
+		if k.spiller != nil {
+			k.failover(msg) // sync client-side error → durable failover
+			return
+		}
+		atomic.AddUint64(&k.errored, 1)
+		if k.onEvent != nil {
+			k.onEvent("error", 1)
+		}
+		log.Printf("[log4go] kafka send err: %v", err)
+		return
+	}
+	atomic.AddUint64(&k.sent, 1)
+	if k.onEvent != nil {
+		k.onEvent("sent", 1)
+	}
+}
+
+// failover routes a record to the spill store when the producer path is
+// unavailable (breaker open) or a sync send errored. The record is recovered via
+// drainSpill once the breaker closes. With no spill store it degrades to a
+// counted drop — Drop/Block policies keep their existing behavior.
+func (k *KafKaWriter) failover(msg kafka.Message) {
+	atomic.AddUint64(&k.failovered, 1)
+	if k.spiller != nil && k.spiller.Push(msg) {
+		k.stats.IncSpilled()
+	} else {
+		k.stats.IncDropped()
+	}
+	if k.onEvent != nil {
+		k.onEvent("failover", 1)
+	}
+}
+
 // drainSpill re-injects recovered records into the channel (non-blocking).
 func (k *KafKaWriter) drainSpill() {
 	if k.spiller == nil || k.spiller.Len() == 0 {
@@ -484,6 +561,9 @@ func (k *KafKaWriter) daemon() {
 		k.producer.SetOnEvent(func(e kafka.ProducerEvent) {
 			if e.Name == "error" {
 				atomic.AddUint64(&k.errored, 1)
+				if k.breaker != nil {
+					k.breaker.recordError() // feeds the error-rate window (L4)
+				}
 				if k.onEvent != nil {
 					k.onEvent("error", 1)
 				}
@@ -511,17 +591,46 @@ func (k *KafKaWriter) daemon() {
 			if len(batch) == 0 {
 				return
 			}
+			// Broker down (breaker open) with a spill store: divert the whole
+			// batch to spill rather than a futile SendBatch that async-fails.
+			if k.breaker != nil && k.breaker.isOpen() && k.spiller != nil {
+				for _, m := range batch {
+					k.failover(m)
+				}
+				batch = batch[:0]
+				return
+			}
+			var batchErr error
 			if k.producerNotNil() {
-				_ = k.producer.SendBatch(context.Background(), batch)
+				batchErr = k.producer.SendBatch(context.Background(), batch)
+			}
+			if batchErr != nil && k.spiller != nil {
+				// client-side failure: requeue the batch to spill (at-least-once).
+				for _, m := range batch {
+					k.failover(m)
+				}
+				batch = batch[:0]
+				return
 			}
 			n := uint64(len(batch))
 			atomic.AddUint64(&k.sent, n)
-			atomic.AddUint64(&k.batches, 1)
-			if n > atomic.LoadUint64(&k.batchMax) { // daemon is the sole writer: Load/Store is safe
-				atomic.StoreUint64(&k.batchMax, n)
+			if k.breaker != nil {
+				k.breaker.recordSendN(n)
 			}
-			if k.onEvent != nil {
-				k.onEvent("sent", int64(n))
+			if batchErr != nil {
+				// client-side error, no spill store: count errored, drop the batch.
+				atomic.AddUint64(&k.errored, n)
+				if k.onEvent != nil {
+					k.onEvent("error", int64(n))
+				}
+			} else {
+				atomic.AddUint64(&k.batches, 1)
+				if n > atomic.LoadUint64(&k.batchMax) { // daemon sole writer: Load/Store safe
+					atomic.StoreUint64(&k.batchMax, n)
+				}
+				if k.onEvent != nil {
+					k.onEvent("sent", int64(n))
+				}
 			}
 			batch = batch[:0]
 		}
@@ -542,18 +651,15 @@ func (k *KafKaWriter) daemon() {
 					flush()
 				}
 			} else {
-				if k.producerNotNil() {
-					_ = k.producer.Send(context.Background(), mes)
-				}
-				atomic.AddUint64(&k.sent, 1)
-				if k.onEvent != nil {
-					k.onEvent("sent", 1)
-				}
+				k.sendOne(mes)
 			}
 		case <-flushC:
 			flush()
 		case <-ticker.C:
 			k.drainSpill()
+			if k.breaker != nil {
+				k.breaker.evaluate(time.Now()) // cold-path state machine (L4)
+			}
 		}
 	}
 }
@@ -724,6 +830,8 @@ type WriterMetrics struct {
 	InFlight      uint64 // producer in-flight records (Enqueued−Success−Failed) — linger backlog depth
 	BufferedBytes uint64 // producer buffer memory (BytesEnqueued−Bytes−BytesFailed)
 	Backend       string // underlying client ("sarama"/"franz-go"); "" if no producer
+	Failovered    uint64 // records diverted to spill on breaker-open / sync send-error (L4)
+	CircuitState  int32  // 0 closed, 1 open, 2 half-open — the breaker's current state (L4)
 }
 
 // Metrics returns a snapshot of operational counters for monitoring.
@@ -737,14 +845,16 @@ func (k *KafKaWriter) Metrics() WriterMetrics {
 		spillLen = k.spiller.Len()
 	}
 	m := WriterMetrics{
-		Sent:     atomic.LoadUint64(&k.sent),
-		Errored:  atomic.LoadUint64(&k.errored),
-		Dropped:  k.stats.Dropped(),
-		Spilled:  k.stats.Spilled(),
-		Queued:   queued,
-		SpillLen: spillLen,
-		Batches:  atomic.LoadUint64(&k.batches),
-		BatchMax: int(atomic.LoadUint64(&k.batchMax)),
+		Sent:         atomic.LoadUint64(&k.sent),
+		Errored:      atomic.LoadUint64(&k.errored),
+		Dropped:      k.stats.Dropped(),
+		Spilled:      k.stats.Spilled(),
+		Queued:       queued,
+		SpillLen:     spillLen,
+		Batches:      atomic.LoadUint64(&k.batches),
+		BatchMax:     int(atomic.LoadUint64(&k.batchMax)),
+		Failovered:   atomic.LoadUint64(&k.failovered),
+		CircuitState: k.breakerStateCode(),
 	}
 	if k.producerNotNil() {
 		pm := k.producer.Metrics()
@@ -753,6 +863,15 @@ func (k *KafKaWriter) Metrics() WriterMetrics {
 		m.Backend = k.producer.Backend()
 	}
 	return m
+}
+
+// breakerStateCode returns the breaker's int state for Metrics, or closed when
+// the breaker is disabled (nil).
+func (k *KafKaWriter) breakerStateCode() int32 {
+	if k.breaker == nil {
+		return breakerClosed
+	}
+	return k.breaker.stateCode()
 }
 
 // ProducerSnapshot returns the underlying kafka.Producer's full monitoring
