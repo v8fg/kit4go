@@ -140,7 +140,10 @@
 //   - Local dev:          ConsoleWriter (unbuffered), default config.
 //   - Production disk:    FileWriter{Async:true, OverflowPolicy:"drop"} (~4.6M QPS);
 //     add SpillType:"ring" to survive bursts without hot-data loss.
-//   - Production Kafka:   KafKaWriter{BufferSize, OverflowPolicy:"spill", SpillType:"ring"}.
+//   - Production Kafka:   KafKaWriter{BufferSize, OverflowPolicy:"spill", SpillType:"ring"}; the
+//     inline breaker (default on) diverts records to the spill store during a broker outage and
+//     replays them on recovery, so a kafka failure doesn't lose records or stall the caller. See
+//     RESILIENCE.md.
 //   - Container stdout:   ConsoleWriter{Buffered:true} (bufio cuts syscalls).
 //   - Remote collection:  NetWriter{Network:"tcp", OverflowPolicy:"drop"} — LOW VOLUME only;
 //     high-throughput shipping must use FileWriter + Kafka.
