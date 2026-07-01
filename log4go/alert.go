@@ -157,6 +157,11 @@ func (w *WebhookAlertSink) allow() bool {
 func (w *WebhookAlertSink) SetMaxRetries(n int) { w.maxRetries = n }
 
 func (w *WebhookAlertSink) daemon() {
+	defer func() {
+		if r := recover(); r != nil {
+			recordDaemonPanic("webhook", r)
+		}
+	}()
 	for {
 		select {
 		case m := <-w.ch:

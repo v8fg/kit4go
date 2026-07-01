@@ -551,6 +551,11 @@ func (k *KafKaWriter) producerNotNil() bool {
 // BatchFlushInterval / shutdown — cutting daemon-side per-call overhead at high
 // QPS. Per-record mode (default) Sends each immediately (lowest latency).
 func (k *KafKaWriter) daemon() {
+	defer func() {
+		if r := recover(); r != nil {
+			recordDaemonPanic("kafka", r)
+		}
+	}()
 	k.run.Store(true)
 
 	// install the error-accounting hook (replaces the old sarama Errors() drain
@@ -795,7 +800,7 @@ func (k *KafKaWriter) Stop() {
 		return // already stopped, or another Stop in flight — atomic claim avoids a double close
 	}
 	close(k.messages)
-	<-k.quit
+	waitQuit("kafka", k.quit, defaultShutdownTimeout)
 	if k.producerNotNil() {
 		if err := k.producer.Close(); err != nil {
 			log.Printf("[log4go] kafkaWriter stop error: %v", err.Error())

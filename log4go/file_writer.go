@@ -631,6 +631,11 @@ func (w *FileWriter) startDaemon() {
 // shutdown, avoiding any send while the daemon is winding down.
 func (w *FileWriter) daemon() {
 	defer w.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			recordDaemonPanic("file", r)
+		}
+	}()
 	ticker := time.NewTicker(w.flushInterval)
 	defer ticker.Stop()
 	for {
@@ -792,7 +797,7 @@ func (w *FileWriter) Stop() {
 	}
 	w.closing.Store(true)
 	close(w.stop)
-	<-w.quit
+	waitQuit("file", w.quit, defaultShutdownTimeout)
 	w.messages = nil
 	if w.spiller != nil {
 		_ = w.spiller.Close()

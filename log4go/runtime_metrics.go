@@ -36,6 +36,11 @@ type RuntimeMetrics struct {
 	// logged value is silently becoming null instead of crashing the pipeline —
 	// investigate the caller's value. See field.safeJSONMarshal.
 	MarshalPanics uint64
+	// DaemonPanics counts panics recovered inside a writer daemon goroutine
+	// (file/kafka/net/webhook). Non-zero means a writer has DIED — its records
+	// stop flowing. Restart the process (or the writer) to recover. See
+	// daemon_panic.go.
+	DaemonPanics uint64
 }
 
 // RuntimeStats returns a snapshot of runtime memory + goroutine metrics for
@@ -59,5 +64,6 @@ func RuntimeStats() RuntimeMetrics {
 		StackInuse:    ms.StackInuse,
 		GCCPUFraction: ms.GCCPUFraction,
 		MarshalPanics: atomic.LoadUint64(&marshalPanics),
+		DaemonPanics:  atomic.LoadUint64(&daemonPanics),
 	}
 }

@@ -226,6 +226,11 @@ func (n *NetWriter) writeOne(r *Record) error {
 // channel to signal shutdown, and the daemon drains any remaining queued +
 // spilled records before exiting.
 func (n *NetWriter) daemon() {
+	defer func() {
+		if r := recover(); r != nil {
+			recordDaemonPanic("net", r)
+		}
+	}()
 	n.run.Store(true)
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -299,7 +304,7 @@ func (n *NetWriter) Stop() {
 		return // already stopped, or another Stop in flight — atomic claim avoids a double close
 	}
 	close(n.messages)
-	<-n.quit
+	waitQuit("net", n.quit, defaultShutdownTimeout)
 	n.connMu.Lock()
 	if n.conn != nil {
 		_ = n.conn.Close()
