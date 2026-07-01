@@ -25,6 +25,7 @@ type Pipeline[I, O any] struct {
 	wg      sync.WaitGroup
 	done    chan struct{}
 	once    sync.Once
+	ctx     context.Context
 }
 
 // Option configures the Pipeline.
@@ -62,6 +63,7 @@ func New[I, O any](workers int, stage Stage[I, O], opts ...Option[I, O]) *Pipeli
 		in:      make(chan I, workers),
 		out:     make(chan O, workers),
 		done:    make(chan struct{}),
+		ctx:     context.Background(),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -110,7 +112,7 @@ func (p *Pipeline[I, O]) drain() {
 // p.out has room for remaining items because Close waits for workers before
 // closing p.out.
 func (p *Pipeline[I, O]) process(item I) {
-	out, pass, err := p.stage(context.Background(), item)
+	out, pass, err := p.stage(p.ctx, item)
 	if err != nil || !pass {
 		return
 	}

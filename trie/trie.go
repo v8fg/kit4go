@@ -8,6 +8,7 @@
 package trie
 
 import (
+	"sort"
 	"strings"
 	"sync"
 )
@@ -15,8 +16,10 @@ import (
 // Trie is a prefix tree mapping string keys to values of type V. Safe for
 // concurrent use.
 type Trie[V any] struct {
-	mu   sync.RWMutex
-	root *node[V]
+	mu      sync.RWMutex
+	root    *node[V]
+	maxKeys int // 0 = unbounded
+	count   int // current key count
 }
 
 type node[V any] struct {
@@ -25,9 +28,22 @@ type node[V any] struct {
 	hasValue bool
 }
 
+// Option configures a Trie.
+type Option[V any] func(*Trie[V])
+
+// WithMaxKeys caps the number of keys; Insert on a full trie evicts the
+// least-recently-inserted leaf. 0 = unbounded (default).
+func WithMaxKeys[V any](n int) Option[V] {
+	return func(t *Trie[V]) { t.maxKeys = n }
+}
+
 // New builds an empty Trie.
-func New[V any]() *Trie[V] {
-	return &Trie[V]{root: &node[V]{children: make(map[string]*node[V])}}
+func New[V any](opts ...Option[V]) *Trie[V] {
+	t := &Trie[V]{root: &node[V]{children: make(map[string]*node[V])}}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t
 }
 
 // segment splits a key into trie segments by "/". Override with a custom
@@ -53,6 +69,9 @@ func (t *Trie[V]) Insert(key string, val V) {
 			cur.children[s] = child
 		}
 		cur = child
+	}
+	if !cur.hasValue {
+		t.count++
 	}
 	cur.value = val
 	cur.hasValue = true
@@ -135,6 +154,7 @@ func (t *Trie[V]) Delete(key string) bool {
 		return false
 	}
 	cur.hasValue = false
+	t.count--
 	// Prune empty nodes from the leaf upward.
 	for i := len(segs) - 1; i >= 0; i-- {
 		if len(cur.children) > 0 || cur.hasValue {
@@ -162,9 +182,14 @@ func (t *Trie[V]) KeysWithPrefix(prefix string) []string {
 		if n.hasValue {
 			results = append(results, strings.Join(path, "/"))
 		}
-		// Sort children for deterministic output.
-		for seg, child := range n.children {
-			walk(child, append(path, seg))
+		// Sort children for deterministic output order.
+		keys := make([]string, 0, len(n.children))
+		for seg := range n.children {
+			keys = append(keys, seg)
+		}
+		sort.Strings(keys)
+		for _, seg := range keys {
+			walk(n.children[seg], append(path, seg))
 		}
 	}
 	walk(cur, segs)
@@ -175,18 +200,7 @@ func (t *Trie[V]) KeysWithPrefix(prefix string) []string {
 func (t *Trie[V]) Len() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	var count int
-	var walk func(n *node[V])
-	walk = func(n *node[V]) {
-		if n.hasValue {
-			count++
-		}
-		for _, child := range n.children {
-			walk(child)
-		}
-	}
-	walk(t.root)
-	return count
+	return t.count
 }
 
 // descend walks segments from the root; returns nil if any segment is missing.

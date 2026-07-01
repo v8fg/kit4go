@@ -39,6 +39,14 @@ var (
 	ErrOverflow = errors.New("money: overflow")
 	// ErrInvalidAmount is returned for an unparseable amount string.
 	ErrInvalidAmount = errors.New("money: invalid amount")
+	// ErrDivideByZero is returned by Div when the divisor is 0.
+	ErrDivideByZero = errors.New("money: divide by zero")
+	// ErrNoRatios is returned by Allocate when the ratios slice is empty.
+	ErrNoRatios = errors.New("money: no ratios")
+	// ErrNegativeRatio is returned by Allocate when a ratio is negative.
+	ErrNegativeRatio = errors.New("money: negative ratio")
+	// ErrZeroRatios is returned by Allocate when all ratios sum to zero.
+	ErrZeroRatios = errors.New("money: ratios sum to zero")
 )
 
 // Rounding selects how a non-integer minor-unit result is rounded.
@@ -252,7 +260,7 @@ func (m Money) Scale(ratio float64, mode Rounding) (Money, error) {
 // Div divides the amount by an integer divisor, rounding the remainder.
 func (m Money) Div(divisor int64, mode Rounding) (Money, error) {
 	if divisor == 0 {
-		return Money{}, errors.New("money: divide by zero")
+		return Money{}, ErrDivideByZero
 	}
 	q := m.amount / divisor
 	r := m.amount % divisor
@@ -296,22 +304,26 @@ func (m Money) Equal(other Money) bool { return m.amount == other.amount && m.cu
 // ratios must be non-negative and sum > 0.
 func (m Money) Allocate(ratios []int) ([]Money, error) {
 	if len(ratios) == 0 {
-		return nil, errors.New("money: no ratios")
+		return nil, ErrNoRatios
 	}
 	total := 0
 	for _, r := range ratios {
 		if r < 0 {
-			return nil, errors.New("money: negative ratio")
+			return nil, ErrNegativeRatio
 		}
 		total += r
 	}
 	if total == 0 {
-		return nil, errors.New("money: ratios sum to zero")
+		return nil, ErrZeroRatios
 	}
 	out := make([]Money, len(ratios))
 	allocated := int64(0)
 	for i, r := range ratios {
-		share := m.amount * int64(r) / int64(total)
+		product, err := mulChecked(m.amount, int64(r))
+		if err != nil {
+			return nil, err
+		}
+		share := product / int64(total)
 		out[i] = Money{amount: share, cur: m.cur}
 		allocated += share
 	}

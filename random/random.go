@@ -1,7 +1,7 @@
 package random
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"unsafe"
 )
@@ -47,10 +47,10 @@ func randStringWithLetterDigits(n int, containDigits bool) string {
 	}
 
 	b := make([]byte, n)
-	// A localRand.Int63() generates 63 random bits, enough for letterIdxMax characters!
-	for i, cache, remain := n-1, localRand.Int63(), letterIdxMax; i >= 0; {
+	// A rand.Int64() generates 63 random bits, enough for letterIdxMax characters!
+	for i, cache, remain := n-1, rand.Int64(), letterIdxMax; i >= 0; {
 		if remain == 0 {
-			cache, remain = localRand.Int63(), letterIdxMax
+			cache, remain = rand.Int64(), letterIdxMax
 		}
 		if idx := int(cache & letterIdxMask); idx < len(charset) {
 			b[i] = charset[idx]
@@ -72,10 +72,10 @@ func RandStringInCharset(n int, charset []rune) string {
 	b := strings.Builder{}
 	b.Grow(n)
 
-	for i, cache, remain := n-1, localRand.Int63(), idxMax; i >= 0; {
+	for i, cache, remain := n-1, rand.Int64(), idxMax; i >= 0; {
 		// round repeat
 		if remain == 0 || cache == 0 {
-			cache, remain = localRand.Int63(), idxMax
+			cache, remain = rand.Int64(), idxMax
 		}
 		if idx := int(cache & idxMask); idx < len(charset) {
 			b.WriteRune(charset[idx])
@@ -112,7 +112,7 @@ func RandStringWithKind(n int, kind int) []byte {
 	for i := 0; i < n; i++ {
 		ik = RandIn(posIndex)
 		count, base := characters[ik][0], characters[ik][1]
-		result[i] = uint8(base + rand.Intn(count))
+		result[i] = uint8(base + rand.IntN(count))
 	}
 	return result
 }
@@ -127,7 +127,7 @@ func RandIn[T any](slice []T) T {
 
 	idxBits := maxBits(n)
 	idxMask := int64(1<<idxBits - 1)
-	idx := int(localRand.Int63()&idxMask) % n
+	idx := int(rand.Int64()&idxMask) % n
 	return slice[idx]
 }
 
@@ -142,7 +142,7 @@ func RandNIn[T any](n int, slice []T) []T {
 
 	m := make([]int, size)
 	for i := 0; i < size; i++ {
-		j := localRand.Intn(i + 1)
+		j := rand.IntN(i + 1)
 		m[i] = m[j]
 		m[j] = i
 	}
@@ -230,7 +230,7 @@ const digitBytes = "0123456789"
 // NumericCode returns a random n-digit numeric string (leading zeros allowed),
 // e.g. a 6-digit SMS/email verification code. n <= 0 returns "".
 //
-// This is a convenience over the package's math/rand pool and is NOT
+// This is a convenience over the package's math/rand/v2 global source and is NOT
 // cryptographically secure; for 2FA use package otp (TOTP/HOTP) or crypto
 // sources (CryptoInt/CryptoRead).
 func NumericCode(n int) string {
