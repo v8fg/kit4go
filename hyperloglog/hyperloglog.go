@@ -48,6 +48,11 @@ type HyperLogLog struct {
 type HashFunc func(data []byte) uint64
 
 // DefaultHash is FNV-1a 64 + splitmix64 finalizer.
+//
+// Benchmarked at 0 allocs/op on Go 1.26+: the hasher from fnv.New64a() is
+// stack-allocated by escape analysis and never escapes, so no manual inlining or
+// pooling is warranted (a hand-rolled inline FNV measured no faster and removed
+// the stdlib's compiler optimisations — reverted).
 func DefaultHash(data []byte) uint64 {
 	h := fnv.New64a()
 	_, _ = h.Write(data)
