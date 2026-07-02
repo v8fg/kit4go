@@ -109,7 +109,7 @@ func (o ClientOptions) withDefaults() ClientOptions {
 	if o.BufferSize <= 0 {
 		o.BufferSize = d.BufferSize
 	}
-	if o.RetryMax <= 0 {
+	if o.RetryMax < 0 {
 		o.RetryMax = d.RetryMax
 	}
 	if o.RetryWaitMin <= 0 {

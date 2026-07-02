@@ -29,9 +29,11 @@
 //
 // # Retry (unary only)
 //
-// Retries gRPC codes in RetryCodes (default: Unavailable, DeadlineExceeded)
-// with exponential backoff + jitter. Never retries on context cancellation
-// or non-retryable codes (NotFound, PermissionDenied, etc.).
+// Retries gRPC codes in RetryCodes (default: Unavailable) with exponential
+// backoff + jitter. DeadlineExceeded is excluded by default (a server may have
+// committed before its deadline — retrying risks a duplicate side effect); opt
+// in only for idempotent RPCs. Never retries on context cancellation or
+// non-retryable codes (NotFound, PermissionDenied, etc.).
 // Streams are NOT retried (semantically unsafe — caller must reconnect).
 //
 // # Monitoring

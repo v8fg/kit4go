@@ -64,10 +64,13 @@ type ClientOptions struct {
 	RetryMax int `json:"retry_max" mapstructure:"retry_max"`
 
 	// RetryCodes is the set of gRPC status codes that trigger a unary-RPC
-	// retry. Default [codes.Unavailable, codes.DeadlineExceeded]. A nil/empty
-	// slice is replaced with the default by withDefaults. Pass a single-element
-	// slice containing codes.OK to effectively disable retry (no real RPC ever
-	// returns OK as an error).
+	// retry. Default [codes.Unavailable] — Unavailable means the RPC was NOT
+	// processed, so retrying is replay-safe. DeadlineExceeded is excluded by
+	// default because a server may have already committed the work before its
+	// deadline elapsed (retrying would duplicate a side effect); opt in to it
+	// only for idempotent RPCs. A nil/empty slice is replaced with the default
+	// by withDefaults. Pass a single-element slice containing codes.OK to
+	// effectively disable retry (no real RPC ever returns OK as an error).
 	RetryCodes []codes.Code `json:"-"`
 
 	// RetryWaitMin is the lower bound of the exponential backoff applied
@@ -95,7 +98,7 @@ func defaultClientOptions() ClientOptions {
 		ConnectTimeout: 5 * time.Second,
 		RequestTimeout: 10 * time.Second,
 		RetryMax:       2,
-		RetryCodes:     []codes.Code{codes.Unavailable, codes.DeadlineExceeded},
+		RetryCodes:     []codes.Code{codes.Unavailable},
 		RetryWaitMin:   100 * time.Millisecond,
 		RetryWaitMax:   1 * time.Second,
 	}

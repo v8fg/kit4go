@@ -29,9 +29,13 @@ linters:
     rules:
       # errcheck noise: unchecked .Close() etc. in tests is idiomatic and
       # low-signal; production code is still fully checked.
+      # errorlint: test assertions often compare a sentinel directly (e.g.
+      # err != io.EOF for a stream EOF), which is correct for unwrapped errors
+      # and lower-signal than production error-chain handling.
       - path: "_test\\.go"
         linters:
           - errcheck
+          - errorlint
       # Opinionated style / quick-fix / simplification families — disabled wholesale.
       - linters:
           - staticcheck
