@@ -42,7 +42,17 @@ func New(after time.Duration, fn func()) *Debounce {
 	if fn == nil {
 		panic("debounce: fn is required")
 	}
-	return &Debounce{after: after, fn: fn}
+	d := &Debounce{after: after}
+	// Wrap fn so the AfterFunc goroutine never invokes the user fn after Close
+	// (Stop() returns false for an already-dispatched timer; without this guard
+	// fn would fire once after Close).
+	d.fn = func() {
+		if d.closed.Load() {
+			return
+		}
+		fn()
+	}
+	return d
 }
 
 // Call schedules (or reschedules) the debounced execution. The arg is stored
@@ -80,8 +90,11 @@ func (d *Debounce) Flush() {
 	timer := d.timer
 	d.timer = nil
 	d.mu.Unlock()
-	if timer != nil {
-		timer.Stop()
+	// Stop() == true means the timer was still pending (had not fired), so the
+	// AfterFunc goroutine will NOT run — fire it ourselves. Stop() == false
+	// means it already fired (or was stopped), so fn already ran via AfterFunc;
+	// firing again here would double-execute. This guard closes that race.
+	if timer != nil && timer.Stop() {
 		go d.fn()
 	}
 }

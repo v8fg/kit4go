@@ -54,8 +54,9 @@ func WithTTL[K comparable, V any](d time.Duration) Option[K, V] {
 }
 
 // WithOnEvicted registers a callback invoked once for every entry that leaves
-// the cache (eviction, explicit Delete, expiry, Purge, or Resize). It runs
-// under the cache lock — keep it cheap (no re-entrant cache calls).
+// the cache (eviction, explicit Delete, expiry, Purge, or Resize). The callback
+// runs WITHOUT the cache lock held, so it may safely call back into the cache
+// (Get/Set/...). Keep it cheap; it runs on the caller's goroutine.
 func WithOnEvicted[K comparable, V any](fn func(key K, value V)) Option[K, V] {
 	return func(c *Cache[K, V]) { c.onEvicted = fn }
 }
@@ -75,6 +76,24 @@ func New[K comparable, V any](opts ...Option[K, V]) *Cache[K, V] {
 	return c
 }
 
+// evictedKV records an entry removed under the lock, dispatched to onEvicted
+// after the lock is released — a re-entrant callback would otherwise deadlock.
+type evictedKV[K comparable, V any] struct {
+	key   K
+	value V
+}
+
+// fireEvicted invokes onEvicted for each evicted entry. Called WITHOUT the lock
+// so callbacks may safely call back into the cache.
+func (c *Cache[K, V]) fireEvicted(evicted []evictedKV[K, V]) {
+	if c.onEvicted == nil {
+		return
+	}
+	for _, e := range evicted {
+		c.onEvicted(e.key, e.value)
+	}
+}
+
 // Set inserts or refreshes key=value, applying the cache's default TTL. It
 // promotes an existing entry to most-recently-used.
 func (c *Cache[K, V]) Set(key K, value V) {
@@ -89,32 +108,35 @@ func (c *Cache[K, V]) SetWithTTL(key K, value V, ttl time.Duration) {
 
 func (c *Cache[K, V]) set(key K, value V, ttl time.Duration) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	var exp time.Time
 	if ttl > 0 {
 		exp = c.clock().Add(ttl)
 	}
+	var evicted []evictedKV[K, V]
 	if el, ok := c.items[key]; ok {
 		c.ll.MoveToFront(el)
 		e := el.Value.(*entry[K, V])
 		e.value = value
 		e.expiresAt = exp
-		return
+	} else {
+		el := c.ll.PushFront(&entry[K, V]{key: key, value: value, expiresAt: exp})
+		c.items[key] = el
+		if c.maxSize > 0 && c.ll.Len() > c.maxSize {
+			c.evict(&evicted)
+		}
 	}
-	el := c.ll.PushFront(&entry[K, V]{key: key, value: value, expiresAt: exp})
-	c.items[key] = el
-	if c.maxSize > 0 && c.ll.Len() > c.maxSize {
-		c.evict()
-	}
+	c.mu.Unlock()
+	c.fireEvicted(evicted)
 }
 
-// evict removes the least-recently-used entry. Caller must hold the write lock.
-func (c *Cache[K, V]) evict() {
+// evict removes the least-recently-used entry, appending it to *evicted for
+// post-unlock dispatch. Caller must hold the write lock.
+func (c *Cache[K, V]) evict(evicted *[]evictedKV[K, V]) {
 	el := c.ll.Back()
 	if el == nil {
 		return
 	}
-	c.removeElement(el)
+	c.removeElement(el, evicted)
 }
 
 // Get returns the value for key and reports whether it was present and not
@@ -122,39 +144,49 @@ func (c *Cache[K, V]) evict() {
 // evicted and reported as a miss.
 func (c *Cache[K, V]) Get(key K) (V, bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	el, ok := c.items[key]
 	if !ok {
+		c.mu.Unlock()
 		var zero V
 		return zero, false
 	}
 	e := el.Value.(*entry[K, V])
 	if e.expired(c.clock()) {
-		c.removeElement(el)
+		var evicted []evictedKV[K, V]
+		c.removeElement(el, &evicted)
+		c.mu.Unlock()
+		c.fireEvicted(evicted)
 		var zero V
 		return zero, false
 	}
 	c.ll.MoveToFront(el)
-	return e.value, true
+	val := e.value
+	c.mu.Unlock()
+	return val, true
 }
 
 // Peek returns the value for key without promoting it. An expired entry is
 // reported as a miss (and evicted).
 func (c *Cache[K, V]) Peek(key K) (V, bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	el, ok := c.items[key]
 	if !ok {
+		c.mu.Unlock()
 		var zero V
 		return zero, false
 	}
 	e := el.Value.(*entry[K, V])
 	if e.expired(c.clock()) {
-		c.removeElement(el)
+		var evicted []evictedKV[K, V]
+		c.removeElement(el, &evicted)
+		c.mu.Unlock()
+		c.fireEvicted(evicted)
 		var zero V
 		return zero, false
 	}
-	return e.value, true
+	val := e.value
+	c.mu.Unlock()
+	return val, true
 }
 
 // Contains reports whether key is present and not expired, without promotion.
@@ -167,27 +199,32 @@ func (c *Cache[K, V]) Contains(key K) bool {
 // (if any) fires for the removed entry.
 func (c *Cache[K, V]) Delete(key K) bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	el, ok := c.items[key]
 	if !ok {
+		c.mu.Unlock()
 		return false
 	}
-	c.removeElement(el)
+	var evicted []evictedKV[K, V]
+	c.removeElement(el, &evicted)
+	c.mu.Unlock()
+	c.fireEvicted(evicted)
 	return true
 }
 
 // DeleteExpired removes all expired entries and returns the count removed.
 func (c *Cache[K, V]) DeleteExpired() int {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	now := c.clock()
+	var evicted []evictedKV[K, V]
 	removed := 0
 	for _, el := range c.items {
 		if el.Value.(*entry[K, V]).expired(now) {
-			c.removeElement(el)
+			c.removeElement(el, &evicted)
 			removed++
 		}
 	}
+	c.mu.Unlock()
+	c.fireEvicted(evicted)
 	return removed
 }
 
@@ -213,35 +250,41 @@ func (c *Cache[K, V]) Keys() []K {
 // Purge empties the cache, firing onEvicted for every entry.
 func (c *Cache[K, V]) Purge() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	var evicted []evictedKV[K, V]
 	for _, el := range c.items {
-		c.removeElement(el)
+		c.removeElement(el, &evicted)
 	}
+	c.mu.Unlock()
+	c.fireEvicted(evicted)
 }
 
 // Resize changes the max size and immediately evicts down to it, returning the
 // number of entries evicted. A new size <= 0 disables eviction.
 func (c *Cache[K, V]) Resize(n int) int {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.maxSize = n
 	if n <= 0 {
+		c.mu.Unlock()
 		return 0
 	}
-	evicted := 0
+	var evicted []evictedKV[K, V]
+	count := 0
 	for c.maxSize > 0 && c.ll.Len() > c.maxSize {
-		c.evict()
-		evicted++
+		c.evict(&evicted)
+		count++
 	}
-	return evicted
+	c.mu.Unlock()
+	c.fireEvicted(evicted)
+	return count
 }
 
-// removeElement removes a list element and its map entry, firing onEvicted.
-// Caller must hold the write lock.
-func (c *Cache[K, V]) removeElement(el *list.Element) {
+// removeElement removes a list element and its map entry, appending the evicted
+// entry to *evicted (if onEvicted is set) for post-unlock dispatch. Caller must
+// hold the write lock.
+func (c *Cache[K, V]) removeElement(el *list.Element, evicted *[]evictedKV[K, V]) {
 	e := c.ll.Remove(el).(*entry[K, V])
 	delete(c.items, e.key)
 	if c.onEvicted != nil {
-		c.onEvicted(e.key, e.value)
+		*evicted = append(*evicted, evictedKV[K, V]{key: e.key, value: e.value})
 	}
 }
