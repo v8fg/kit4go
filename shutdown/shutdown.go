@@ -189,26 +189,34 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.mu.Unlock()
 		return err
 	}
-	order := append([]string(nil), m.order...)
+	// Snapshot (name, *component) under the lock so the map read does not race a
+	// concurrent Add; the start calls run outside the lock as before.
+	type startItem struct {
+		name string
+		c    *component
+	}
+	items := make([]startItem, len(m.order))
+	for i, name := range m.order {
+		items[i] = startItem{name: name, c: m.byName[name]}
+	}
 	m.mu.Unlock()
 
-	started := make([]string, 0, len(order))
-	for _, name := range order {
-		c := m.byName[name]
-		if c.start == nil {
-			started = append(started, name)
+	started := make([]string, 0, len(items))
+	for _, it := range items {
+		if it.c == nil || it.c.start == nil {
+			started = append(started, it.name)
 			continue
 		}
 		sctx, cancel := context.WithTimeout(ctx, m.startTimeout)
-		err := c.start(sctx)
+		err := it.c.start(sctx)
 		cancel()
 		if err != nil {
 			// Roll back: stop what we started, in reverse. The rollback error is
 			// secondary to the start failure, so it is intentionally ignored.
 			_ = m.stopReverse(ctx, reverseStrings(started))
-			return fmt.Errorf("shutdown: start %s: %w", name, err)
+			return fmt.Errorf("shutdown: start %s: %w", it.name, err)
 		}
-		started = append(started, name)
+		started = append(started, it.name)
 		if ctx.Err() != nil {
 			_ = m.stopReverse(ctx, reverseStrings(started))
 			return ctx.Err()
@@ -234,17 +242,29 @@ func (m *Manager) Stop(ctx context.Context) error {
 }
 
 func (m *Manager) stopReverse(ctx context.Context, names []string) error {
-	var errs []ComponentError
+	// Snapshot name -> *component under the lock (a concurrent Add mutates the
+	// map); the stop calls run outside the lock so a slow stop doesn't block Add.
+	type stopItem struct {
+		name string
+		c    *component
+	}
+	m.mu.Lock()
+	items := make([]stopItem, 0, len(names))
 	for _, name := range names {
-		c := m.byName[name]
-		if c == nil || c.stop == nil {
+		items = append(items, stopItem{name: name, c: m.byName[name]})
+	}
+	m.mu.Unlock()
+
+	var errs []ComponentError
+	for _, it := range items {
+		if it.c == nil || it.c.stop == nil {
 			continue
 		}
 		sctx, cancel := context.WithTimeout(ctx, m.stopTimeout)
-		err := c.stop(sctx)
+		err := it.c.stop(sctx)
 		cancel()
 		if err != nil {
-			errs = append(errs, ComponentError{Name: name, Err: err})
+			errs = append(errs, ComponentError{Name: it.name, Err: err})
 		}
 	}
 	if len(errs) == 0 {

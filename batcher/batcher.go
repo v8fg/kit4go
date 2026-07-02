@@ -32,6 +32,11 @@ type Batcher[T any] struct {
 	flushCh chan chan struct{} // manual flush requests (each carries its ack)
 	closed  chan struct{}      // closed when the collector has fully stopped
 	once    sync.Once
+
+	// mu serializes Add's send with Close's final drain. Add holds the read lock
+	// during the buffered send; Close holds the write lock while draining
+	// stragglers, so an Add that raced the collector's exit cannot strand an item.
+	mu sync.RWMutex
 }
 
 // Option configures a Batcher.
@@ -76,13 +81,16 @@ func New[T any](maxSize int, interval time.Duration, flush func([]T), opts ...Op
 // does not enqueue) after Close.
 func (b *Batcher[T]) Add(item T) bool {
 	// Fast-path check: once Close has been called, reject without racing the
-	// buffered send. (Close fully completes — collector exited — before this
-	// flag would be observed, so done is definitively closed.)
+	// buffered send.
 	select {
 	case <-b.done:
 		return false
 	default:
 	}
+	// Hold the read lock during the send so Close's final drain (write lock)
+	// cannot miss this item: it waits for in-flight Adds to resolve, then drains.
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	select {
 	case b.in <- item:
 		return true
@@ -111,7 +119,29 @@ func (b *Batcher[T]) Flush() {
 func (b *Batcher[T]) Close() error {
 	b.once.Do(func() { close(b.done) })
 	<-b.closed
-	return nil
+	// Final drain: an Add that raced the collector's exit (its select picked the
+	// buffered send over <-done) left items in b.in that the collector's drain
+	// missed. Take the write lock so any in-flight Add finishes first — after
+	// this no further Add can send (done is closed, rejected on the fast-path) —
+	// then drain and flush the stragglers so Add's contract (true => flushed) holds.
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	buf := make([]T, 0, b.maxSize)
+	for {
+		select {
+		case item := <-b.in:
+			buf = append(buf, item)
+			if len(buf) >= b.maxSize {
+				b.flushFn(buf)
+				buf = make([]T, 0, b.maxSize)
+			}
+		default:
+			if len(buf) > 0 {
+				b.flushFn(buf)
+			}
+			return nil
+		}
+	}
 }
 
 // run is the collector goroutine.
