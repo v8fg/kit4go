@@ -22,6 +22,7 @@ type Fanout[T any] struct {
 	dropped    atomic.Uint64
 	published  atomic.Uint64
 	closed     atomic.Bool
+	done       chan struct{} // closed by Close before acquiring the write lock, so PublishBlocking can abort and release its RLock (no deadlock)
 }
 
 // Subscription is a single subscriber's receive channel + metadata.
@@ -45,7 +46,7 @@ func WithBufferSize[T any](n int) Option[T] {
 
 // New builds a Fanout.
 func New[T any](opts ...Option[T]) *Fanout[T] {
-	f := &Fanout[T]{subs: make(map[uint64]*Subscription[T]), bufferSize: 16}
+	f := &Fanout[T]{subs: make(map[uint64]*Subscription[T]), bufferSize: 16, done: make(chan struct{})}
 	for _, opt := range opts {
 		opt(f)
 	}
@@ -107,7 +108,9 @@ func (f *Fanout[T]) Publish(msg T) int {
 }
 
 // PublishBlocking broadcasts msg and blocks until all subscribers have received
-// it or ctx is cancelled. Holds a read lock during delivery.
+// it or ctx is cancelled. Holds a read lock during delivery, but also selects on
+// the fanout's done signal so a Close cannot deadlock against a full subscriber
+// channel under a non-cancellable ctx.
 func (f *Fanout[T]) PublishBlocking(ctx context.Context, msg T) (int, bool) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
@@ -121,6 +124,8 @@ func (f *Fanout[T]) PublishBlocking(ctx context.Context, msg T) (int, bool) {
 		case s.Ch <- msg:
 			delivered++
 		case <-ctx.Done():
+			return delivered, false
+		case <-f.done:
 			return delivered, false
 		}
 	}
@@ -145,6 +150,10 @@ func (f *Fanout[T]) Close() {
 	if !f.closed.CompareAndSwap(false, true) {
 		return
 	}
+	// Signal PublishBlocking to abort BEFORE acquiring the write lock: a
+	// PublishBlocking blocked on a full subscriber channel under a non-cancellable
+	// ctx holds the RLock, which would otherwise block this Lock forever.
+	close(f.done)
 	f.mu.Lock()
 	subs := f.subs
 	f.subs = make(map[uint64]*Subscription[T])
