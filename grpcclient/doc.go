@@ -36,6 +36,16 @@
 // non-retryable codes (NotFound, PermissionDenied, etc.).
 // Streams are NOT retried (semantically unsafe — caller must reconnect).
 //
+// RequestTimeout bounds the ENTIRE retry sequence, not each attempt: a slow first
+// attempt can leave little budget for retries (and a backoff sleep consumes part
+// of it). Budget per-attempt by shortening RequestTimeout, or retry manually
+// around a single attempt.
+//
+// Stream RPCs: the per-RPC context (carrying RequestTimeout) is freed only when
+// the stream is drained to EOF/error via RecvMsg. Abandoning a stream (dropping
+// it without draining) holds the context until RequestTimeout elapses — drain
+// streams to release resources promptly.
+//
 // # Monitoring
 //
 //	m := mw.Metrics()

@@ -233,6 +233,12 @@ func (c *Client) Send(ctx context.Context, data []byte) error {
 // larger than that are silently dropped past the buffer. The returned slice is
 // owned by the caller; it is a fresh allocation (not aliased to any internal
 // buffer) so it is safe to retain and mutate.
+//
+// Concurrency: SendReceive shares one connected socket across goroutines, so
+// concurrent SendReceive calls can interleave reads and a reply may be
+// attributed to the wrong request (UDP has no request-id correlation at the
+// socket). For request/response under concurrency, give each goroutine its own
+// Client or serialize SendReceive. Send (fire-and-forget) is safe to share.
 func (c *Client) SendReceive(ctx context.Context, data []byte) ([]byte, error) {
 	if c.closed.Load() {
 		return nil, errClosed

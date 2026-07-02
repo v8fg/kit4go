@@ -96,6 +96,14 @@ type ClientOptions struct {
 
 	// Breaker, when non-nil, wraps every call via Breaker.Execute. nil (the
 	// default) disables circuit-breaker integration.
+	//
+	// Scope to be aware of: the breaker covers the round-trip through receipt of
+	// the response HEADERS, not the response-body read that follows. A downstream
+	// that returns headers promptly then stalls or truncates the body is seen as
+	// healthy by the breaker. Also, a call that succeeds only after retries is
+	// recorded as a single success — per-attempt failures inside the retry
+	// budget are invisible to the breaker. For per-attempt visibility, wrap a
+	// single attempt in the breaker and retry outside it.
 	Breaker CircuitBreaker `json:"-"`
 
 	// Latency, when non-nil, receives the end-to-end duration of every call
