@@ -111,7 +111,7 @@ func FromMajor(whole, frac int, code string) (Money, error) {
 	fracStr = strings.Repeat("0", c.Decimals-len(fracStr)) + fracStr
 	scaledFrac, err := strconv.ParseInt(fracStr, 10, 64)
 	if err != nil {
-		return Money{}, fmt.Errorf("%w: %v", ErrInvalidAmount, err)
+		return Money{}, fmt.Errorf("%w: %w", ErrInvalidAmount, err)
 	}
 	minor := int64(whole)
 	for i := 0; i < c.Decimals; i++ {

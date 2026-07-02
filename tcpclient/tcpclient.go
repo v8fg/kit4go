@@ -494,7 +494,7 @@ func readAllUntilEOF(conn net.Conn) ([]byte, bool, error) {
 			out = append(out, buf[:n]...)
 		}
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return out, true, nil
 			}
 			return out, false, err

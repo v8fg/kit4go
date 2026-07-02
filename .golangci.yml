@@ -19,6 +19,12 @@ linters:
     - misspell
     - staticcheck
     - unused
+    # K2 high-signal, low-noise additions (bug-catching, not opinionated style):
+    - errorlint    # %w wrapping + errors.Is vs == (catches lost error chains)
+    - nilerr       # returning nil after err != nil
+    - nilnesserr   # nil-pointer dereference on err paths
+    - wastedassign # assignments whose value is never used
+    - reassign     # reassigning package vars (math/rand, etc.)
   exclusions:
     rules:
       # errcheck noise: unchecked .Close() etc. in tests is idiomatic and
