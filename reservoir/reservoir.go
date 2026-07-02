@@ -14,6 +14,10 @@ import (
 )
 
 // Sample holds a reservoir sample of at most k items of type T.
+//
+// Concurrency: safe for concurrent use. Offer, Sample, Count, and Reset each
+// acquire an internal sync.Mutex (serialised). The accept/draw decision uses
+// math/rand under the lock; WithSeed makes it deterministic for tests.
 type Sample[T any] struct {
 	mu    sync.Mutex
 	items []T

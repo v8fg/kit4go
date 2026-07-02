@@ -17,6 +17,11 @@ import (
 )
 
 // Tracker maintains the top-K items by frequency.
+//
+// Concurrency: safe for concurrent use. Every method (Touch, TouchN, Top, Count,
+// Len, K, Reset) acquires an internal sync.Mutex, so concurrent callers are
+// serialised — correct, but a single Tracker contends under high write rates.
+// For more throughput, shard by key and merge the per-shard Top results.
 type Tracker struct {
 	mu      sync.Mutex
 	k       int

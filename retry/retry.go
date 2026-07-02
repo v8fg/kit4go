@@ -73,6 +73,13 @@ func WithRetryable(fn func(error) bool) Option { return func(c *Config) { c.IsRe
 
 // Do calls fn with retry. It blocks between attempts (respecting ctx) and
 // returns the first success or the last error after exhausting attempts.
+//
+// Concurrency: safe for concurrent use. Do is a stateless function — each call
+// builds its own Config from the options and shares no mutable state, so any
+// number of goroutines can call Do (with the same or different options)
+// concurrently. The Backoff and IsRetryable funcs supplied via options are
+// invoked from the calling goroutine and must themselves be concurrency-safe if
+// shared.
 func Do[T any](ctx context.Context, fn func(ctx context.Context) (T, error), opts ...Option) Result[T] {
 	cfg := Config{
 		MaxAttempts: 3,

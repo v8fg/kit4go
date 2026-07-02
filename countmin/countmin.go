@@ -24,6 +24,14 @@ var ErrIncompatible = errors.New("countmin: incompatible width/depth")
 
 // CountMinSketch estimates element frequencies. Add is NOT internally
 // synchronized (hot path); use per-shard sketches + Merge for concurrency.
+//
+// Concurrency: NOT safe for concurrent use. Add and Estimate carry no locks (they
+// are the allocation-free hot path); concurrent calls race the counter rows and
+// corrupt counts. Two safe patterns: (a) keep one sketch per producer
+// goroutine/shard and Merge them — Merge sums per-counter and requires identical
+// width/depth; (b) guard a single sketch with an external lock if you accept the
+// contention. After all writes are done, concurrent read-only Estimate calls are
+// safe. Reset is also unsynchronised.
 type CountMinSketch struct {
 	w      uint32     // counters per row
 	d      uint32     // number of rows

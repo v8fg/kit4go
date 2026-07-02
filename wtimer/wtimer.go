@@ -28,6 +28,13 @@ type Timer struct {
 }
 
 // Wheel is a timer wheel backed by a min-heap.
+//
+// Concurrency: safe for concurrent use. Add/AddRecurring/Cancel/Len/Close each
+// acquire an internal sync.Mutex. New starts a single background goroutine that
+// fires due callbacks; callbacks execute on that goroutine, so they must be
+// non-blocking (offload heavy work to your own goroutine). Close is idempotent
+// and joins the goroutine. A panic in a callback is not recovered and will stop
+// the wheel — guard it inside the callback if that matters.
 type Wheel struct {
 	mu     sync.Mutex
 	heap   timerHeap

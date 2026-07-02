@@ -91,6 +91,12 @@ return {allowed and 1 or 0, remaining, retry_after}
 `)
 
 // Limiter applies GCRA limits against a Redis instance.
+//
+// Concurrency: safe for concurrent use. The Limiter holds no local mutable
+// state beyond the immutable Redis client, the clock, and the option fields, so
+// each Allow/AllowN is an independent Redis call; cross-process rate-limit
+// atomicity is provided by the embedded Lua script. A single Limiter is safe to
+// share across goroutines and across machines that share the same Redis.
 type Limiter struct {
 	client goredis.Cmdable
 	now    func() time.Time

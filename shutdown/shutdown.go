@@ -61,6 +61,13 @@ type component struct {
 }
 
 // Manager owns a set of components' start/stop ordering.
+//
+// Concurrency: safe for concurrent use. Add/Register/Start/Wait/Shutdown all
+// acquire an internal sync.Mutex. Wait blocks the calling goroutine until the
+// shutdown trigger fires; WaitSignal starts a signal-listener goroutine that
+// releases every Waiter on the configured OS signal. Shutdown runs each
+// component's stop function in reverse start order, collecting per-component
+// errors into ErrShutdown.
 type Manager struct {
 	mu           sync.Mutex
 	components   []*component

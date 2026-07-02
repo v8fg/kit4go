@@ -20,6 +20,13 @@ import (
 )
 
 // Debounce coalesces rapid calls into a single execution after a quiet period.
+//
+// Concurrency: safe for concurrent use. Call/CallWith/Flush/Cancel/Pending/Close
+// serialise via an internal sync.Mutex; the last-argument pointer uses atomic.
+// The debounced fn fires on time.AfterFunc's goroutine, and Flush spawns a fresh
+// goroutine, so fn must be re-entrant and non-blocking. A panic in fn is not
+// recovered (the timer goroutine would crash the process) — guard it inside fn.
+// Close cancels the pending timer; calls after Close are no-ops.
 type Debounce struct {
 	mu       sync.Mutex
 	after    time.Duration

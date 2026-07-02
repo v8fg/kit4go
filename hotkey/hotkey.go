@@ -24,6 +24,11 @@ type HotKey struct {
 }
 
 // Detector tracks heavy-hitter keys in a sliding window.
+//
+// Concurrency: safe for concurrent use. Touch, TopN, Reset, and metrics each
+// acquire an internal sync.Mutex (serialised). The window advances on the wall
+// clock under the lock; Touch is the hot path and may contend under very high
+// key-cardinality — shard detectors if that becomes a bottleneck.
 type Detector struct {
 	mu      sync.Mutex
 	window  time.Duration

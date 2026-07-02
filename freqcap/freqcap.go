@@ -19,6 +19,10 @@ import (
 )
 
 // Counter tracks per-key event counts over a fixed sliding window.
+//
+// Concurrency: safe for concurrent use. All methods (Allow, Inc, Clear, and the
+// accessors) acquire an internal sync.Mutex, so concurrent calls are serialised.
+// Per-key state is independent but guarded by the single mutex.
 type Counter struct {
 	mu        sync.Mutex
 	window    time.Duration
