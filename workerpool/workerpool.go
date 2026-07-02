@@ -31,6 +31,7 @@ type Result[T any] struct {
 // Pool runs jobs on N workers with a bounded queue.
 type Pool[T any] struct {
 	queue    chan jobWrap[T]
+	done     chan struct{} // closed by Close: workers exit, Submit rejects (queue is never closed → no send-on-closed panic)
 	workers  int
 	wg       sync.WaitGroup
 	closed   atomic.Bool
@@ -73,7 +74,7 @@ func New[T any](workers int, opts ...Option[T]) *Pool[T] {
 	if workers <= 0 {
 		panic("workerpool: workers must be > 0")
 	}
-	p := &Pool[T]{workers: workers}
+	p := &Pool[T]{workers: workers, done: make(chan struct{})}
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -93,11 +94,51 @@ func (p *Pool[T]) start() {
 
 func (p *Pool[T]) worker() {
 	defer p.wg.Done()
-	for jw := range p.queue {
-		val, err := jw.fn(jw.ctx)
-		if p.collectW {
-			p.results <- Result[T]{Value: val, Err: err}
+	for {
+		select {
+		case <-p.done:
+			// Shutdown: process jobs still queued at this instant, then exit.
+			// Jobs submitted after done is closed may be lost — standard
+			// close-race semantics. The queue is NEVER closed, so a racing
+			// Submit can never panic on send-to-closed-channel.
+			p.drainQueue()
+			return
+		case jw, ok := <-p.queue:
+			if !ok {
+				return
+			}
+			p.runJob(jw)
 		}
+	}
+}
+
+// drainQueue processes remaining queued jobs non-blocking, then returns.
+func (p *Pool[T]) drainQueue() {
+	for {
+		select {
+		case jw, ok := <-p.queue:
+			if !ok {
+				return
+			}
+			p.runJob(jw)
+		default:
+			return
+		}
+	}
+}
+
+// runJob executes one job and, when result collection is on, forwards its
+// result. The result send selects on done so a worker cannot block forever on a
+// full, undrained results channel during shutdown — otherwise Close's wg.Wait
+// would deadlock.
+func (p *Pool[T]) runJob(jw jobWrap[T]) {
+	val, err := jw.fn(jw.ctx)
+	if !p.collectW {
+		return
+	}
+	select {
+	case p.results <- Result[T]{Value: val, Err: err}:
+	case <-p.done: // shutdown: drop this result so the worker can exit
 	}
 }
 
@@ -110,6 +151,8 @@ func (p *Pool[T]) Submit(ctx context.Context, fn Job[T]) error {
 	select {
 	case p.queue <- jobWrap[T]{fn: fn, ctx: ctx}:
 		return nil
+	case <-p.done:
+		return ErrClosed
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -124,6 +167,8 @@ func (p *Pool[T]) TrySubmit(ctx context.Context, fn Job[T]) bool {
 	select {
 	case p.queue <- jobWrap[T]{fn: fn, ctx: ctx}:
 		return true
+	case <-p.done:
+		return false
 	default:
 		return false
 	}
@@ -141,7 +186,7 @@ func (p *Pool[T]) Close() {
 	if !p.closed.CompareAndSwap(false, true) {
 		return
 	}
-	close(p.queue)
+	close(p.done) // workers exit after draining queued jobs; Submit/TrySubmit reject
 	p.wg.Wait()
 	if p.collectW {
 		close(p.results)
