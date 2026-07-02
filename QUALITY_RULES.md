@@ -518,6 +518,26 @@ table instead of restating the tool on every rule.
 > adopts its equivalent (Rust: clippy/rustfmt; JVM: checkstyle/errorprone;
 > TS: eslint/tsc).
 
+### K0. Trim by Codebase Stance, Don't Enable Blindly
+K1/K2 is an **upper-bound menu**, not a mandate. Enable the subset that catches
+real bugs at low noise for THIS codebase; leave linters whose value is mostly
+style or false-positives off, with a one-line rationale recorded in the config.
+
+- **Enable eagerly**: bug-catching linters with few false positives (`errorlint`,
+  `nilerr`, `nilnesserr`, `wastedassign`, `reassign`).
+- **Measure before enabling anything style-flavored** (`revive`, `gocritic`,
+  `gosimple`, `predeclared`, `errname`, `exhaustive`, `testifylint`, `bodyclose`):
+  run the candidate config repo-wide first. A 0-finding linter is a free
+  regression net; a flood of low-signal findings means the linter fights the
+  codebase's own style — keep it off and say why. A blanket enable that generates
+  `//nolint` noise is a net loss.
+
+kit4go stance (`.golangci.yml`): high-signal correctness set only; opinionated
+style families (staticcheck `ST*`/`QF*`/`S*`, `revive`, `gocritic`,
+`predeclared`) are deliberately off because the codebase has its own consistent
+style, and `bodyclose`/`predeclared` were measured as mostly false-positives
+(already-closed bodies it can't trace; readable `min`/`max` param names).
+
 ### K1. Always-On (Universal Baseline)
 **Go**: `errcheck`, `govet`, `staticcheck`, `unused`, `gosimple`, `ineffassign`,
 `revive`, `gocritic`, `goimports`, `gosec`.
