@@ -16,16 +16,23 @@ var ErrClosed = errors.New("pipeline: closed")
 // drops it; (*, *, err) drops it.
 type Stage[I, O any] func(ctx context.Context, in I) (O, bool, error)
 
+// itemReq pairs an input item with the submitter's context, so the stage sees
+// the per-call cancellation/deadline/trace values instead of a single
+// construction-time context.
+type itemReq[I any] struct {
+	item I
+	ctx  context.Context
+}
+
 // Pipeline processes items of type I through N workers, producing type O.
 type Pipeline[I, O any] struct {
-	in      chan I
+	in      chan itemReq[I]
 	out     chan O
 	stage   Stage[I, O]
 	workers int
 	wg      sync.WaitGroup
 	done    chan struct{}
 	once    sync.Once
-	ctx     context.Context
 }
 
 // Option configures the Pipeline.
@@ -35,7 +42,7 @@ type Option[I, O any] func(*Pipeline[I, O])
 func WithInputBuffer[I, O any](n int) Option[I, O] {
 	return func(p *Pipeline[I, O]) {
 		if n > 0 {
-			p.in = make(chan I, n)
+			p.in = make(chan itemReq[I], n)
 		}
 	}
 }
@@ -60,10 +67,9 @@ func New[I, O any](workers int, stage Stage[I, O], opts ...Option[I, O]) *Pipeli
 	p := &Pipeline[I, O]{
 		stage:   stage,
 		workers: workers,
-		in:      make(chan I, workers),
+		in:      make(chan itemReq[I], workers),
 		out:     make(chan O, workers),
 		done:    make(chan struct{}),
-		ctx:     context.Background(),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -86,11 +92,11 @@ func (p *Pipeline[I, O]) worker() {
 			// Drain mode: process remaining items, then exit.
 			p.drain()
 			return
-		case item, ok := <-p.in:
+		case req, ok := <-p.in:
 			if !ok {
 				return
 			}
-			p.process(item)
+			p.process(req.item, req.ctx)
 		}
 	}
 }
@@ -99,8 +105,8 @@ func (p *Pipeline[I, O]) worker() {
 func (p *Pipeline[I, O]) drain() {
 	for {
 		select {
-		case item := <-p.in:
-			p.process(item)
+		case req := <-p.in:
+			p.process(req.item, req.ctx)
 		default:
 			return
 		}
@@ -108,21 +114,30 @@ func (p *Pipeline[I, O]) drain() {
 }
 
 // process transforms one item and writes the result to p.out (if it passes).
-// The write blocks if p.out is full (backpressure). During drain (after Close),
-// p.out has room for remaining items because Close waits for workers before
-// closing p.out.
-func (p *Pipeline[I, O]) process(item I) {
-	out, pass, err := p.stage(p.ctx, item)
+// Delivery: if Out() has room the item is delivered immediately (the common
+// case, preserves full delivery when the consumer keeps up). If Out() is full
+// the send blocks for room (backpressure), but bails on shutdown so a consumer
+// that has stopped draining cannot deadlock Close's wg.Wait.
+func (p *Pipeline[I, O]) process(item I, ctx context.Context) {
+	out, pass, err := p.stage(ctx, item)
 	if err != nil || !pass {
 		return
 	}
-	p.out <- out
+	select {
+	case p.out <- out:
+		return
+	default:
+	}
+	select {
+	case p.out <- out:
+	case <-p.done:
+	}
 }
 
 // Send enqueues an input item. Blocks if full. Returns ErrClosed after Close.
 func (p *Pipeline[I, O]) Send(ctx context.Context, item I) error {
 	select {
-	case p.in <- item:
+	case p.in <- itemReq[I]{item: item, ctx: ctx}:
 		return nil
 	case <-p.done:
 		return ErrClosed
