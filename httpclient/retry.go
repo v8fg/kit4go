@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"time"
@@ -20,10 +20,20 @@ var retryableStatusCodes = map[int]struct{}{
 	504: {},
 }
 
-// rng is the shared source of jitter for retryDelay. math/rand is good enough
-// here — we want spread, not cryptographic unpredictability — and gosec's G404
-// rule is disabled for this package in .golangci.yml.
-var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+// idempotentMethods are the HTTP methods whose retry is replay-safe per RFC 9110
+// §9.2.2 (GET/HEAD/OPTIONS/PUT/DELETE/TRACE). A non-idempotent method (POST,
+// PATCH, ...) that has already received a response is NOT retried — the server
+// may have produced its side effect, and a retry would duplicate it.
+var idempotentMethods = map[string]bool{
+	http.MethodGet: true, http.MethodHead: true, http.MethodOptions: true,
+	http.MethodPut: true, http.MethodDelete: true, http.MethodTrace: true,
+}
+
+func isIdempotent(method string) bool { return idempotentMethods[method] }
+
+// retryDelay uses math/rand/v2's top-level Float64 for jitter — concurrent-safe
+// and auto-seeded. A shared *rand.Rand (math/rand) is NOT safe for concurrent
+// use and would race on the retry hot path.
 
 // shouldRetry reports whether the given response/error pair warrants a retry.
 //
@@ -128,6 +138,6 @@ func retryDelay(attempt int, minWait, maxWait time.Duration) time.Duration {
 	}
 	// Jitter: multiply by a factor in [0.5, 1.0).
 	// rng.Float64()*0.5 gives [0.0, 0.5); add 0.5 for [0.5, 1.0).
-	factor := 0.5 + rng.Float64()*0.5
+	factor := 0.5 + rand.Float64()*0.5
 	return time.Duration(float64(backoff) * factor)
 }

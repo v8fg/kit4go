@@ -379,9 +379,12 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request) (*http.Resp
 		}
 		c.fireEvent("request", method, urlStr, status, attempt)
 
-		if !shouldRetry(resp, err) {
-			// Either a non-retryable error or a final (success/4xx/3xx)
-			// response — hand it back (body unread/unclosed).
+		if !shouldRetry(resp, err) || (resp != nil && !isIdempotent(method)) {
+			// Not retryable, OR a non-idempotent method (POST/PATCH/...) already
+			// got a response — the server may have produced its side effect, so
+			// retrying would duplicate it (double charge / duplicate write).
+			// Transport errors (resp==nil, request never reached the server) are
+			// still retried for every method.
 			return resp, err
 		}
 
