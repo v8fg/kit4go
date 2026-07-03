@@ -183,7 +183,11 @@ func (l *Locker) tryLock(ctx context.Context, key, token string) (*Lock, error) 
 		lost:          make(chan struct{}),
 	}
 	if lk.autoRenew {
-		lk.startRenewer()
+		// Derive a context from the acquire ctx so its cancellation (request done,
+		// shutdown, parent timeout) stops the renewer instead of leaking the lock
+		// on context.Background().
+		lk.acqCtx, lk.acqCancel = context.WithCancel(ctx)
+		lk.startRenewer(lk.acqCtx)
 	}
 	return lk, nil
 }
@@ -201,6 +205,10 @@ type Lock struct {
 	stop     chan struct{} // closed by Release to stop the renewer
 	stopOnce sync.Once
 	lost     chan struct{} // closed when an auto-renew fails
+	lostOnce sync.Once
+
+	acqCtx    context.Context    // acquire context; its cancellation stops the renewer (treated as a loss)
+	acqCancel context.CancelFunc // cancelled by Release to abort an in-flight Refresh fast
 }
 
 // Key returns the locked key.
@@ -228,6 +236,9 @@ func (l *Lock) Release(ctx context.Context) error {
 		if l.stop != nil {
 			close(l.stop)
 		}
+		if l.acqCancel != nil {
+			l.acqCancel() // abort any in-flight Refresh fast; renewer exits cleanly
+		}
 	})
 	res, err := releaseScript.Run(ctx, l.client, []string{l.key}, l.token).Result()
 	if err != nil {
@@ -247,9 +258,11 @@ func (l *Lock) Release(ctx context.Context) error {
 // no longer be considered held). It is never closed for non-auto-renewed locks.
 func (l *Lock) Lost() <-chan struct{} { return l.lost }
 
-// startRenewer runs a goroutine extending the TTL until Release or a renewal
-// failure. On failure it closes Lost and invokes onLost once.
-func (l *Lock) startRenewer() {
+// startRenewer runs a goroutine extending the TTL until Release, a renewal
+// failure, or cancellation of the acquire context. On a real loss it closes Lost
+// and invokes onLost once. ctx is the acquire context (not Background) so its
+// cancellation stops the renewer instead of leaking the lock.
+func (l *Lock) startRenewer(ctx context.Context) {
 	interval := l.renewInterval
 	if interval <= 0 {
 		interval = l.ttl / 2
@@ -261,24 +274,42 @@ func (l *Lock) startRenewer() {
 	ticker := time.NewTicker(interval)
 	go func() {
 		defer ticker.Stop()
-		ctx := context.Background()
 		for {
 			select {
 			case <-l.stop:
 				return
+			case <-ctx.Done():
+				// Acquire context cancelled without Release — the lock is
+				// effectively abandoned (request done / shutdown / parent
+				// timeout). Treat as a loss unless Release is stopping us.
+				l.handleLoss(ctx.Err())
+				return
 			case <-ticker.C:
 				if err := l.Refresh(ctx); err != nil {
-					// Set onLost before closing Lost so receivers observe the
-					// callback's effect under the close's happens-before edge.
-					if l.onLost != nil {
-						l.onLost(err)
-					}
-					close(l.lost)
+					l.handleLoss(err)
 					return
 				}
 			}
 		}
 	}()
+}
+
+// handleLoss reports a lost lock: invokes onLost then closes Lost() — UNLESS the
+// renewer is being stopped by a clean Release, in which case the "loss" is just
+// Release deleting the key under an in-flight Refresh (or cancelling the ctx),
+// not a real loss, and must NOT fire onLost. Lost() is closed AFTER onLost (via
+// defer) so the callback's effects are happens-before the close, AND it still
+// closes if onLost panics.
+func (l *Lock) handleLoss(err error) {
+	select {
+	case <-l.stop:
+		return // Release is in progress/done — clean shutdown, not a loss
+	default:
+	}
+	defer l.lostOnce.Do(func() { close(l.lost) }) // closes even if onLost panics
+	if l.onLost != nil {
+		l.onLost(err) // runs before close: its effects are happens-before Lost()
+	}
 }
 
 // randomToken returns a 16-byte hex token.
