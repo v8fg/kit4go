@@ -25,6 +25,7 @@ type StreamInterceptor = grpc.StreamServerInterceptor
 type Server struct {
 	gs         *grpc.Server
 	listener   net.Listener
+	listenErr  error // a New(addr) bind failure, surfaced from Start/Serve instead of the generic ErrNoListener
 	unaryInts  []UnaryInterceptor
 	streamInts []StreamInterceptor
 	opts       []grpc.ServerOption
@@ -67,7 +68,10 @@ func New(addr string, opts ...Option) *Server {
 	}
 	s.build()
 	if addr != "" {
-		if l, err := net.Listen("tcp", addr); err == nil {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			s.listenErr = err // surfaced from Start/Serve so the caller sees the real bind failure
+		} else {
 			s.listener = l
 		}
 	}
@@ -127,6 +131,9 @@ func (s *Server) Addr() string {
 // shutdownTO. Returns nil on clean stop, an error on timeout.
 func (s *Server) Start(ctx context.Context) error {
 	if s.listener == nil {
+		if s.listenErr != nil {
+			return s.listenErr
+		}
 		return ErrNoListener
 	}
 	errCh := make(chan error, 1)
@@ -150,6 +157,9 @@ func (s *Server) Start(ctx context.Context) error {
 // Serve blocks (standard gRPC Serve, no graceful shutdown).
 func (s *Server) Serve() error {
 	if s.listener == nil {
+		if s.listenErr != nil {
+			return s.listenErr
+		}
 		return ErrNoListener
 	}
 	return s.gs.Serve(s.listener)

@@ -112,7 +112,15 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTO)
 	defer cancel()
-	return s.srv.Shutdown(shutdownCtx)
+	if err := s.srv.Shutdown(shutdownCtx); err != nil {
+		// Shutdown returned (e.g. deadline exceeded with connections still
+		// active) WITHOUT force-closing them. Close() forces the remaining
+		// connections and unblocks the ListenAndServe goroutine so neither it
+		// nor the hung connections leak. The timeout cause is still returned.
+		_ = s.srv.Close()
+		return err
+	}
+	return nil
 }
 
 // ListenAndServe is the standard net/http entrypoint (blocks, no graceful
