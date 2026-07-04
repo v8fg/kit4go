@@ -11,6 +11,7 @@ package workerpool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -37,6 +38,9 @@ type Pool[T any] struct {
 	closed   atomic.Bool
 	results  chan Result[T]
 	collectW bool
+
+	recovered uint64    // count of job panics recovered (observable; L5)
+	onPanic   func(any) // optional hook fired on a recovered job panic
 }
 
 type jobWrap[T any] struct {
@@ -132,7 +136,7 @@ func (p *Pool[T]) drainQueue() {
 // full, undrained results channel during shutdown — otherwise Close's wg.Wait
 // would deadlock.
 func (p *Pool[T]) runJob(jw jobWrap[T]) {
-	val, err := jw.fn(jw.ctx)
+	val, err := p.safeCall(jw.ctx, jw.fn)
 	if !p.collectW {
 		return
 	}
@@ -141,6 +145,31 @@ func (p *Pool[T]) runJob(jw jobWrap[T]) {
 	case <-p.done: // shutdown: drop this result so the worker can exit
 	}
 }
+
+// safeCall runs a job with panic recovery. A panic is turned into an error,
+// counted in recovered, and surfaced via the onPanic hook — so one bad job
+// cannot kill the worker and zombie the pool. The worker stays alive for the
+// next job.
+func (p *Pool[T]) safeCall(ctx context.Context, fn Job[T]) (val T, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			atomic.AddUint64(&p.recovered, 1)
+			if p.onPanic != nil {
+				p.onPanic(r)
+			}
+			err = fmt.Errorf("workerpool: job panic recovered: %v", r)
+		}
+	}()
+	return fn(ctx)
+}
+
+// SetOnPanic installs a hook fired (non-blocking) when a job panics. The panic
+// is also counted in Recovered() and delivered as the job's error.
+func (p *Pool[T]) SetOnPanic(fn func(any)) { p.onPanic = fn }
+
+// Recovered returns the total number of job panics recovered since the pool
+// started.
+func (p *Pool[T]) Recovered() uint64 { return atomic.LoadUint64(&p.recovered) }
 
 // Submit enqueues a job. It blocks if the queue is full (backpressure). Returns
 // ErrClosed if the pool is shutting down.
