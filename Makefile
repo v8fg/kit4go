@@ -10,6 +10,9 @@ GCFLAGS ?= "-gcflags=all=-l"
 GCFLAGS_ESCAPE ?= "-gcflags=-m -l"
 ESCAPE_PATH ?= ""
 
+# Sub-modules with their own go.mod — build/test/lint iterates these too.
+SUBMODULES := email grpcclient grpcserver kafka log4go metrics postgres rate redis redislock tracing
+
 .PHONY: check
 check: fmt-check misspell-check golangci cover
 
@@ -38,6 +41,7 @@ test:
 .PHONY: cover
 cover:
 	@$(GO) test ${GCFLAGS} -cover ./...
+	@for m in $(SUBMODULES); do (cd $$m && $(GO) test ${GCFLAGS} -cover ./...); done
 	@echo "cover done"
 
 .PHONY: fmt
@@ -106,9 +110,11 @@ golangci-lint:
 .PHONY: golangci
 golangci:
 	@hash golangci-lint > /dev/null 2>&1; if [ $$? -ne 0 ]; then \
-		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.49.0; \
+		echo "golangci-lint not found; install v2: https://golangci-lint.run/usage/install/"; exit 1; \
 	fi
-	@golangci-lint run ./... || exit 0;
+	@golangci-lint run --timeout=5m ./...
+	@for m in $(SUBMODULES); do (cd $$m && golangci-lint run --timeout=5m ./...); done
+	@(cd kafka && golangci-lint run --build-tags franzgo --timeout=5m ./...)
 	@echo "golangci done"
 
 .PHONY: mod
