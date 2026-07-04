@@ -14,35 +14,37 @@
 [![Open Source Helpers](https://www.codetriage.com/v8fg/kit4go/badges/users.svg)](https://www.codetriage.com/v8fg/kit4go)
 [![TODOs](https://badgen.net/https/api.tickgit.com/badgen/github.com/v8fg/kit4go)](https://www.tickgit.com/browse?repo=github.com/v8fg/kit4go)
 
-> The common tools for go.
+> Common Go utility library for ad-tech, finance, and blockchain infrastructure.
 
-## Support list
+## Package list
 
-- [x] [bit](bit) hacks for bit.
-- [x] [datetime](datetime) parse, format, others.
-- [x] [file](file) base file ops.
-- [x] [ip](ip) parse, match, convert, info.
-- [x] [json](json) support multi json packages.
-- [x] [log4go](log4go) async structured logging: console/file/kafka/net/io writers, structured fields (With/WithField/WithFields), JSON format (FormatJSON), sampling, context binding (zerolog-style), request-id middleware, generic overflow (ring→file→drop), crash resume, metrics + webhook alerts, multi-core ShardLogger, switchable JSON codec (goccy/std/sonic), ~1M qps/core (no-caller). See [log4go/PERFORMANCE.md](log4go/PERFORMANCE.md).
-- [x] [number](number) round, bytes convert.
-- [x] [otp](otp) `TOTP`, `HOTP`.
-- [x] [postgres](postgres) pgx pool wrapper (pure Go, cross-platform).
-- [x] [random](random) rand, random.
-- [x] [str](str) common string utils.
-- [x] [uuid](uuid) requestID, go.uuid, ksuid, xid.
-- [x] [xlo](xlo) some utils ref *lo*, more pls use [lo](https://github.com/samber/lo) directly.
+### Root module (`github.com/v8fg/kit4go`)
 
-## Modules
+| Category | Packages |
+|----------|----------|
+| **Concurrency** | [workerpool](workerpool) · [pipeline](pipeline) · [semaphore](semaphore) · [retry](retry) · [wtimer](wtimer) · [debounce](debounce) · [fanout](fanout) · [shutdown](shutdown) · [batcher](batcher) |
+| **Algorithms** | [bloom](bloom) · [countmin](countmin) · [hyperloglog](hyperloglog) · [topk](topk) · [reservoir](reservoir) · [trie](trie) · [ringbuffer](ringbuffer) · [consistenthash](consistenthash) · [loadbalance](loadbalance) |
+| **Rate & budget** | [limiter](limiter) (token-bucket/sliding-window/fixed-window/leaky/GCRA) · [budget](budget) · [rate](rate) (Redis-backed) · [hotkey](hotkey) · [freqcap](freqcap) · [idempotency](idempotency) |
+| **Cache & storage** | [cache](cache) (unified memory=lru/redis) · [lru](lru) · [breaker](breaker) |
+| **Clients** | [httpclient](httpclient) · [tcpclient](tcpclient) · [udpclient](udpclient) |
+| **Servers** | [httpserver](httpserver) · [grpcserver](grpcserver) |
+| **Utilities** | [bit](bit) · [datetime](datetime) · [file](file) · [ip](ip) · [json](json) · [number](number) · [str](str) · [uuid](uuid) · [xlo](xlo) · [random](random) · [otp](otp) · [base62](base62) · [hash](hash) · [config](config) · [maxprocs](maxprocs) · [backoff](backoff) · [health](health) · [stress](stress) |
 
-kit4go is a **multi-module** repository, so you only pull the dependencies you actually use:
+### Sub-modules (own go.mod — heavy deps isolated)
 
-| Module path | Packages | Heavy deps isolated |
-|-------------|----------|---------------------|
-| `github.com/v8fg/kit4go` (root) | bit, datetime, file, ip, json, number, otp, random, str, uuid, xlo, maxprocs, breaker, limiter, latency, httpclient, tcpclient, udpclient, stress | — |
-| `github.com/v8fg/kit4go/log4go` | log4go — structured logger | sarama, sonic, goccy/go-json |
-| `github.com/v8fg/kit4go/postgres` | postgres — pgx pool | jackc/pgx/v5 |
-| `github.com/v8fg/kit4go/grpcclient` | grpcclient — gRPC client | grpc, protobuf |
-| `github.com/v8fg/kit4go/kafka` | kafka — producer + consumer (sync/async, group, partition) | IBM/sarama, protobuf |
+| Module | What | Heavy deps |
+|--------|------|------------|
+| [log4go](log4go) | async structured logging (console/file/kafka/net/io, sampling, ShardLogger, circuit breaker + spill failover, ~1M qps/core) | sarama, sonic, goccy |
+| [kafka](kafka) | producer + consumer (sync/async, group, partition; sarama/franz-go unified) | IBM/sarama |
+| [postgres](postgres) | pgx pool wrapper | jackc/pgx/v5 |
+| [redis](redis) | Redis client wrapper | redis/go-redis |
+| [redislock](redislock) | distributed lock (token-guarded Lua, auto-renew, onLost) | redis/go-redis |
+| [rate](rate) | Redis-backed GCRA rate limiter | redis/go-redis |
+| [grpcclient](grpcclient) | gRPC client middleware (retry, breaker, metrics) | grpc, protobuf |
+| [grpcserver](grpcserver) | gRPC server (interceptors, graceful shutdown) | grpc, protobuf |
+| [email](email) | SMTP via go-mail (TLS Mandatory by default) | wneessen/go-mail |
+| [metrics](metrics) | Prometheus wrapper | prometheus/client_golang |
+| [tracing](tracing) | OpenTelemetry wrapper | go.opentelemetry.io/otel |
 
 Importing `github.com/v8fg/kit4go/log4go` does **not** pull pgx or grpc into your
 module graph — each sub-module owns only its own dependencies. Local development
@@ -51,11 +53,21 @@ uses a committed `go.work` so `go build`/`go test` resolve all modules together.
 ## Install
 
 ```sh
-go get -u github.com/v8fg/kit4go            # root utilities
-go get -u github.com/v8fg/kit4go/log4go     # structured logging (standalone)
-go get -u github.com/v8fg/kit4go/postgres   # pgx pool (standalone)
-go get -u github.com/v8fg/kit4go/grpcclient # gRPC client (standalone)
+go get github.com/v8fg/kit4go                     # root utilities (50+ packages)
+go get github.com/v8fg/kit4go/log4go              # structured logging (standalone)
+go get github.com/v8fg/kit4go/kafka               # kafka producer/consumer (standalone)
+go get github.com/v8fg/kit4go/postgres            # pgx pool (standalone)
+go get github.com/v8fg/kit4go/redislock           # distributed lock (standalone)
 ```
+
+## Quality
+
+- **Deep concurrency audit**: 6 rounds, ~23 real bugs fixed (deadlocks, races, leaks, panics). See [QUALITY_RULES.md](QUALITY_RULES.md) for the framework.
+- **log4go resilience**: circuit breaker + spill failover, observable degradation, bounded shutdown. See [log4go/RESILIENCE.md](log4go/RESILIENCE.md).
+- **Callback-recover policy**: library-owned workers recover panics (`Recovered()` + `SetOnPanic`).
+- **CI**: all 11 sub-modules, ubuntu + macOS, `-race`, `-short`.
+- **Lint**: golangci-lint v2 with 11 high-signal linters.
+- **Coverage**: 90%+ across root-module packages.
 
 ## Notes
 
