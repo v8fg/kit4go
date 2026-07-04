@@ -142,6 +142,9 @@ func Test_KafKaWriter_PerRecordMode_NoBatch(t *testing.T) {
 // parity — see TestIntegration_KafKaWriter_Throughput; batch helps when Send is
 // expensive: sync producer, overloaded broker backing up, heavy per-call work.)
 func Test_KafKaWriter_BatchFasterWhenSendCostly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-sensitive: compares batch vs per-record throughput; unreliable on slow/noisy CI runners")
+	}
 	const n = 5000
 	const delay = 50 * time.Microsecond
 	const batchSize = 100
