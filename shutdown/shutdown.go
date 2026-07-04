@@ -241,6 +241,19 @@ func (m *Manager) Stop(ctx context.Context) error {
 	return m.stopReverse(ctx, reverseStrings(order))
 }
 
+// safeStop runs a component's stop hook with panic recovery. A panic is turned
+// into an error (aggregated into ErrShutdown) so one panicking stop does not
+// abort the teardown of the remaining components — preserving the package's
+// "a failure in one component does not mask the others" contract for panics.
+func safeStop(stop func(context.Context) error, ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("shutdown: stop panic recovered: %v", r)
+		}
+	}()
+	return stop(ctx)
+}
+
 func (m *Manager) stopReverse(ctx context.Context, names []string) error {
 	// Snapshot name -> *component under the lock (a concurrent Add mutates the
 	// map); the stop calls run outside the lock so a slow stop doesn't block Add.
@@ -261,7 +274,7 @@ func (m *Manager) stopReverse(ctx context.Context, names []string) error {
 			continue
 		}
 		sctx, cancel := context.WithTimeout(ctx, m.stopTimeout)
-		err := it.c.stop(sctx)
+		err := safeStop(it.c.stop, sctx)
 		cancel()
 		if err != nil {
 			errs = append(errs, ComponentError{Name: it.name, Err: err})

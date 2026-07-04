@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 // ErrClosed is returned by Send after Close.
@@ -33,6 +34,9 @@ type Pipeline[I, O any] struct {
 	wg      sync.WaitGroup
 	done    chan struct{}
 	once    sync.Once
+
+	recovered uint64    // count of stage panics recovered (observable; L5)
+	onPanic   func(any) // optional hook fired on a recovered stage panic
 }
 
 // Option configures the Pipeline.
@@ -119,6 +123,15 @@ func (p *Pipeline[I, O]) drain() {
 // the send blocks for room (backpressure), but bails on shutdown so a consumer
 // that has stopped draining cannot deadlock Close's wg.Wait.
 func (p *Pipeline[I, O]) process(item I, ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			atomic.AddUint64(&p.recovered, 1)
+			if p.onPanic != nil {
+				p.onPanic(r)
+			}
+			// The item is dropped; the worker survives for the next item.
+		}
+	}()
 	out, pass, err := p.stage(ctx, item)
 	if err != nil || !pass {
 		return
@@ -133,6 +146,13 @@ func (p *Pipeline[I, O]) process(item I, ctx context.Context) {
 	case <-p.done:
 	}
 }
+
+// SetOnPanic installs a hook fired (non-blocking) when a stage panics. The panic
+// is also counted in Recovered() and the offending item is dropped.
+func (p *Pipeline[I, O]) SetOnPanic(fn func(any)) { p.onPanic = fn }
+
+// Recovered returns the total number of stage panics recovered.
+func (p *Pipeline[I, O]) Recovered() uint64 { return atomic.LoadUint64(&p.recovered) }
 
 // Send enqueues an input item. Blocks if full. Returns ErrClosed after Close.
 func (p *Pipeline[I, O]) Send(ctx context.Context, item I) error {
