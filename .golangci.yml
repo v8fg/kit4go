@@ -36,6 +36,7 @@ linters:
         linters:
           - errcheck
           - errorlint
+          - wastedassign
       # Opinionated style / quick-fix / simplification families — disabled wholesale.
       - linters:
           - staticcheck

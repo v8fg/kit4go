@@ -396,7 +396,7 @@ func (w *FileWriter) Rotate() error {
 // async daemon (single goroutine, no extra locking needed).
 func (w *FileWriter) rotateImpl() error {
 	now := time.Now()
-	v := 0
+	var v int
 	rotate := false
 	for i, act := range w.actions {
 		v = act(&now)
