@@ -140,7 +140,7 @@ func simpleURL(opts KeyOpts, otpType string) (*xtp.Key, error) {
 	}
 
 	if opts.SecretSize == 0 {
-		opts.SecretSize = 10
+		opts.SecretSize = 20 // RFC 4226 §4 recommends 160-bit (20-byte) secrets; matches upstream totp.Generate
 	}
 
 	if opts.Rand == nil {
@@ -168,6 +168,9 @@ func simpleURL(opts KeyOpts, otpType string) (*xtp.Key, error) {
 		v.Set("algorithm", opts.Algorithm.String())
 	}
 
+	if otpType == "totp" && opts.Period != 0 {
+		v.Set("period", strconv.FormatUint(uint64(opts.Period), 10))
+	}
 	if otpType == "hotp" {
 		v.Set("counter", strconv.FormatUint(opts.Counter, 10))
 	}

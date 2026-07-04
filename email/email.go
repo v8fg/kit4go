@@ -126,7 +126,12 @@ func NewSMTPSender(opts ...Option) (*SMTPSender, error) {
 	} else if cfg.tls {
 		mailOpts = append(mailOpts, gomail.WithTLSPolicy(gomail.TLSMandatory))
 	} else {
-		mailOpts = append(mailOpts, gomail.WithTLSPolicy(gomail.TLSOpportunistic))
+		// Default to Mandatory STARTTLS (matches go-mail's own default). The
+		// prior Opportunistic default would silently fall back to plaintext on a
+		// STARTTLS downgrade (MITM), exposing the mail body. Auth still fails
+		// closed (PlainAuth refuses unencrypted), but Mandatory avoids the
+		// downgrade and the confusing error. Use WithSSL for implicit-TLS(465).
+		mailOpts = append(mailOpts, gomail.WithTLSPolicy(gomail.TLSMandatory))
 	}
 
 	client, err := gomail.NewClient(cfg.host, mailOpts...)

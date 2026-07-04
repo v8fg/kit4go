@@ -90,6 +90,13 @@ func HOTPCodeCustom(secret string, counter uint64, opts *Opts) (code string) {
 	return
 }
 
+// VerifyTOTP validates a TOTP passcode against the secret. Comparison is
+// constant-time (no timing leak). Accepts the current step plus ±1 (upstream
+// default Skew=1, ~90s window).
+//
+// NOT replay-safe: the same code is accepted repeatedly within its window. Per
+// RFC 6238 §5.2 the caller MUST track the last-accepted step and reject reuse —
+// this package is stateless and cannot enforce it.
 func VerifyTOTP(passcode string, secret string) bool {
 	return totp.Validate(passcode, secret)
 }
@@ -104,6 +111,9 @@ func VerifyTOTPCustom(passcode string, secret string, t time.Time, opts *Opts) (
 	return
 }
 
+// VerifyHOTP validates an HOTP passcode for the given counter. Comparison is
+// constant-time. Replay protection comes from the caller monotonically advancing
+// the counter per attempt — reusing the same counter accepts the same code again.
 func VerifyHOTP(passcode string, counter uint64, secret string) bool {
 	return hotp.Validate(passcode, counter, secret)
 }
