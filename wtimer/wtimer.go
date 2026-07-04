@@ -33,14 +33,17 @@ type Timer struct {
 // acquire an internal sync.Mutex. New starts a single background goroutine that
 // fires due callbacks; callbacks execute on that goroutine, so they must be
 // non-blocking (offload heavy work to your own goroutine). Close is idempotent
-// and joins the goroutine. A panic in a callback is not recovered and will stop
-// the wheel — guard it inside the callback if that matters.
+// and joins the goroutine. A panicking callback is recovered (counted in
+// Recovered(), surfaced via SetOnPanic) — it no longer stops the wheel.
 type Wheel struct {
 	mu     sync.Mutex
 	heap   timerHeap
 	wakeup chan struct{}
 	closed atomic.Bool
 	wg     sync.WaitGroup
+
+	recovered uint64    // count of callback panics recovered (observable; L5)
+	onPanic   func(any) // optional hook fired on a recovered callback panic
 }
 
 type timerHeap []*Timer
@@ -130,6 +133,26 @@ func (w *Wheel) Close() {
 	w.wg.Wait()
 }
 
+// safeFire runs a timer callback with panic recovery — a panicking callback no
+// longer crashes the process; it is counted + surfaced via the hook (L5).
+func (w *Wheel) safeFire(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			atomic.AddUint64(&w.recovered, 1)
+			if w.onPanic != nil {
+				w.onPanic(r)
+			}
+		}
+	}()
+	fn()
+}
+
+// SetOnPanic installs a hook fired when a timer callback panics.
+func (w *Wheel) SetOnPanic(fn func(any)) { w.onPanic = fn }
+
+// Recovered returns the total callback panics recovered.
+func (w *Wheel) Recovered() uint64 { return atomic.LoadUint64(&w.recovered) }
+
 func (w *Wheel) wake() {
 	select {
 	case w.wakeup <- struct{}{}:
@@ -182,7 +205,7 @@ func (w *Wheel) run() {
 		t := heap.Pop(&w.heap).(*Timer)
 		w.mu.Unlock()
 		if !t.cancelled.Load() {
-			t.fn()
+			w.safeFire(t.fn)
 		}
 		// Reschedule recurring timers.
 		if t.interval > 0 && !t.cancelled.Load() && !w.closed.Load() {
