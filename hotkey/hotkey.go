@@ -141,14 +141,23 @@ func (d *Detector) evictIdleLocked(now time.Time) {
 		}
 	}
 	for d.maxKeys > 0 && len(d.keys) > d.maxKeys {
-		// Drop the key with the fewest (trimmed) timestamps.
+		// Drop the key with the fewest (trimmed) timestamps; ties broken by
+		// oldest last-touch (LRU) so eviction is deterministic, not random map
+		// order.
 		victim := ""
 		minCount := -1
+		var victimLast time.Time
 		for k, ts := range d.keys {
-			c := len(trimBefore(ts, cutoff))
-			if minCount < 0 || c < minCount {
+			trimmed := trimBefore(ts, cutoff)
+			c := len(trimmed)
+			last := time.Time{}
+			if len(trimmed) > 0 {
+				last = trimmed[len(trimmed)-1]
+			}
+			if minCount < 0 || c < minCount || (c == minCount && last.Before(victimLast)) {
 				minCount = c
 				victim = k
+				victimLast = last
 			}
 		}
 		if victim == "" {
