@@ -16,6 +16,93 @@
 
 > Common Go utility library for ad-tech, finance, and blockchain infrastructure.
 
+## Architecture
+
+```mermaid
+graph TB
+    subgraph ROOT["github.com/v8fg/kit4go (root module — zero external deps)"]
+        direction LR
+        subgraph CONCURRENCY["Concurrency"]
+            WP[workerpool]
+            PL[pipeline]
+            SEM[semaphore]
+            RT[retry]
+            WT[wtimer]
+            DB[debounce]
+            FO[fanout]
+            SD[shutdown]
+            BT[batcher]
+        end
+        subgraph ALGO["Algorithm Primitives"]
+            BL[bloom]
+            CM[countmin]
+            HLL[hyperloglog]
+            TK[topk]
+            RS[reservoir]
+            TR[trie]
+            RB[ringbuffer]
+            CH[consistenthash]
+            LB[loadbalance]
+        end
+        subgraph CONTROL["Rate · Budget · Protection"]
+            LM[limiter]
+            BD[budget]
+            HK[hotkey]
+            FC[freqcap]
+            ID[idempotency]
+            BR[breaker]
+        end
+        subgraph CLIENTS["Clients"]
+            HC[httpclient]
+            TC[tcpclient]
+            UC[udpclient]
+        end
+        subgraph SERVERS["Servers"]
+            HS[httpserver]
+            GS[grpcserver]
+        end
+        subgraph UTILS["Utilities"]
+            BI[bit · str · datetime]
+            NUM[number · random · otp]
+            IP[ip · hash · base62]
+            UI[uuid · json · config]
+        end
+    end
+
+    subgraph SUBMODULES["Sub-modules (own go.mod — heavy deps isolated)"]
+        direction LR
+        L4G[log4go<br/>structured logger]
+        KFK[kafka<br/>sarama/franz-go]
+        PG[postgres<br/>pgx pool]
+        RDS[redis<br/>go-redis]
+        RDL[redislock<br/>distributed lock]
+        RATE[rate<br/>Redis GCRA]
+        GRPC[grpcclient<br/>retry + breaker]
+        GRPS[grpcserver<br/>interceptors]
+        EML[email<br/>go-mail SMTP]
+        MET[metrics<br/>Prometheus]
+        TRC[tracing<br/>OpenTelemetry]
+    end
+
+    HC -.-> BR
+    HC -.-> RT
+    GS -.-> SD
+    HS -.-> SD
+    L4G -.-> KFK
+    RDL -.-> RDS
+    RATE -.-> RDS
+    GRPC -.-> BR
+
+    style ROOT fill:#e8f5e9,stroke:#2e7d32
+    style SUBMODULES fill:#fff3e0,stroke:#e65100
+    style CONCURRENCY fill:#e3f2fd,stroke:#1565c0
+    style ALGO fill:#f3e5f5,stroke:#6a1b9a
+    style CONTROL fill:#fce4ec,stroke:#ad1457
+    style CLIENTS fill:#e0f7fa,stroke:#006064
+    style SERVERS fill:#e0f7fa,stroke:#006064
+    style UTILS fill:#f5f5f5,stroke:#616161
+```
+
 ## Package list
 
 ### Root module (`github.com/v8fg/kit4go`)
