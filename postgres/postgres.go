@@ -28,9 +28,17 @@ type Options struct {
 	ConnectTimeout  time.Duration // <=0 -> 5s
 }
 
+// PoolConn is the subset of *pgxpool.Pool that Client uses internally.
+// *pgxpool.Pool satisfies this interface; tests can inject a mock.
+type PoolConn interface {
+	Ping(context.Context) error
+	Close()
+}
+
 // Client wraps a pgx connection pool.
 type Client struct {
-	pool *pgxpool.Pool
+	pool    PoolConn
+	rawPool *pgxpool.Pool // non-nil in production; nil when mock-injected
 }
 
 // New creates a pool and pings it.
@@ -84,14 +92,18 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 		pool.Close()
 		return nil, err
 	}
-	return &Client{pool: pool}, nil
+	return &Client{pool: pool, rawPool: pool}, nil
 }
 
-// Pool returns the underlying pgx pool for advanced use.
-func (c *Client) Pool() *pgxpool.Pool { return c.pool }
+// Pool returns the underlying pgx pool for advanced use (queries, transactions).
+// Returns nil if the Client was created with a mock pool (testing only).
+func (c *Client) Pool() *pgxpool.Pool { return c.rawPool }
 
 // Ping checks connectivity.
 func (c *Client) Ping(ctx context.Context) error { return c.pool.Ping(ctx) }
 
 // Close releases all connections.
 func (c *Client) Close() { c.pool.Close() }
+
+// newWithPool builds a Client from an injected PoolConn (for testing).
+func newWithPool(pool PoolConn) *Client { return &Client{pool: pool} }
