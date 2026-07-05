@@ -218,7 +218,7 @@ func TestRunWithSignal_ContextCancelNoSignal(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- m.Run(ctx) }()
 	time.Sleep(30 * time.Millisecond) // let Start run and the signal goroutine park
-	cancel() // cancel without sending a signal -> goroutine exits via ctx.Done()
+	cancel()                          // cancel without sending a signal -> goroutine exits via ctx.Done()
 	select {
 	case err := <-done:
 		require.NoError(t, err)

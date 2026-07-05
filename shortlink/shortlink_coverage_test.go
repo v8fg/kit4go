@@ -92,7 +92,7 @@ func TestGenerate_RetriesOnCollision(t *testing.T) {
 // nonCollisionErrorStore returns a non-collision error on Save.
 type nonCollisionErrorStore struct{ err error }
 
-func (s *nonCollisionErrorStore) Save(code, url string) error { return s.err }
+func (s *nonCollisionErrorStore) Save(code, url string) error     { return s.err }
 func (s *nonCollisionErrorStore) Load(code string) (string, bool) { return "", false }
 
 // TestGenerate_NonCollisionErrorNoRetry covers the branch where a non-collision
@@ -110,7 +110,7 @@ func TestGenerate_NonCollisionErrorNoRetry(t *testing.T) {
 // retry-exhaustion path of Generate.
 type alwaysCollideStore struct{}
 
-func (s *alwaysCollideStore) Save(code, url string) error { return ErrCollision }
+func (s *alwaysCollideStore) Save(code, url string) error     { return ErrCollision }
 func (s *alwaysCollideStore) Load(code string) (string, bool) { return "", false }
 
 // TestGenerate_CollisionExhausted covers the retry-exhaustion branch of

@@ -36,8 +36,8 @@ func TestStart_ShutdownTimeoutDeterministic(t *testing.T) {
 			MethodName: "Hang",
 			Handler:    blkHandler(&blkServer{release: blockingUntil}),
 		}},
-		Streams:   []grpc.StreamDesc{},
-		Metadata:  "blk.proto",
+		Streams:  []grpc.StreamDesc{},
+		Metadata: "blk.proto",
 	}, &blkServer{release: blockingUntil})
 
 	ctx, cancel := context.WithCancel(context.Background())

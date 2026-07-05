@@ -158,4 +158,3 @@ func TestSend_ValidationError(t *testing.T) {
 		To: []string{"x@y.com"}, Subject: "s",
 	}), ErrMissingBody)
 }
-
