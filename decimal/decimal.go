@@ -70,6 +70,9 @@ func MustParse(s string, scale int) Decimal {
 // the given scale. The input is rescaled: if the input has fewer decimal places
 // than scale, trailing zeros are added; if more, it is an error.
 func Parse(s string, scale int) (Decimal, error) {
+	if s == "" {
+		return Decimal{}, fmt.Errorf("%w: empty string", ErrParse)
+	}
 	neg := false
 	if strings.HasPrefix(s, "-") {
 		neg = true
@@ -101,6 +104,9 @@ func Parse(s string, scale int) (Decimal, error) {
 
 // String renders the decimal as a string with exactly scale decimal places.
 func (d Decimal) String() string {
+	if d.value == nil {
+		return "0"
+	}
 	v := d.value
 	neg := v.Sign() < 0
 	abs := new(big.Int).Abs(v)
@@ -123,16 +129,26 @@ func (d Decimal) String() string {
 }
 
 // Unscaled returns the unscaled big.Int value.
-func (d Decimal) Unscaled() *big.Int { return d.value }
+func (d Decimal) Unscaled() *big.Int {
+	if d.value == nil {
+		return big.NewInt(0)
+	}
+	return d.value
+}
 
 // Scale returns the decimal scale.
 func (d Decimal) Scale() int { return d.scale }
 
 // Sign returns -1, 0, or +1.
-func (d Decimal) Sign() int { return d.value.Sign() }
+func (d Decimal) Sign() int {
+	if d.value == nil {
+		return 0
+	}
+	return d.value.Sign()
+}
 
 // IsZero reports whether d is zero.
-func (d Decimal) IsZero() bool { return d.value.Sign() == 0 }
+func (d Decimal) IsZero() bool { return d.Sign() == 0 }
 
 // Add returns d + other (must share the same scale).
 func (d Decimal) Add(other Decimal) (Decimal, error) {
@@ -150,8 +166,7 @@ func (d Decimal) Sub(other Decimal) (Decimal, error) {
 	return Decimal{value: new(big.Int).Sub(d.value, other.value), scale: d.scale}, nil
 }
 
-// Mul returns d * factor. The result has scale = d.scale * 2 (the product of
-// two scale-N values has 2N decimal places). Use Rescale to reduce.
+// Mul multiplies by an integer factor. The result preserves d's scale.
 func (d Decimal) Mul(factor int64) Decimal {
 	return Decimal{value: new(big.Int).Mul(d.value, big.NewInt(factor)), scale: d.scale}
 }

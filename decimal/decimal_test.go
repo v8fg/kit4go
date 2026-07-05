@@ -172,3 +172,65 @@ func TestLargeValues(t *testing.T) {
 		t.Fatal("large multiplication should be positive")
 	}
 }
+
+func TestZeroValue(t *testing.T) {
+	var d Decimal // zero value
+	if d.String() != "0" {
+		t.Fatalf("zero-value String() = %q, want 0", d.String())
+	}
+	if d.Sign() != 0 {
+		t.Fatalf("zero-value Sign() = %d, want 0", d.Sign())
+	}
+	if !d.IsZero() {
+		t.Fatal("zero-value IsZero() should be true")
+	}
+	if d.Unscaled().Sign() != 0 {
+		t.Fatal("zero-value Unscaled() should be big.Int(0)")
+	}
+}
+
+func TestAccessors(t *testing.T) {
+	d := New(12345, 3)
+	if d.Scale() != 3 {
+		t.Fatalf("Scale() = %d, want 3", d.Scale())
+	}
+	if d.Unscaled().Int64() != 12345 {
+		t.Fatalf("Unscaled() = %d, want 12345", d.Unscaled())
+	}
+	if d.Sign() != 1 {
+		t.Fatalf("Sign() = %d, want 1", d.Sign())
+	}
+	if d.IsZero() {
+		t.Fatal("IsZero() should be false")
+	}
+	fi := FromInt(42)
+	if fi.Scale() != 0 || fi.Unscaled().Int64() != 42 {
+		t.Fatalf("FromInt(42) wrong: scale=%d unscaled=%d", fi.Scale(), fi.Unscaled())
+	}
+}
+
+func TestParsePlusPrefix(t *testing.T) {
+	d, err := Parse("+1.50", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.String() != "1.50" {
+		t.Fatalf("+prefix: %s", d)
+	}
+}
+
+func TestParseEmpty(t *testing.T) {
+	_, err := Parse("", 2)
+	if err == nil {
+		t.Fatal("empty string should error")
+	}
+}
+
+func TestRescaleLargeScale(t *testing.T) {
+	// Scale > 20 hits the pow10 fallback path.
+	d := New(1, 0)
+	r := d.Rescale(25)
+	if r.Scale() != 25 {
+		t.Fatalf("scale = %d, want 25", r.Scale())
+	}
+}

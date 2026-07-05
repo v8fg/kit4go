@@ -82,6 +82,30 @@ func TestGate_ConcurrentSafe(t *testing.T) {
 	}
 }
 
+func TestGate_ReleaseWithoutAcquire(t *testing.T) {
+	g := New(1)
+	if g.Release() {
+		t.Fatal("Release without Acquire should return false, not panic")
+	}
+}
+
+func TestGate_Max(t *testing.T) {
+	g := New(5)
+	if g.Max() != 5 {
+		t.Fatalf("Max() = %d, want 5", g.Max())
+	}
+}
+
+func TestGate_NegativeMax(t *testing.T) {
+	g := New(-1)
+	if g.Max() != 0 {
+		t.Fatalf("negative max should clamp to 0, got %d", g.Max())
+	}
+	if g.TryAcquire() {
+		t.Fatal("max=0 should reject all")
+	}
+}
+
 func TestGate_SetMax(t *testing.T) {
 	g := New(1)
 	g.TryAcquire()

@@ -22,6 +22,9 @@ var ErrNotFound = errors.New("shortlink: code not found")
 // ErrEmptyURL is returned by Generate when the URL is empty.
 var ErrEmptyURL = errors.New("shortlink: url is required")
 
+// ErrCollision is returned by Store.Save when the code already exists.
+var ErrCollision = errors.New("shortlink: code collision")
+
 const (
 	// Alphabet is the default base62 character set for code generation.
 	Alphabet       = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -115,11 +118,14 @@ func (s *Shortener) Generate(url string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if err := s.cfg.store.Save(code, url); err != nil {
-			lastErr = err
-			continue
+		err = s.cfg.store.Save(code, url)
+		if err == nil {
+			return code, nil
 		}
-		return code, nil
+		if !errors.Is(err, ErrCollision) {
+			return "", err // non-collision store error — don't retry
+		}
+		lastErr = err
 	}
 	return "", lastErr
 }
@@ -232,12 +238,12 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{m: make(map[string]string)}
 }
 
-// Save stores the mapping. Returns an error if the code already exists.
+// Save stores the mapping. Returns ErrCollision if the code already exists.
 func (s *MemoryStore) Save(code, url string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.m[code]; exists {
-		return errors.New("shortlink: code collision")
+		return ErrCollision
 	}
 	s.m[code] = url
 	return nil

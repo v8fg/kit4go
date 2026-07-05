@@ -7,7 +7,6 @@
 package featureflag
 
 import (
-	"context"
 	"hash/fnv"
 	"sync"
 	"time"
@@ -138,11 +137,4 @@ func hashPercent(key string) uint {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(key))
 	return uint(h.Sum32() % 100)
-}
-
-// FromContext is a convenience for extracting a key from a context (e.g., a
-// user ID injected by middleware). Returns "" if the key is not present, which
-// means the flag evaluates with the "" key (consistent but usually off at <100%).
-func FromContext(_ context.Context, key string) string {
-	return key
 }

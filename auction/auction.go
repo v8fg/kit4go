@@ -51,13 +51,13 @@ func Resolve(bids []Bid, floor int64) (Result, error) {
 		return valid[i].Price > valid[j].Price
 	})
 
-	winner := &valid[0]
+	winner := valid[0] // copy to avoid aliasing local slice
 	clearing := floor
 	if len(valid) > 1 && valid[1].Price > floor {
 		clearing = valid[1].Price
 	}
 	return Result{
-		Winner:        winner,
+		Winner:        &winner,
 		ClearingPrice: clearing,
 		BidCount:      len(bids),
 		ValidCount:    len(valid),

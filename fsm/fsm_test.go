@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// States
 const (
 	StateIdle      State = "idle"
 	StatePending   State = "pending"
@@ -16,7 +15,6 @@ const (
 	StateCancelled State = "cancelled"
 )
 
-// Events
 const (
 	EventSubmit = "submit"
 	EventPay    = "pay"
@@ -33,8 +31,17 @@ func orderRules() []Rule {
 	}
 }
 
+func mustNew(t *testing.T, initial State, rules ...Rule) *Machine {
+	t.Helper()
+	m, err := New(initial, rules...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 func TestMachine_BasicTransition(t *testing.T) {
-	m := New(StateIdle, orderRules()...)
+	m := mustNew(t, StateIdle, orderRules()...)
 	if !m.Is(StateIdle) {
 		t.Fatalf("initial state = %s, want idle", m.Current())
 	}
@@ -53,8 +60,8 @@ func TestMachine_BasicTransition(t *testing.T) {
 }
 
 func TestMachine_NoTransition(t *testing.T) {
-	m := New(StateIdle, orderRules()...)
-	err := m.Send(EventPay, nil) // can't pay from idle
+	m := mustNew(t, StateIdle, orderRules()...)
+	err := m.Send(EventPay, nil)
 	if !errors.Is(err, ErrNoTransition) {
 		t.Fatalf("expected ErrNoTransition, got %v", err)
 	}
@@ -65,12 +72,11 @@ func TestMachine_NoTransition(t *testing.T) {
 
 func TestMachine_Guard(t *testing.T) {
 	rules := orderRules()
-	// Add a guard: can only pay if amount > 0
 	rules[1].Guard = func(ctx any) bool {
 		amount, _ := ctx.(int)
 		return amount > 0
 	}
-	m := New(StateIdle, rules...)
+	m := mustNew(t, StateIdle, rules...)
 
 	_ = m.Send(EventSubmit, nil)
 	if err := m.Send(EventPay, 0); !errors.Is(err, ErrGuardRejected) {
@@ -94,7 +100,7 @@ func TestMachine_Action(t *testing.T) {
 		actionRan.Store(true)
 		return nil
 	}
-	m := New(StateIdle, rules...)
+	m := mustNew(t, StateIdle, rules...)
 	_ = m.Send(EventSubmit, nil)
 	_ = m.Send(EventPay, nil)
 	if !actionRan.Load() {
@@ -108,13 +114,12 @@ func TestMachine_ActionError(t *testing.T) {
 	rules[1].Action = func(ctx any) error {
 		return actionErr
 	}
-	m := New(StateIdle, rules...)
+	m := mustNew(t, StateIdle, rules...)
 	_ = m.Send(EventSubmit, nil)
 	err := m.Send(EventPay, nil)
 	if !errors.Is(err, ErrActionFailed) {
 		t.Fatalf("expected ErrActionFailed, got %v", err)
 	}
-	// State should NOT change on action error.
 	if !m.Is(StatePending) {
 		t.Fatal("state changed on action error")
 	}
@@ -123,7 +128,7 @@ func TestMachine_ActionError(t *testing.T) {
 func TestMachine_OnEnterOnExit(t *testing.T) {
 	var enterPaid atomic.Bool
 	var exitPending atomic.Bool
-	m := New(StateIdle, orderRules()...)
+	m := mustNew(t, StateIdle, orderRules()...)
 	m.OnEnter(StatePaid, func(ctx any) { enterPaid.Store(true) })
 	m.OnExit(StatePending, func(ctx any) { exitPending.Store(true) })
 
@@ -140,7 +145,7 @@ func TestMachine_OnEnterOnExit(t *testing.T) {
 func TestMachine_Listener(t *testing.T) {
 	var mu sync.Mutex
 	var transitions []struct{ from, to, event string }
-	m := New(StateIdle, orderRules()...)
+	m := mustNew(t, StateIdle, orderRules()...)
 	m.Listen(func(from, to State, event string, ctx any) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -167,7 +172,7 @@ func TestMachine_Can(t *testing.T) {
 		ok, _ := ctx.(bool)
 		return ok
 	}
-	m := New(StateIdle, rules...)
+	m := mustNew(t, StateIdle, rules...)
 	_ = m.Send(EventSubmit, nil)
 
 	if !m.Can(EventPay, true) {
@@ -182,9 +187,8 @@ func TestMachine_Can(t *testing.T) {
 }
 
 func TestMachine_ConcurrentSafe(t *testing.T) {
-	m := New(StateIdle, orderRules()...)
+	m := mustNew(t, StateIdle, orderRules()...)
 	var wg sync.WaitGroup
-	// Reader
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
@@ -195,7 +199,6 @@ func TestMachine_ConcurrentSafe(t *testing.T) {
 			}
 		}()
 	}
-	// Writer (single — FSM transitions are sequential by nature)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -205,7 +208,7 @@ func TestMachine_ConcurrentSafe(t *testing.T) {
 }
 
 func TestMachine_AvailableEvents(t *testing.T) {
-	m := New(StateIdle, orderRules()...)
+	m := mustNew(t, StateIdle, orderRules()...)
 	events := m.AvailableEvents()
 	if len(events) != 1 || events[0] != EventSubmit {
 		t.Fatalf("from idle, available = %v, want [submit]", events)
@@ -217,14 +220,19 @@ func TestMachine_AvailableEvents(t *testing.T) {
 	}
 }
 
+func TestMachine_EmptyRules(t *testing.T) {
+	m := mustNew(t, "start")
+	if err := m.Send("anything", nil); !errors.Is(err, ErrNoTransition) {
+		t.Fatalf("empty machine: %v", err)
+	}
+}
+
 func TestMachine_DuplicateRule(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for duplicate rule")
-		}
-	}()
-	New(StateIdle,
+	_, err := New(StateIdle,
 		Rule{From: StateIdle, Event: "x", To: StatePending},
-		Rule{From: StateIdle, Event: "x", To: StatePaid}, // duplicate (idle, x)
+		Rule{From: StateIdle, Event: "x", To: StatePaid},
 	)
+	if err == nil {
+		t.Fatal("expected error for duplicate rule")
+	}
 }

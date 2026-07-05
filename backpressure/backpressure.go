@@ -41,13 +41,19 @@ func (g *Gate) TryAcquire() bool {
 	}
 }
 
-// Release marks one in-flight item as done. Panics if called more than TryAcquire.
-func (g *Gate) Release() {
-	cur := g.current.Load()
-	if cur <= 0 {
-		panic("backpressure: Release without Acquire")
+// Release marks one in-flight item as done. Returns false (a no-op) if called
+// when nothing is in flight — safe for concurrent code where a Release might
+// race with the item completing. Returns true on a successful decrement.
+func (g *Gate) Release() bool {
+	for {
+		cur := g.current.Load()
+		if cur <= 0 {
+			return false
+		}
+		if g.current.CompareAndSwap(cur, cur-1) {
+			return true
+		}
 	}
-	g.current.Add(-1)
 }
 
 // Current returns the number of in-flight items.

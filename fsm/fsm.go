@@ -57,8 +57,8 @@ type Machine struct {
 }
 
 // New builds a machine starting in initial, with the given transition rules.
-// Panics if two rules share the same (From, Event) pair.
-func New(initial State, rules ...Rule) *Machine {
+// Returns an error if two rules share the same (From, Event) pair.
+func New(initial State, rules ...Rule) (*Machine, error) {
 	m := &Machine{
 		current: initial,
 		rules:   make(map[ruleKey]Rule, len(rules)),
@@ -68,11 +68,11 @@ func New(initial State, rules ...Rule) *Machine {
 	for _, r := range rules {
 		key := ruleKey{r.From, r.Event}
 		if _, exists := m.rules[key]; exists {
-			panic(fmt.Sprintf("fsm: duplicate rule for (%s, %s)", r.From, r.Event))
+			return nil, fmt.Errorf("fsm: duplicate rule for (%s, %s)", r.From, r.Event)
 		}
 		m.rules[key] = r
 	}
-	return m
+	return m, nil
 }
 
 // Send processes an event. It finds the rule for (current, event), checks the

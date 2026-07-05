@@ -88,11 +88,16 @@ type CORSConfig struct {
 
 // CORS returns middleware that applies CORS headers. Preflight (OPTIONS) requests
 // are answered directly; all other methods pass through with CORS headers added.
+//
+// NOTE: "*" + AllowCredentials is invalid per the CORS spec (browsers reject it).
+// If AllowCredentials is true and AllowOrigins contains "*", the middleware
+// echoes the request's Origin header instead of "*" (the spec-compliant fallback).
 func CORS(cfg CORSConfig) func(http.Handler) http.Handler {
 	origins := cfg.AllowOrigins
 	if origins == nil {
 		origins = []string{"*"}
 	}
+	creds := cfg.AllowCredentials
 	methods := cfg.AllowMethods
 	if methods == nil {
 		methods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions}
@@ -107,10 +112,16 @@ func CORS(cfg CORSConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			w.Header().Set("Access-Control-Allow-Origin", matchOrigin(origin, origins))
+			allowOrigin := matchOrigin(origin, origins)
+			// Spec compliance: "*" + credentials is invalid. Echo the specific
+			// origin instead so browsers accept it with credentials.
+			if creds && allowOrigin == "*" && origin != "" {
+				allowOrigin = origin
+			}
+			w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 			w.Header().Set("Access-Control-Allow-Methods", methodStr)
 			w.Header().Set("Access-Control-Allow-Headers", headerStr)
-			if cfg.AllowCredentials {
+			if creds {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 			if cfg.MaxAge > 0 {
