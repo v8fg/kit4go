@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/v8fg/kit4go/grpcserver"
 	"google.golang.org/grpc"
+
+	"github.com/v8fg/kit4go/grpcserver"
 )
 
 func TestWithStreamInterceptor(t *testing.T) {

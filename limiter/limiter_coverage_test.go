@@ -302,18 +302,18 @@ func TestLeakyBucket_NextDrainDelay_LowerClamp(t *testing.T) {
 // GCRA's deficit is purely (tat - now) — it has no stored level to lean on, so
 // unlike the leaky bucket the clamp is inherently time-racy: nextDelay reads
 // `now` fresh, so any delay between Store and nextDelay erodes the margin. We
-// give a ~700ns lead (deficit ~= 695ns after the ~5ns burstOffset) and retry a
-// few times until a call lands its deficit in (0, 1us) and clamps up to 1us.
+// Inject a frozen clock so the deficit is deterministic, then set tat so the
+// deficit lands in (0, 1us) and the lower clamp fires. The retry-loop form was
+// flaky on slow CI runners where the clock always advanced past the lead.
 func TestGCRA_NextDelay_LowerClamp(t *testing.T) {
 	g := newGCRA(1e9, 5) // emissionNs=1ns, burstOffsetNs=5ns
-	var d time.Duration
-	for i := 0; i < 100; i++ {
-		g.tat.Store(time.Now().Add(700 * time.Nanosecond).UnixNano())
-		if d = g.nextDelay(); d == time.Microsecond {
-			return
-		}
+	base := time.Now()
+	g.now = func() time.Time { return base } // freeze the clock
+	// tat = base + burstOffset(5ns) + 300ns -> deficit = 300ns in (0, 1us) -> clamp.
+	g.tat.Store(base.Add(305 * time.Nanosecond).UnixNano())
+	if d := g.nextDelay(); d != time.Microsecond {
+		t.Fatalf("nextDelay lower clamp = %v, want exactly 1us (deterministic)", d)
 	}
-	t.Fatalf("nextDelay lower clamp = %v, want exactly 1us (deficit never landed in (0,1us) over 100 tries)", d)
 }
 
 // TestSlidingWindow_Acquire_BackwardClockClamp covers sliding_window.acquire's
