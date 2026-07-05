@@ -109,13 +109,15 @@ graph TB
 
 | Category | Packages |
 |----------|----------|
-| **Concurrency** | [workerpool](workerpool) · [pipeline](pipeline) · [semaphore](semaphore) · [retry](retry) · [wtimer](wtimer) · [debounce](debounce) · [fanout](fanout) · [shutdown](shutdown) · [batcher](batcher) |
-| **Algorithms** | [bloom](bloom) · [countmin](countmin) · [hyperloglog](hyperloglog) · [topk](topk) · [reservoir](reservoir) · [trie](trie) · [ringbuffer](ringbuffer) · [consistenthash](consistenthash) · [loadbalance](loadbalance) |
-| **Rate & budget** | [limiter](limiter) (token-bucket/sliding-window/fixed-window/leaky/GCRA) · [budget](budget) · [rate](rate) (Redis-backed) · [hotkey](hotkey) · [freqcap](freqcap) · [idempotency](idempotency) |
-| **Cache & storage** | [cache](cache) (unified memory=lru/redis) · [lru](lru) · [breaker](breaker) |
+| **Concurrency** | [workerpool](workerpool) · [pipeline](pipeline) · [semaphore](semaphore) · [retry](retry) · [wtimer](wtimer) · [debounce](debounce) · [fanout](fanout) · [shutdown](shutdown) · [batcher](batcher) · [backpressure](backpressure) |
+| **Algorithms** | [bloom](bloom) · [countmin](countmin) · [hyperloglog](hyperloglog) · [topk](topk) · [reservoir](reservoir) · [trie](trie) · [ringbuffer](ringbuffer) · [consistenthash](consistenthash) · [loadbalance](loadbalance) · [auction](auction) (2nd-price/multi-slot) · [fsm](fsm) |
+| **Rate & budget** | [limiter](limiter) (token-bucket/sliding-window/fixed-window/leaky/GCRA) · [budget](budget) · [rate](rate) (Redis-backed) · [hotkey](hotkey) · [freqcap](freqcap) · [idempotency](idempotency) · [breaker](breaker) |
+| **Cache & storage** | [cache](cache) (unified memory=lru/redis) · [lru](lru) · [shortlink](shortlink) |
+| **Finance** | [money](money) (ISO-4217 fixed-point) · [decimal](decimal) (fixed-point, math/big) |
 | **Clients** | [httpclient](httpclient) · [tcpclient](tcpclient) · [udpclient](udpclient) |
-| **Servers** | [httpserver](httpserver) · [grpcserver](grpcserver) |
-| **Utilities** | [bit](bit) · [datetime](datetime) · [file](file) · [ip](ip) · [json](json) · [number](number) · [str](str) · [uuid](uuid) · [xlo](xlo) · [random](random) · [otp](otp) · [base62](base62) · [hash](hash) · [config](config) · [maxprocs](maxprocs) · [backoff](backoff) · [health](health) · [stress](stress) |
+| **Servers** | [httpserver](httpserver) · [grpcserver](grpcserver) · [middleware](middleware) (request-id/ratelimit/CORS) |
+| **Observability** | [latency](latency) (sharded tail-latency histogram) |
+| **Utilities** | [bit](bit) · [datetime](datetime) · [file](file) · [ip](ip) · [json](json) · [number](number) · [str](str) · [uuid](uuid) · [xlo](xlo) · [random](random) · [otp](otp) · [base62](base62) · [hash](hash) · [config](config) · [maxprocs](maxprocs) · [backoff](backoff) · [health](health) · [stress](stress) · [featureflag](featureflag) |
 
 ### Sub-modules (own go.mod — heavy deps isolated)
 
