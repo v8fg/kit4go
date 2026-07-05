@@ -37,7 +37,7 @@ type WebhookWriter struct {
 
 	sent    uint64
 	skipped uint64
-	onEvent func(name string, delta int64)
+	onEvent atomic.Pointer[func(name string, delta int64)]
 }
 
 // WebhookContext carries writer-level state into a RateWebhookFormatter —
@@ -146,9 +146,7 @@ func (w *WebhookWriter) format(r *Record) (string, string) {
 func (w *WebhookWriter) bump(sent bool) {
 	if sent {
 		atomic.AddUint64(&w.sent, 1)
-		if w.onEvent != nil {
-			w.onEvent("sent", 1)
-		}
+		w.fire("sent", 1)
 		return
 	}
 	atomic.AddUint64(&w.skipped, 1)
@@ -176,7 +174,19 @@ func (w *WebhookWriter) SetGate(g *RateAlerter) { w.gate = g }
 
 // SetOnEvent installs a real-time metric hook invoked on each sent/skipped
 // decision with the metric name ("sent"/"skipped") and the delta (always 1).
-func (w *WebhookWriter) SetOnEvent(fn func(name string, delta int64)) { w.onEvent = fn }
+func (w *WebhookWriter) SetOnEvent(fn func(name string, delta int64)) {
+	if fn == nil {
+		w.onEvent.Store(nil)
+		return
+	}
+	w.onEvent.Store(&fn)
+}
+
+func (w *WebhookWriter) fire(name string, delta int64) {
+	if p := w.onEvent.Load(); p != nil {
+		(*p)(name, delta)
+	}
+}
 
 // WebhookWriterMetrics is a point-in-time counter snapshot.
 type WebhookWriterMetrics struct {

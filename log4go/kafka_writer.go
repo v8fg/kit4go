@@ -160,8 +160,9 @@ type KafKaWriter struct {
 	errored    uint64
 	failovered uint64 // records diverted to spill on breaker-open / sync send-error (L4)
 	// onEvent is an optional real-time metric hook (reserved for monitoring
-	// integration). Nil disables it. Must be non-blocking.
-	onEvent         func(name string, delta int64)
+	// integration). Nil disables it. Must be non-blocking. Stored atomically so
+	// SetOnEvent can race safely with the daemon reader.
+	onEvent         atomic.Pointer[func(name string, delta int64)]
 	producerFactory func() (kafka.Producer, error)
 	drainInterval   time.Duration
 	// batch-mode tuning (resolved from KafKaWriterOptions in NewKafKaWriter).
@@ -491,16 +492,12 @@ func (k *KafKaWriter) sendOne(msg kafka.Message) {
 			return
 		}
 		atomic.AddUint64(&k.errored, 1)
-		if k.onEvent != nil {
-			k.onEvent("error", 1)
-		}
+		k.fireEvent("error", 1)
 		log.Printf("[log4go] kafka send err: %v", err)
 		return
 	}
 	atomic.AddUint64(&k.sent, 1)
-	if k.onEvent != nil {
-		k.onEvent("sent", 1)
-	}
+	k.fireEvent("sent", 1)
 }
 
 // failover routes a record to the spill store when the producer path is
@@ -514,9 +511,7 @@ func (k *KafKaWriter) failover(msg kafka.Message) {
 	} else {
 		k.stats.IncDropped()
 	}
-	if k.onEvent != nil {
-		k.onEvent("failover", 1)
-	}
+	k.fireEvent("failover", 1)
 }
 
 // drainSpill re-injects recovered records into the channel (non-blocking).
@@ -569,9 +564,7 @@ func (k *KafKaWriter) daemon() {
 				if k.breaker != nil {
 					k.breaker.recordError() // feeds the error-rate window (L4)
 				}
-				if k.onEvent != nil {
-					k.onEvent("error", 1)
-				}
+				k.fireEvent("error", 1)
 				log.Printf("[log4go] kafka producer err: %v", e.Err)
 			}
 		})
@@ -625,17 +618,13 @@ func (k *KafKaWriter) daemon() {
 			if batchErr != nil {
 				// client-side error, no spill store: count errored, drop the batch.
 				atomic.AddUint64(&k.errored, n)
-				if k.onEvent != nil {
-					k.onEvent("error", int64(n))
-				}
+				k.fireEvent("error", int64(n))
 			} else {
 				atomic.AddUint64(&k.batches, 1)
 				if n > atomic.LoadUint64(&k.batchMax) { // daemon sole writer: Load/Store safe
 					atomic.StoreUint64(&k.batchMax, n)
 				}
-				if k.onEvent != nil {
-					k.onEvent("sent", int64(n))
-				}
+				k.fireEvent("sent", int64(n))
 			}
 			batch = batch[:0]
 		}
@@ -897,7 +886,19 @@ func (k *KafKaWriter) ProducerSnapshot() kafka.ProducerSnapshot {
 // integration). The callback receives an event name ("sent"/"error") and a
 // delta. It must be set before Start and must be non-blocking.
 func (k *KafKaWriter) SetOnEvent(fn func(name string, delta int64)) {
-	k.onEvent = fn
+	if fn == nil {
+		k.onEvent.Store(nil)
+		return
+	}
+	k.onEvent.Store(&fn)
+}
+
+// fireEvent invokes the onEvent hook if installed (atomic load; zero-overhead
+// when nil). Called from the daemon goroutine.
+func (k *KafKaWriter) fireEvent(name string, delta int64) {
+	if p := k.onEvent.Load(); p != nil {
+		(*p)(name, delta)
+	}
 }
 
 // SetAlertSink installs an alert sink (e.g. WebhookAlertSink for lark/dingtalk/

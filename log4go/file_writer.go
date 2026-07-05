@@ -123,7 +123,7 @@ type FileWriter struct {
 	flushBatchSize int
 	// batchSinceFlush counts writeOne records since the last batch flush; daemon-only.
 	batchSinceFlush int
-	onEvent         func(name string, delta int64)
+	onEvent         atomic.Pointer[func(name string, delta int64)]
 	quit            chan struct{}
 	stop            chan struct{}
 	flushSig        chan struct{}
@@ -567,8 +567,8 @@ func (w *FileWriter) send(r *Record) {
 }
 
 func (w *FileWriter) fire(name string, delta int64) {
-	if w.onEvent != nil {
-		w.onEvent(name, delta)
+	if p := w.onEvent.Load(); p != nil {
+		(*p)(name, delta)
 	}
 }
 
@@ -841,7 +841,13 @@ func (w *FileWriter) Metrics() FileWriterMetrics {
 }
 
 // SetOnEvent installs a real-time metric hook (reserved for monitoring).
-func (w *FileWriter) SetOnEvent(fn func(name string, delta int64)) { w.onEvent = fn }
+func (w *FileWriter) SetOnEvent(fn func(name string, delta int64)) {
+	if fn == nil {
+		w.onEvent.Store(nil)
+		return
+	}
+	w.onEvent.Store(&fn)
+}
 
 // CrashLossBound reports the worst-case data loss on a sudden process crash for
 // an async FileWriter: at most this many records (plus the bufio buffer bytes)

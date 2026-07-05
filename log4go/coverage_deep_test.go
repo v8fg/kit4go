@@ -841,7 +841,7 @@ func Test_FileWriter_Send_Drop(t *testing.T) {
 
 	// closing fast-path: drops and fires "drop" event without touching messages.
 	events := make(chan string, 4)
-	fw.onEvent = func(name string, _ int64) { events <- name }
+	fw.SetOnEvent(func(name string, _ int64) { events <- name })
 	fw.closing.Store(true)
 	fw.send(&Record{level: INFO, msg: "closed"})
 	if got := fw.stats.Dropped(); got != 2 {
@@ -865,7 +865,7 @@ func Test_FileWriter_Send_Spill(t *testing.T) {
 	fw.policy = OverflowSpill
 	fw.spiller = NewRingSpiller[*Record](2)
 	events := make(chan string, 8)
-	fw.onEvent = func(name string, _ int64) { events <- name }
+	fw.SetOnEvent(func(name string, _ int64) { events <- name })
 
 	fw.messages <- &Record{level: INFO, msg: "fill"} // full
 	fw.send(&Record{level: INFO, msg: "spill me"})
