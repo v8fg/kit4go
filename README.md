@@ -124,6 +124,7 @@ graph TB
 | [log4go](log4go) | async structured logging (console/file/kafka/net/io, sampling, ShardLogger, circuit breaker + spill failover, ~1M qps/core) | sarama, sonic, goccy |
 | [kafka](kafka) | producer + consumer (sync/async, group, partition; sarama/franz-go unified) | IBM/sarama |
 | [postgres](postgres) | pgx pool wrapper | jackc/pgx/v5 |
+| [clickhouse](clickhouse) | ClickHouse OLAP client wrapper (native protocol, PrepareBatch pass-through) | ClickHouse/clickhouse-go |
 | [redis](redis) | Redis client wrapper | redis/go-redis |
 | [redislock](redislock) | distributed lock (token-guarded Lua, auto-renew, onLost) | redis/go-redis |
 | [rate](rate) | Redis-backed GCRA rate limiter | redis/go-redis |
@@ -152,7 +153,7 @@ go get github.com/v8fg/kit4go/redislock           # distributed lock (standalone
 - **Deep concurrency audit**: 6 rounds, ~23 real bugs fixed (deadlocks, races, leaks, panics). See [QUALITY_RULES.md](QUALITY_RULES.md) for the framework.
 - **log4go resilience**: circuit breaker + spill failover, observable degradation, bounded shutdown. See [log4go/RESILIENCE.md](log4go/RESILIENCE.md).
 - **Callback-recover policy**: library-owned workers recover panics (`Recovered()` + `SetOnPanic`).
-- **CI**: all 11 sub-modules, ubuntu + macOS, `-race`, `-short`.
+- **CI**: all 12 sub-modules, ubuntu + macOS, `-race`, `-short`.
 - **Lint**: golangci-lint v2 with 11 high-signal linters.
 - **Coverage**: 90%+ across root-module packages.
 
