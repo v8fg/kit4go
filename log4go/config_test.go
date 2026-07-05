@@ -38,7 +38,7 @@ var (
     "producer_topic": "log4go-kafka-test",
     "producer_return_successes": true,
     "producer_timeout": 1,
-    "brokers": ["47.94.201.80:9092"]
+    "brokers": ["127.0.0.1:9092"]
   }
 }
 `
