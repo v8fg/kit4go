@@ -137,7 +137,7 @@ func TestAddDurationStr(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.AddDurationStr(tt.args.duration, tt.args.t); !reflect.DeepEqual(got, tt.want) {
+			if got, _ := datetime.AddDurationStr(tt.args.duration, tt.args.t); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("AddDurationStr() = %v, want %v", got, tt.want)
 			}
 		})
@@ -442,76 +442,51 @@ func TestFirstDateTimeStrOfMonth(t *testing.T) {
 }
 
 func TestFirstDateTimeOfWeek(t *testing.T) {
-	type args struct {
-		t time.Time
-	}
 	tests := []struct {
-		name string
-		args args
-		want time.Time
+		name     string
+		t        time.Time
+		firstDay time.Weekday
+		want     time.Time
 	}{
-		{
-			name: "", args: args{
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
-			want: time.Date(2021, 12, 27, 0, 0, 0, 0, time.UTC),
-		},
-		{
-			name: "", args: args{
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
-			want: time.Date(2022, 1, 31, 0, 0, 0, 0, time.UTC),
-		},
-		{
-			name: "", args: args{
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
-			want: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
-		},
+		// Monday-first (ISO 8601 / Europe / China) — the old hardcoded behavior.
+		{"mon/sat→prev monday", time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC), time.Monday, time.Date(2021, 12, 27, 0, 0, 0, 0, time.UTC)},
+		{"mon/tue→same monday", time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC), time.Monday, time.Date(2022, 1, 31, 0, 0, 0, 0, time.UTC)},
+		{"mon/monday→same day", time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC), time.Monday, time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC)},
+		// Sunday-first (US / ad-tech). Sunday must file into the current week,
+		// not next week (the bug the parameterization fixed).
+		{"sun/sunday→same day", time.Date(2022, 1, 2, 0, 0, 5, 0, time.UTC), time.Sunday, time.Date(2022, 1, 2, 0, 0, 0, 0, time.UTC)},
+		{"sun/saturday→prev sunday", time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC), time.Sunday, time.Date(2021, 12, 26, 0, 0, 0, 0, time.UTC)},
+		// Saturday-first (MENA).
+		{"sat/friday→prev saturday", time.Date(2022, 1, 7, 0, 0, 5, 0, time.UTC), time.Saturday, time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.FirstDateTimeOfWeek(tt.args.t); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("FirstDateTimeOfWeek() = %v, want %v", got, tt.want)
+			got := datetime.FirstDateTimeOfWeek(tt.t, tt.firstDay)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("FirstDateTimeOfWeek(%v, %v) = %v, want %v", tt.t, tt.firstDay, got, tt.want)
 			}
 		})
 	}
 }
 
 func TestFirstDateTimeStrOfWeek(t *testing.T) {
-	type args struct {
-		layout string
-		t      time.Time
+	// 2022-02-01 (Tuesday); Monday-first week starts 2022-01-31.
+	got := datetime.FirstDateTimeStrOfWeek("", time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC), time.Monday)
+	if got != "2022-01-31" {
+		t.Errorf("FirstDateTimeStrOfWeek default layout = %q, want 2022-01-31", got)
 	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		{
-			name: "", args: args{layout: "",
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
-			want: "2021-12-27",
-		},
-		{
-			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
-			want: "2021-12-27",
-		},
-		{
-			name: "", args: args{layout: datetime.DefaultLayoutDateTime,
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
-			want: "2022-01-31 00:00:00",
-		},
-		{
-			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
-			want: "2022-02-28",
-		},
+	// Sunday-first: the same Tuesday rolls back to Sunday 2022-01-30.
+	got = datetime.FirstDateTimeStrOfWeek(datetime.DefaultLayoutDateTime, time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC), time.Sunday)
+	if got != "2022-01-30 00:00:00" {
+		t.Errorf("FirstDateTimeStrOfWeek sunday-first = %q, want 2022-01-30 00:00:00", got)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.FirstDateTimeStrOfWeek(tt.args.layout, tt.args.t); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("FirstDateTimeStrOfWeek() = %v, want %v", got, tt.want)
-			}
-		})
+}
+
+func TestFirstDateTimeOfISOWeek(t *testing.T) {
+	// 2022-01-01 (Saturday) → ISO week starts Monday 2021-12-27.
+	got := datetime.FirstDateTimeOfISOWeek(time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC))
+	if want := time.Date(2021, 12, 27, 0, 0, 0, 0, time.UTC); !reflect.DeepEqual(got, want) {
+		t.Errorf("FirstDateTimeOfISOWeek = %v, want %v", got, want)
 	}
 }
 
@@ -595,76 +570,42 @@ func TestLastDateTimeStrOfMonth(t *testing.T) {
 }
 
 func TestLastDateTimeOfWeek(t *testing.T) {
-	type args struct {
-		t time.Time
-	}
 	tests := []struct {
-		name string
-		args args
-		want time.Time
+		name     string
+		t        time.Time
+		firstDay time.Weekday
+		want     time.Time
 	}{
-		{
-			name: "", args: args{
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
-			want: time.Date(2022, 1, 2, 23, 59, 59, 999999999, time.UTC),
-		},
-		{
-			name: "", args: args{
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
-			want: time.Date(2022, 2, 6, 23, 59, 59, 999999999, time.UTC),
-		},
-		{
-			name: "", args: args{
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
-			want: time.Date(2022, 3, 6, 23, 59, 59, 999999999, time.UTC),
-		},
+		// Monday-first: week runs Mon..Sun.
+		{"mon/sat→ends sunday", time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC), time.Monday, time.Date(2022, 1, 2, 23, 59, 59, 999999999, time.UTC)},
+		{"mon/tue→ends sunday", time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC), time.Monday, time.Date(2022, 2, 6, 23, 59, 59, 999999999, time.UTC)},
+		// Sunday-first: week runs Sun..Sat.
+		{"sun/sunday→ends saturday", time.Date(2022, 1, 2, 0, 0, 5, 0, time.UTC), time.Sunday, time.Date(2022, 1, 8, 23, 59, 59, 999999999, time.UTC)},
+		{"sun/saturday→ends saturday", time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC), time.Sunday, time.Date(2022, 1, 1, 23, 59, 59, 999999999, time.UTC)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.LastDateTimeOfWeek(tt.args.t); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("LastDateTimeOfWeek() = %v, want %v", got, tt.want)
+			got := datetime.LastDateTimeOfWeek(tt.t, tt.firstDay)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("LastDateTimeOfWeek(%v, %v) = %v, want %v", tt.t, tt.firstDay, got, tt.want)
 			}
 		})
 	}
 }
 
 func TestLastDateTimeStrOfWeek(t *testing.T) {
-	type args struct {
-		layout string
-		t      time.Time
+	// 2022-02-01 (Tuesday); Monday-first week ends Sunday 2022-02-06.
+	got := datetime.LastDateTimeStrOfWeek(datetime.DefaultLayoutDateTime, time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC), time.Monday)
+	if got != "2022-02-06 23:59:59" {
+		t.Errorf("LastDateTimeStrOfWeek monday-first = %q, want 2022-02-06 23:59:59", got)
 	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		{
-			name: "", args: args{layout: "",
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
-			want: "2022-01-02",
-		},
-		{
-			name: "", args: args{layout: datetime.DefaultLayoutDate,
-				t: time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC)},
-			want: "2022-01-02",
-		},
-		{
-			name: "", args: args{layout: datetime.DefaultLayoutDateTime,
-				t: time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC)},
-			want: "2022-02-06 23:59:59",
-		},
-		{
-			name: "", args: args{layout: datetime.DefaultLayoutDateTime,
-				t: time.Date(2022, 2, 28, 0, 0, 5, 0, time.UTC)},
-			want: "2022-03-06 23:59:59",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.LastDateTimeStrOfWeek(tt.args.layout, tt.args.t); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("LastDateTimeStrOfWeek() = %v, want %v", got, tt.want)
-			}
-		})
+}
+
+func TestLastDateTimeOfISOWeek(t *testing.T) {
+	// 2022-01-01 (Saturday) → ISO week ends Sunday 2022-01-02.
+	got := datetime.LastDateTimeOfISOWeek(time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC))
+	if want := time.Date(2022, 1, 2, 23, 59, 59, 999999999, time.UTC); !reflect.DeepEqual(got, want) {
+		t.Errorf("LastDateTimeOfISOWeek = %v, want %v", got, want)
 	}
 }
 
@@ -1024,7 +965,7 @@ func TestTimeStr2Unix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.TimeStr2Unix(tt.args.layout, tt.args.value, tt.args.loc); got != tt.want {
+			if got, _ := datetime.TimeStr2Unix(tt.args.layout, tt.args.value, tt.args.loc); got != tt.want {
 				t.Errorf("TimeStr2Unix() = %v, want %v", got, tt.want)
 			}
 		})
@@ -1059,7 +1000,7 @@ func TestTimeStr2UnixMilli(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.TimeStr2UnixMilli(tt.args.layout, tt.args.value, tt.args.loc); got != tt.want {
+			if got, _ := datetime.TimeStr2UnixMilli(tt.args.layout, tt.args.value, tt.args.loc); got != tt.want {
 				t.Errorf("TimeStr2UnixMilli() = %v, want %v", got, tt.want)
 			}
 		})
@@ -1189,7 +1130,7 @@ func TestDurationStrToDuration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.DurationStrToDuration(tt.args.duration); got != tt.want {
+			if got, _ := datetime.DurationStrToDuration(tt.args.duration); got != tt.want {
 				t.Errorf("DurationStrToDuration() = %v, want %v", got, tt.want)
 			}
 		})
@@ -1211,7 +1152,7 @@ func TestDurationStrToUnix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := datetime.DurationStrToUnix(tt.args.duration); got != tt.want {
+			if got, _ := datetime.DurationStrToUnix(tt.args.duration); got != tt.want {
 				t.Errorf("DurationStrToUnix() = %v, want %v", got, tt.want)
 			}
 		})
@@ -1236,5 +1177,25 @@ func TestDurationToUnix(t *testing.T) {
 				t.Errorf("DurationToUnix() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestParseErrors verifies the formerly-silent parsers now surface failures as
+// errors instead of in-band sentinels (unix -62135596800 / duration 0).
+func TestParseErrors(t *testing.T) {
+	if _, err := datetime.TimeStr2Unix("2006-01-02", "not-a-date", time.UTC); err == nil {
+		t.Error("TimeStr2Unix should error on an invalid value")
+	}
+	if _, err := datetime.TimeStr2UnixMilli("2006-01-02", "not-a-date", time.UTC); err == nil {
+		t.Error("TimeStr2UnixMilli should error on an invalid value")
+	}
+	if _, err := datetime.AddDurationStr("nope", time.Now()); err == nil {
+		t.Error("AddDurationStr should error on an invalid duration")
+	}
+	if _, err := datetime.DurationStrToDuration("nope"); err == nil {
+		t.Error("DurationStrToDuration should error on an invalid duration")
+	}
+	if _, err := datetime.DurationStrToUnix("nope"); err == nil {
+		t.Error("DurationStrToUnix should error on an invalid duration")
 	}
 }

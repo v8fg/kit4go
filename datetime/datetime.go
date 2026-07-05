@@ -1,3 +1,20 @@
+// Package datetime offers convenience helpers over the time package for common
+// ad-tech / finance operations: timezone-aware formatting, day/month
+// boundaries, deltas, ranges, and week boundaries.
+//
+// # Week first day is locale-dependent
+//
+// The package deliberately does NOT pick a default week-start day. Pass it
+// explicitly via the firstDay parameter, choosing per business/region:
+//   - ISO 8601, China, most of Europe, Australia → time.Monday
+//   - US, Canada, the ad-tech / media industry (e.g. ad-platform reports) → time.Sunday
+//   - MENA (e.g. Egypt, Saudi, UAE) → time.Saturday
+//
+// FirstDateTimeOfISOWeek / LastDateTimeOfISOWeek are the ISO-aligned conveniences,
+// matching time.Time.ISOWeek (which numbers weeks Monday-first). The
+// authoritative territory→firstDay map is Unicode CLDR weekData; that mapping is
+// a domain concern and is NOT embedded here (it ages, and locale policy belongs
+// to the application, not a primitive package).
 package datetime
 
 import (
@@ -35,18 +52,25 @@ func NowUnixNano() int64 {
 	return time.Now().UnixNano()
 }
 
-// TimeStr2Unix parses the string time with the given layout and location, and returns the corresponding Unix time,
-// the number of seconds elapsed since January 1, 1970 UTC.
-func TimeStr2Unix(layout, value string, loc *time.Location) int64 {
-	parseTime, _ := ParseInLocation(layout, value, loc)
-	return parseTime.Unix()
+// TimeStr2Unix parses the string time with the given layout and location, and
+// returns the corresponding Unix time (seconds since 1970-01-01 UTC). It returns
+// an error if the parse fails — check it: a zero time.Time would otherwise
+// silently become unix -62135596800.
+func TimeStr2Unix(layout, value string, loc *time.Location) (int64, error) {
+	parseTime, err := ParseInLocation(layout, value, loc)
+	if err != nil {
+		return 0, err
+	}
+	return parseTime.Unix(), nil
 }
 
-// TimeStr2UnixMilli parses the string time with the given layout and location, and returns the corresponding Unix time,
-// the number of milliseconds elapsed since January 1, 1970 UTC.
-func TimeStr2UnixMilli(layout, value string, loc *time.Location) int64 {
-	parseTime, _ := ParseInLocation(layout, value, loc)
-	return parseTime.UnixMilli()
+// TimeStr2UnixMilli is the milliseconds variant of TimeStr2Unix.
+func TimeStr2UnixMilli(layout, value string, loc *time.Location) (int64, error) {
+	parseTime, err := ParseInLocation(layout, value, loc)
+	if err != nil {
+		return 0, err
+	}
+	return parseTime.UnixMilli(), nil
 }
 
 // UnixToDuration converts the seconds to the corresponding duration time.Duration.
@@ -59,22 +83,20 @@ func UnixMilliToDuration(msec int64) time.Duration {
 	return time.Duration(msec)
 }
 
-// DurationStrToDuration converts the duration string to the corresponding duration time.Duration.
-func DurationStrToDuration(duration string) time.Duration {
-	d, err := time.ParseDuration(duration)
-	if err != nil {
-		return 0
-	}
-	return d
+// DurationStrToDuration parses a duration string (e.g. "300ms", "1.5h") via
+// time.ParseDuration and returns it. It is a thin named wrapper; new code may
+// prefer time.ParseDuration directly.
+func DurationStrToDuration(duration string) (time.Duration, error) {
+	return time.ParseDuration(duration)
 }
 
-// DurationStrToUnix converts the duration string to the corresponding seconds.
-func DurationStrToUnix(duration string) float64 {
+// DurationStrToUnix parses a duration string and returns its length in seconds.
+func DurationStrToUnix(duration string) (float64, error) {
 	d, err := time.ParseDuration(duration)
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	return d.Seconds()
+	return d.Seconds(), nil
 }
 
 // DurationToUnix converts the duration to the corresponding seconds.
@@ -156,32 +178,55 @@ func LastDateTimeStrOfMonth(layout string, t time.Time) string {
 	return LastDateTimeOfMonth(t).Format(layout)
 }
 
-// FirstDateTimeOfWeek returns the start time of the first day in the same week as the given time, first day shall Monday.
-func FirstDateTimeOfWeek(t time.Time) time.Time {
-	// firstDay Monday
-	return StartTime(t.AddDate(0, 0, int(-t.Weekday())+1))
+// FirstDateTimeOfWeek returns the start time (00:00:00) of the day that begins
+// the week containing t, where a week starts on firstDay.
+//
+// firstDay uses Go's time.Weekday values (time.Sunday=0 … time.Saturday=6). The
+// package intentionally does NOT choose a locale default — the caller picks per
+// business/region (see the package doc: ISO/Europe/China → time.Monday; US &
+// ad-tech/media → time.Sunday; MENA → time.Saturday). FirstDateTimeOfISOWeek is
+// the ISO-aligned convenience.
+//
+// t's own Location is honored: t.Weekday() already reflects t.In(loc), so pass
+// a location-aware time and the boundary lands in that timezone.
+func FirstDateTimeOfWeek(t time.Time, firstDay time.Weekday) time.Time {
+	offset := -((int(t.Weekday()) - int(firstDay) + 7) % 7)
+	return StartTime(t.AddDate(0, 0, offset))
 }
 
-// FirstDateTimeStrOfWeek returns the start time string for a given layout on the first day of the same week as the given time, first day shall Monday.
-func FirstDateTimeStrOfWeek(layout string, t time.Time) string {
+// FirstDateTimeStrOfWeek is the formatted variant of FirstDateTimeOfWeek.
+// layout defaults to DefaultLayoutDate when empty.
+func FirstDateTimeStrOfWeek(layout string, t time.Time, firstDay time.Weekday) string {
 	if len(layout) == 0 {
 		layout = DefaultLayoutDate
 	}
-	return FirstDateTimeOfWeek(t).Format(layout)
+	return FirstDateTimeOfWeek(t, firstDay).Format(layout)
 }
 
-// LastDateTimeOfWeek returns the end time of the last day in the same week as the given time, first day shall Monday.
-func LastDateTimeOfWeek(t time.Time) time.Time {
-	// firstDay Monday
-	return EndTime(t.AddDate(0, 0, int(time.Saturday+1-t.Weekday())%7))
+// LastDateTimeOfWeek returns the end time (23:59:59.999999999) of the day that
+// ends the week containing t (i.e. firstDay + 6).
+func LastDateTimeOfWeek(t time.Time, firstDay time.Weekday) time.Time {
+	return EndTime(FirstDateTimeOfWeek(t, firstDay).AddDate(0, 0, 6))
 }
 
-// LastDateTimeStrOfWeek returns the end time string for a given layout on the last day of the same week as the given time, first day shall Monday.
-func LastDateTimeStrOfWeek(layout string, t time.Time) string {
+// LastDateTimeStrOfWeek is the formatted variant of LastDateTimeOfWeek.
+// layout defaults to DefaultLayoutDate when empty.
+func LastDateTimeStrOfWeek(layout string, t time.Time, firstDay time.Weekday) string {
 	if len(layout) == 0 {
 		layout = DefaultLayoutDate
 	}
-	return LastDateTimeOfWeek(t).Format(layout)
+	return LastDateTimeOfWeek(t, firstDay).Format(layout)
+}
+
+// FirstDateTimeOfISOWeek returns the Monday starting the ISO 8601 week containing
+// t. Aligns with time.Time.ISOWeek, which numbers weeks Monday-first.
+func FirstDateTimeOfISOWeek(t time.Time) time.Time {
+	return FirstDateTimeOfWeek(t, time.Monday)
+}
+
+// LastDateTimeOfISOWeek returns the Sunday ending the ISO 8601 week containing t.
+func LastDateTimeOfISOWeek(t time.Time) time.Time {
+	return LastDateTimeOfWeek(t, time.Monday)
 }
 
 // DeltaDateDays returns the real integer days between the end and start.
@@ -218,12 +263,16 @@ func AddDuration(d time.Duration, t time.Time) time.Time {
 	return t.Add(d)
 }
 
-// AddDurationStr returns the time t+d, d shall the valid duration string format.
+// AddDurationStr returns t plus the parsed duration string. It returns an error
+// if the duration string is invalid (t is returned unchanged alongside it).
 //
 //	Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".
-func AddDurationStr(duration string, t time.Time) time.Time {
-	d, _ := time.ParseDuration(duration)
-	return t.Add(d)
+func AddDurationStr(duration string, t time.Time) (time.Time, error) {
+	d, err := time.ParseDuration(duration)
+	if err != nil {
+		return t, err
+	}
+	return t.Add(d), nil
 }
 
 // AddDays returns the time corresponding to adding the given number of days to t.

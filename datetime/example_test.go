@@ -7,6 +7,7 @@ import (
 )
 
 func ExampleDurationStrToDuration() {
-	fmt.Println(datetime.DurationStrToDuration("500ms"))
+	d, _ := datetime.DurationStrToDuration("500ms")
+	fmt.Println(d)
 	// Output: 500ms
 }
