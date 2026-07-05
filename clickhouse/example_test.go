@@ -7,8 +7,11 @@ import (
 )
 
 // ExampleNew shows the construction shape. The native protocol (default) uses
-// port 9000; the address carries the protocol's port. This example only
-// compiles — it does not connect (no live server).
+// port 9000; the address carries the protocol's port.
+//
+// This example has no // Output: comment, so go test does not execute it; it
+// is a compile-checked illustration. Running it requires a ClickHouse at
+// 127.0.0.1:9000 (New dials and pings on construction).
 func ExampleNew() {
 	c, err := clickhouse.New(context.Background(),
 		clickhouse.WithAddrs("127.0.0.1:9000"),

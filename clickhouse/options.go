@@ -45,7 +45,7 @@ type Option func(*Options)
 // WithAddrs sets the ClickHouse node addresses (host:port). Use :9000 for the
 // native protocol, :8123 for HTTP.
 func WithAddrs(addrs ...string) Option {
-	return func(o *Options) { o.Addrs = addrs }
+	return func(o *Options) { o.Addrs = append([]string(nil), addrs...) }
 }
 
 // WithProtocol sets the wire protocol (default ProtocolNative).

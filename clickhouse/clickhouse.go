@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"sync/atomic"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -35,7 +36,8 @@ type Conn interface {
 	Close() error
 }
 
-// Client wraps a clickhouse-go connection.
+// Client wraps a clickhouse-go connection. It is safe for concurrent use:
+// all methods are goroutine-safe and Close is idempotent.
 type Client struct {
 	conn    Conn        // local interface; mock seam
 	rawConn driver.Conn // non-nil when built from a real driver.Conn; nil when mock-injected
@@ -52,8 +54,11 @@ type opener func(*clickhouse.Options) (driver.Conn, error)
 
 var defaultOpener opener = clickhouse.Open
 
-// New opens a connection, pings it, and returns a Client. The context bounds
-// the construction-time Ping.
+// New opens a connection, pings it, and returns a Client.
+//
+// The context bounds the construction-time Ping. If it carries no deadline, a
+// 10s fallback is applied so a caller passing context.Background() against a
+// half-open node cannot block startup indefinitely.
 func New(ctx context.Context, opts ...Option) (*Client, error) {
 	return newClient(ctx, opts, defaultOpener)
 }
@@ -70,7 +75,15 @@ func newClient(ctx context.Context, opts []Option, open opener) (*Client, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := conn.Ping(ctx); err != nil {
+	pingCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		// Bound the construction Ping: without this a context.Background()
+		// caller blocks on a half-open node until the TCP stack gives up.
+		var cancel context.CancelFunc
+		pingCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+	}
+	if err := conn.Ping(pingCtx); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
@@ -161,6 +174,8 @@ func (c *Client) Stats() driver.Stats { return c.conn.Stats() }
 func (c *Client) Conn() driver.Conn { return c.rawConn }
 
 // Options returns the resolved options the client was built with.
+//
+// The struct includes Password: do not log or serialize it verbatim.
 func (c *Client) Options() Options { return c.opts }
 
 // Close releases the connection. No-op for a wrapped or mock-injected client.
