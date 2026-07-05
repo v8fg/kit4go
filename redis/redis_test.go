@@ -100,11 +100,14 @@ func TestPoolStats(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 
 	ctx := context.Background()
-	// Force a connection.
+	// Force a real round-trip so the pool creates a connection.
 	require.NoError(t, c.Ping(ctx))
-	// PoolStats must not panic and returns a value struct.
+
+	// PoolStats must surface the real pool state. Before the pointer-signature
+	// fix the type assertion never matched *redis.Client and this returned an
+	// all-zero struct — so a non-zero TotalConns is the regression guard.
 	stats := c.PoolStats()
-	_ = stats.Hits + stats.Misses + stats.TotalConns // touch fields
+	require.Greater(t, stats.TotalConns, uint32(0), "PoolStats must reflect the live pool, not the zero value")
 }
 
 func TestAuth(t *testing.T) {

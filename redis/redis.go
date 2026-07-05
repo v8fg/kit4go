@@ -218,9 +218,15 @@ func (c *Client) Options() Options { return c.opts }
 // exposes them (single-node, failover, and cluster clients do). Returns zero
 // value for a wrapped Cmdable that does not.
 func (c *Client) PoolStats() goredis.PoolStats {
-	type statter interface{ PoolStats() goredis.PoolStats }
+	// go-redis exposes PoolStats as a *pointer* (*goredis.PoolStats). The
+	// assertion must use the pointer signature — a value-returning one never
+	// matches *Client and would silently return the zero value for every real
+	// client. Dereference defensively (the pointer can be nil on a fresh pool).
+	type statter interface{ PoolStats() *goredis.PoolStats }
 	if s, ok := c.cmd.(statter); ok {
-		return s.PoolStats()
+		if p := s.PoolStats(); p != nil {
+			return *p
+		}
 	}
 	return goredis.PoolStats{}
 }
