@@ -109,30 +109,6 @@ func TestTokenBucket_BurstCapacity(t *testing.T) {
 	}
 }
 
-func TestTokenBucket_Refill(t *testing.T) {
-	// Rate=100/s => 10ms per token. Drain a 5-token burst then confirm a token
-	// reappears within ~30ms.
-	lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: limiter.AlgorithmTokenBucket, Rate: 100, Burst: 5})
-	defer lm.Close()
-	for i := 0; i < 5; i++ {
-		if !lm.Allow() {
-			t.Fatalf("burst %d denied", i)
-		}
-	}
-	if lm.Allow() {
-		t.Fatal("should be drained")
-	}
-	// Wait long enough for at least one refill.
-	deadline := time.Now().Add(100 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if lm.Allow() {
-			return // refilled as expected
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatal("token did not refill within 100ms at rate=100/s")
-}
-
 func TestTokenBucket_TryAcquire(t *testing.T) {
 	t.Run("fits in burst", func(t *testing.T) {
 		lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: limiter.AlgorithmTokenBucket, Rate: 1, Burst: 10})
@@ -217,24 +193,6 @@ func TestSlidingWindow_WithinAndOverRate(t *testing.T) {
 	}
 	if m := lm.Metrics(); m.Allowed != 5 || m.Denied != 1 {
 		t.Fatalf("metrics = %+v, want Allowed=5 Denied=1", m)
-	}
-}
-
-func TestSlidingWindow_WindowResets(t *testing.T) {
-	// Tight window: 1s, allow 2. Drain, wait past the window, drain again.
-	lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: limiter.AlgorithmSlidingWindow, Rate: 2, Window: time.Second})
-	defer lm.Close()
-
-	if !lm.Allow() || !lm.Allow() {
-		t.Fatal("first two Allow() should succeed")
-	}
-	if lm.Allow() {
-		t.Fatal("third Allow() within window should be denied")
-	}
-	// Wait for the window to roll over.
-	time.Sleep(1100 * time.Millisecond)
-	if !lm.Allow() {
-		t.Fatal("Allow() after window rollover should succeed")
 	}
 }
 

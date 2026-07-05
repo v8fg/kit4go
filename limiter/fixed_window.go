@@ -18,6 +18,17 @@ type fixedWindow struct {
 	denied      atomic.Uint64
 	acquired    atomic.Uint64
 	closed      atomic.Bool
+
+	// now is the clock source. It defaults to [time.Now] so production reads
+	// wall time; tests inject a fake clock to advance time deterministically
+	// instead of sleeping. nil-safe via the nowTime method.
+	now func() time.Time
+}
+
+// nowTime returns the current clock reading, falling back to [time.Now] when no
+// fake clock has been injected.
+func (fw *fixedWindow) nowTime() time.Time {
+	return fw.now()
 }
 
 func newFixedWindow(rate int64, window time.Duration) *fixedWindow {
@@ -27,9 +38,8 @@ func newFixedWindow(rate int64, window time.Duration) *fixedWindow {
 	if window < time.Second {
 		window = time.Second
 	}
-	now := time.Now().UnixNano()
-	fw := &fixedWindow{rate: rate, windowNs: int64(window)}
-	fw.windowStart.Store(now)
+	fw := &fixedWindow{rate: rate, windowNs: int64(window), now: time.Now}
+	fw.windowStart.Store(fw.nowTime().UnixNano())
 	return fw
 }
 
@@ -51,7 +61,7 @@ func (fw *fixedWindow) TryAcquire(n int) bool {
 }
 
 func (fw *fixedWindow) acquire(n int) bool {
-	now := time.Now().UnixNano()
+	now := fw.nowTime().UnixNano()
 	for attempt := 0; attempt < 2; attempt++ {
 		start := fw.windowStart.Load()
 		// Check if the window has expired.

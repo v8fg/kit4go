@@ -77,8 +77,11 @@ func ExampleBreaker_State() {
 	}
 	fmt.Println(b.State()) // now open
 
-	// Once OpenDuration elapses the next call moves it to half_open.
-	time.Sleep(60 * time.Millisecond)
+	// Once OpenDuration elapses the next call moves it to half_open. The sleep
+	// is sized with comfortable margin over OpenDuration so the example stays
+	// robust under CPU contention (this is a wall-clock demonstration, so it
+	// cannot use the fake-clock seam the internal tests use).
+	time.Sleep(150 * time.Millisecond)
 	_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) { return 1, nil })
 	fmt.Println(b.State()) // probing
 

@@ -25,6 +25,12 @@ type Timer struct {
 	fn        func()
 	index     int
 	cancelled atomic.Bool
+
+	// now is the clock read for this timer's scheduling decisions (initial
+	// when, the run loop's due check, and recurring reschedule). Defaults to
+	// time.Now; tests override it with a fake clock so timing-correctness
+	// assertions advance deterministically instead of sleeping on wall time.
+	now func() time.Time
 }
 
 // Wheel is a timer wheel backed by a min-heap.
@@ -81,23 +87,24 @@ func New() *Wheel {
 // Add schedules a one-shot callback after delay. Returns a Timer that can be
 // cancelled. Returns ErrClosed after Close.
 func (w *Wheel) Add(delay time.Duration, fn func()) (*Timer, error) {
-	return w.add(time.Now().Add(delay), 0, fn)
+	return w.add(delay, 0, fn)
 }
 
 // AddRecurring schedules a recurring callback every interval. Returns a Timer
 // that can be cancelled.
 func (w *Wheel) AddRecurring(interval time.Duration, fn func()) (*Timer, error) {
-	return w.add(time.Now().Add(interval), interval, fn)
+	return w.add(interval, interval, fn)
 }
 
-func (w *Wheel) add(when time.Time, interval time.Duration, fn func()) (*Timer, error) {
+func (w *Wheel) add(delay time.Duration, interval time.Duration, fn func()) (*Timer, error) {
 	if w.closed.Load() {
 		return nil, ErrClosed
 	}
 	if fn == nil {
 		return nil, errors.New("wtimer: callback is required")
 	}
-	t := &Timer{when: when, interval: interval, fn: fn}
+	t := &Timer{interval: interval, fn: fn, now: time.Now}
+	t.when = t.now().Add(delay)
 	w.mu.Lock()
 	heap.Push(&w.heap, t)
 	w.mu.Unlock()
@@ -182,7 +189,7 @@ func (w *Wheel) run() {
 			continue
 		}
 		next := w.heap[0]
-		now := time.Now()
+		now := next.now()
 		if next.when.After(now) {
 			d := next.when.Sub(now)
 			w.mu.Unlock()
@@ -209,7 +216,7 @@ func (w *Wheel) run() {
 		}
 		// Reschedule recurring timers.
 		if t.interval > 0 && !t.cancelled.Load() && !w.closed.Load() {
-			t.when = time.Now().Add(t.interval)
+			t.when = t.now().Add(t.interval)
 			w.mu.Lock()
 			heap.Push(&w.heap, t)
 			w.mu.Unlock()

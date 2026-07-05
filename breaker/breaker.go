@@ -81,6 +81,12 @@ type Breaker[T any] struct {
 	// nothing. Stored as an atomic.Pointer so SetOnEvent can be called before or
 	// after traffic starts without a separate lock.
 	onEvent atomic.Pointer[func(BreakerEvent)]
+
+	// now is the clock seam. It defaults to time.Now so production behaviour is
+	// unchanged; tests substitute a fake clock to make time-window and state
+	// transitions deterministic instead of relying on time.Sleep. Read-only on
+	// the hot path (never reassigned after construction), so it needs no lock.
+	now func() time.Time
 }
 
 // SetOnEvent installs a hook invoked for every notable outcome and state
@@ -126,6 +132,7 @@ func NewBreaker[T any](opts BreakerOptions) *Breaker[T] {
 		counts: make([]int, secs),
 		fails:  make([]int, secs),
 		base:   time.Now().Unix(),
+		now:    time.Now,
 	}
 	b.state.Store(int32(StateClosed))
 	return b
@@ -213,7 +220,7 @@ func (b *Breaker[T]) beforeCall() error {
 	case StateOpen:
 		// Transition to HalfOpen once the cooldown has elapsed. Compare
 		// atomically; if it hasn't, reject without taking the lock.
-		if time.Now().UnixNano() < b.expiry.Load() {
+		if b.now().UnixNano() < b.expiry.Load() {
 			return ErrCircuitOpen
 		}
 		return b.toHalfOpenOrReject()
@@ -253,7 +260,7 @@ func (b *Breaker[T]) toHalfOpenOrReject() error {
 		}
 		return ErrCircuitOpen
 	}
-	if time.Now().UnixNano() < b.expiry.Load() {
+	if b.now().UnixNano() < b.expiry.Load() {
 		b.mu.Unlock()
 		return ErrCircuitOpen
 	}
@@ -315,7 +322,7 @@ func (b *Breaker[T]) recordWindow(success bool) {
 	// be older than base (advanced by a concurrent caller while we waited), which
 	// would otherwise trip advance's backward path and silently drop failure
 	// counts — the breaker could then fail to trip.
-	sec := time.Now().Unix()
+	sec := b.now().Unix()
 	b.advance(sec)
 	if sec < b.base {
 		sec = b.base // wall clock regressed: charge the current bucket
@@ -338,7 +345,7 @@ func (b *Breaker[T]) maybeTrip() {
 	if BreakerState(b.state.Load()) != StateClosed {
 		return
 	}
-	sec := time.Now().Unix()
+	sec := b.now().Unix()
 	b.advance(sec)
 	if uint32(b.sumTotal) < b.opts.MinRequests {
 		return
@@ -359,7 +366,7 @@ func (b *Breaker[T]) maybeTrip() {
 // tripLocked moves the breaker from Closed to Open. Caller holds b.mu.
 func (b *Breaker[T]) tripLocked() {
 	b.state.Store(int32(StateOpen))
-	b.expiry.Store(time.Now().Add(b.opts.OpenDuration).UnixNano())
+	b.expiry.Store(b.now().Add(b.opts.OpenDuration).UnixNano())
 	b.mu.Unlock()
 	b.fireEvent("trip")
 	b.mu.Lock()
@@ -370,7 +377,7 @@ func (b *Breaker[T]) tripLocked() {
 func (b *Breaker[T]) toOpen() {
 	b.mu.Lock()
 	b.state.Store(int32(StateOpen))
-	b.expiry.Store(time.Now().Add(b.opts.OpenDuration).UnixNano())
+	b.expiry.Store(b.now().Add(b.opts.OpenDuration).UnixNano())
 	b.halfOpenSuccess.Store(0)
 	b.halfOpenCount.Store(0)
 	b.mu.Unlock()
@@ -392,7 +399,7 @@ func (b *Breaker[T]) toClosed() {
 	}
 	b.sumTotal = 0
 	b.sumFail = 0
-	b.base = time.Now().Unix()
+	b.base = b.now().Unix()
 	b.halfOpenSuccess.Store(0)
 	b.halfOpenCount.Store(0)
 	b.state.Store(int32(StateClosed))

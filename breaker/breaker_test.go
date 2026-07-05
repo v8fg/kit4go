@@ -172,32 +172,12 @@ func TestBreaker_ClosedToOpen(t *testing.T) {
 	}
 }
 
-// TestBreaker_OpenToHalfOpen: after OpenDuration elapses, the next call must
-// transition the breaker to HalfOpen instead of rejecting.
-func TestBreaker_OpenToHalfOpen(t *testing.T) {
-	opts := fastOpts() // OpenDuration=10ms
-	b := breaker.NewBreaker[int](opts)
-	failNTrips(b, errSentinel, 10)
-	if b.State() != breaker.StateOpen {
-		t.Fatalf("precondition: want open, got %s", b.State())
-	}
-	time.Sleep(opts.OpenDuration * 2)
-	// First post-expiry call flips to HalfOpen; the fn runs and succeeds, which
-	// is the first successful probe.
-	_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-		// State should be HalfOpen by now (transition happened in beforeCall).
-		if got := b.State(); got != breaker.StateHalfOpen {
-			t.Fatalf("during probe state=%s want half_open", got)
-		}
-		return 1, nil
-	})
-	if err != nil {
-		t.Fatalf("first probe err=%v want nil", err)
-	}
-	if got := b.State(); got != breaker.StateHalfOpen {
-		t.Fatalf("post-first-probe state=%s want half_open", got)
-	}
-}
+// TestBreaker_OpenToHalfOpen and the other time-window/state-transition tests
+// below were converted to deterministic fake-clock tests in clock_test.go
+// (TestFakeClock_*). They previously used time.Sleep(opts.OpenDuration*2) which
+// was flaky under CPU contention. The half-open concurrency tests that need
+// real goroutine synchronisation keep their gate/started channels and only the
+// OpenDuration expiry was made deterministic.
 
 // TestBreaker_RejectsBeforeExpiry: while OpenDuration has NOT elapsed, the
 // breaker stays Open and rejects.
@@ -220,100 +200,13 @@ func TestBreaker_RejectsBeforeExpiry(t *testing.T) {
 	}
 }
 
-// TestBreaker_HalfOpenToClosed: after OpenDuration, MaxRequests consecutive
-// successful probes return the breaker to Closed.
-func TestBreaker_HalfOpenToClosed(t *testing.T) {
-	opts := fastOpts() // MaxRequests=3, OpenDuration=10ms
-	b := breaker.NewBreaker[int](opts)
-	failNTrips(b, errSentinel, 10)
-	time.Sleep(opts.OpenDuration * 2)
-	for i := 0; i < int(opts.MaxRequests); i++ {
-		v, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-			return i + 1, nil
-		})
-		if err != nil {
-			t.Fatalf("probe %d err=%v want nil", i, err)
-		}
-		if v != i+1 {
-			t.Fatalf("probe %d value=%d want %d", i, v, i+1)
-		}
-	}
-	if got := b.State(); got != breaker.StateClosed {
-		t.Fatalf("state=%s want closed after %d successful probes", got, opts.MaxRequests)
-	}
-}
+// TestBreaker_HalfOpenToClosed is covered by TestFakeClock_HalfOpenToClosed in
+// clock_test.go (deterministic fake-clock advancement instead of time.Sleep).
 
-// TestBreaker_HalfOpenMaxRequests: once MaxRequests probe slots are taken, the
-// (MaxRequests+1)-th call is rejected with ErrCircuitOpen while still HalfOpen.
-// We block the probes with a gate so they don't complete and flip to Closed.
-func TestBreaker_HalfOpenMaxRequests(t *testing.T) {
-	opts := fastOpts() // MaxRequests=3, OpenDuration=10ms
-	b := breaker.NewBreaker[int](opts)
-	failNTrips(b, errSentinel, 10)
-	time.Sleep(opts.OpenDuration * 2)
-
-	// Hold the probes inside fn so slots stay taken.
-	gate := make(chan struct{})
-	started := make(chan struct{}, opts.MaxRequests)
-	var wg sync.WaitGroup
-	for i := 0; i < int(opts.MaxRequests); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-				started <- struct{}{}
-				<-gate
-				return 1, nil
-			})
-		}()
-	}
-	// Wait until all MaxRequests probes have entered fn.
-	for i := 0; i < int(opts.MaxRequests); i++ {
-		select {
-		case <-started:
-		case <-time.After(time.Second):
-			t.Fatalf("timeout waiting for probe %d to start", i)
-		}
-	}
-	// One more call now should be rejected.
-	_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-		t.Fatalf("fn must not run when all probe slots taken")
-		return 1, nil
-	})
-	if !errors.Is(err, breaker.ErrCircuitOpen) {
-		t.Fatalf("extra probe err=%v want ErrCircuitOpen", err)
-	}
-	if got := b.State(); got != breaker.StateHalfOpen {
-		t.Fatalf("state=%s want half_open while probes in flight", got)
-	}
-
-	close(gate)
-	wg.Wait()
-	// After all probes succeed the breaker should be Closed.
-	if got := b.State(); got != breaker.StateClosed {
-		t.Fatalf("post-gate state=%s want closed", got)
-	}
-}
-
-// TestBreaker_HalfOpenToOpenOnFailure: a single failed probe trips the breaker
-// straight back to Open from HalfOpen.
-func TestBreaker_HalfOpenToOpenOnFailure(t *testing.T) {
-	opts := fastOpts() // OpenDuration=10ms
-	b := breaker.NewBreaker[int](opts)
-	failNTrips(b, errSentinel, 10)
-	time.Sleep(opts.OpenDuration * 2)
-
-	// First (failed) probe.
-	_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-		return 0, errSentinel
-	})
-	if !errors.Is(err, errSentinel) {
-		t.Fatalf("probe err=%v want sentinel", err)
-	}
-	if got := b.State(); got != breaker.StateOpen {
-		t.Fatalf("state=%s want open after failed probe", got)
-	}
-}
+// TestBreaker_HalfOpenMaxRequests and TestBreaker_HalfOpenToOpenOnFailure are
+// covered by the TestFakeClock_* equivalents in clock_test.go (deterministic
+// OpenDuration advancement; the former still uses real goroutine coordination
+// for probe-slot holding, which is synchronisation rather than a time assertion).
 
 // TestBreaker_CtxCancellationPropagated: a cancelled ctx surfaces its error and
 // is recorded as a failure (so timeouts can't hide downstream trouble).
@@ -356,67 +249,11 @@ func TestBreaker_PassesValueAndError(t *testing.T) {
 	}
 }
 
-// TestBreaker_MetricsAccuracy walks a full Closed→Open→HalfOpen→Closed cycle
-// and asserts the lifetime counters track it.
-func TestBreaker_MetricsAccuracy(t *testing.T) {
-	opts := fastOpts() // MaxRequests=3, OpenDuration=10ms, MinRequests=4
-	b := breaker.NewBreaker[int](opts)
+// TestBreaker_MetricsAccuracy is covered by TestFakeClock_MetricsAccuracy in
+// clock_test.go (deterministic fake-clock advancement for the recovery phase).
 
-	// 4 failures -> trip to Open (4 failures, 4 total).
-	for i := 0; i < 4; i++ {
-		_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-			return 0, errSentinel
-		})
-	}
-	if m := b.Metrics(); m.Total != 4 || m.Failures != 4 || m.Success != 0 || m.ConsecutiveFail != 4 {
-		t.Fatalf("after trip metrics=%+v", m)
-	}
-
-	// One rejected call increments Total but not Failures (fn didn't run).
-	_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) { return 0, nil })
-	if m := b.Metrics(); m.Total != 5 || m.Failures != 4 {
-		t.Fatalf("after reject metrics=%+v want Total=5 Failures=4", m)
-	}
-
-	// Wait out OpenDuration, then 3 successful probes -> Closed.
-	time.Sleep(opts.OpenDuration * 2)
-	for i := 0; i < int(opts.MaxRequests); i++ {
-		_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) { return i, nil })
-	}
-	m := b.Metrics()
-	if m.Total != 8 || m.Success != 3 || m.Failures != 4 || m.ConsecutiveFail != 0 {
-		t.Fatalf("after recovery metrics=%+v want Total=8 Success=3 Failures=4 Consec=0", m)
-	}
-	if m.State != breaker.StateClosed {
-		t.Fatalf("final state=%s want closed", m.State)
-	}
-}
-
-// TestBreaker_SlidingWindowExpires: failures outside the window must not count
-// toward a trip. With a 1s window, we register one failure, wait > 1s, then
-// hammer failures — the first failure has expired so the trip must require a
-// fresh MinRequests worth.
-func TestBreaker_SlidingWindowExpires(t *testing.T) {
-	opts := fastOpts() // Interval=1s, MinRequests=4, FailRate=0.5
-	b := breaker.NewBreaker[int](opts)
-
-	// One old failure that will expire.
-	_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) { return 0, errSentinel })
-	time.Sleep(1100 * time.Millisecond) // > 1s window
-	// Now only fresh failures count. Two fresh failures (< MinRequests=4) must
-	// not trip even though the lifetime ConsecutiveFail is 3.
-	for i := 0; i < 2; i++ {
-		_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-			return 0, errSentinel
-		})
-		if errors.Is(err, breaker.ErrCircuitOpen) {
-			t.Fatalf("tripped on call %d with expired first failure", i+1)
-		}
-	}
-	if got := b.State(); got != breaker.StateClosed {
-		t.Fatalf("state=%s want closed (old failure expired)", got)
-	}
-}
+// TestBreaker_SlidingWindowExpires is covered by TestFakeClock_SlidingWindowExpires
+// in clock_test.go (window aged out via fake-clock advancement instead of sleep).
 
 // TestBreaker_Concurrent hammers Execute from many goroutines. Run under -race.
 // Asserts no panic and that lifetime metrics are self-consistent
@@ -466,25 +303,8 @@ func TestBreaker_Concurrent(t *testing.T) {
 	}
 }
 
-// TestBreaker_RepeatedTripRecover: a breaker should tolerate multiple full
-// cycles without leaking state or getting stuck.
-func TestBreaker_RepeatedTripRecover(t *testing.T) {
-	opts := fastOpts() // MaxRequests=3, OpenDuration=10ms
-	b := breaker.NewBreaker[int](opts)
-	for cycle := 0; cycle < 3; cycle++ {
-		failNTrips(b, errSentinel, 10)
-		if got := b.State(); got != breaker.StateOpen {
-			t.Fatalf("cycle %d: state=%s want open", cycle, got)
-		}
-		time.Sleep(opts.OpenDuration * 2)
-		for i := 0; i < int(opts.MaxRequests); i++ {
-			_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) { return i, nil })
-		}
-		if got := b.State(); got != breaker.StateClosed {
-			t.Fatalf("cycle %d: state=%s want closed", cycle, got)
-		}
-	}
-}
+// TestBreaker_RepeatedTripRecover is covered by TestFakeClock_RepeatedTripRecover
+// in clock_test.go (deterministic cooldown advancement per cycle).
 
 // TestBreaker_GenericTypes exercises that the breaker works for slice and struct
 // payload types, not just scalars.
@@ -513,28 +333,9 @@ func TestBreaker_GenericTypes(t *testing.T) {
 	})
 }
 
-// TestBreaker_HalfOpenRecoveryResetsWindow: after HalfOpen→Closed the window is
-// reset, so stale pre-trip failures don't immediately re-trip on the first
-// post-recovery failure.
-func TestBreaker_HalfOpenRecoveryResetsWindow(t *testing.T) {
-	opts := fastOpts() // MinRequests=4, MaxRequests=3, OpenDuration=10ms
-	b := breaker.NewBreaker[int](opts)
-	failNTrips(b, errSentinel, 10)
-	time.Sleep(opts.OpenDuration * 2)
-	for i := 0; i < int(opts.MaxRequests); i++ {
-		_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) { return i, nil })
-	}
-	// Now Closed with a fresh window. One failure should NOT trip (MinRequests=4).
-	_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-		return 0, errSentinel
-	})
-	if errors.Is(err, breaker.ErrCircuitOpen) {
-		t.Fatalf("tripped immediately after recovery — window was not reset")
-	}
-	if got := b.State(); got != breaker.StateClosed {
-		t.Fatalf("state=%s want closed", got)
-	}
-}
+// TestBreaker_HalfOpenRecoveryResetsWindow is covered by
+// TestFakeClock_HalfOpenRecoveryResetsWindow in clock_test.go (deterministic
+// cooldown advancement).
 
 // TestBreaker_FailRateZeroTripsOnAnyFailure: with FailRate < 0 the breaker
 // trips as soon as MinRequests calls have landed and at least one of them
@@ -585,35 +386,9 @@ func TestBreaker_FailRateAboveOneNeverTrips(t *testing.T) {
 	}
 }
 
-// TestBreaker_WindowFullExpiryClearsStaleCounts: after the whole window elapses,
-// a fresh burst must start from zero counts — not carry pre-trip failures
-// forward. Exercises advance()'s full-window-reset branch and confirms the
-// breaker can recover to Closed without going through HalfOpen (by aging out).
-func TestBreaker_WindowFullExpiryClearsStaleCounts(t *testing.T) {
-	opts := fastOpts() // Interval=1s, MinRequests=4
-	b := breaker.NewBreaker[int](opts)
-	// Two failures (below trip threshold), then wait > window.
-	for i := 0; i < 2; i++ {
-		_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-			return 0, errSentinel
-		})
-	}
-	time.Sleep(1100 * time.Millisecond) // full window expiry
-	// Now register MinRequests-1 more failures; the stale two must not count, so
-	// we stay Closed (3 fresh < MinRequests=4 and rate would be 1.0 anyway but
-	// count gate fails first).
-	for i := 0; i < 3; i++ {
-		_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
-			return 0, errSentinel
-		})
-		if errors.Is(err, breaker.ErrCircuitOpen) {
-			t.Fatalf("tripped on call %d: stale counts were not aged out", i+1)
-		}
-	}
-	if got := b.State(); got != breaker.StateClosed {
-		t.Fatalf("state=%s want closed after window aged out", got)
-	}
-}
+// TestBreaker_WindowFullExpiryClearsStaleCounts is covered by
+// TestFakeClock_WindowFullExpiryClearsStaleCounts in clock_test.go (window aged
+// out via fake-clock advancement instead of a real 1.1s sleep).
 
 // TestOptions_OverridesApplied verifies through observable behavior that
 // caller-supplied options are honoured (MinRequests/MaxRequests/FailRate) rather

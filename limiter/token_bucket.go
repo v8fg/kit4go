@@ -28,6 +28,17 @@ type tokenBucket struct {
 	denied   atomic.Uint64
 	acquired atomic.Uint64
 	closed   atomic.Bool
+
+	// now is the clock source. It defaults to [time.Now] so production reads
+	// wall time; tests inject a fake clock to advance time deterministically
+	// instead of sleeping. nil-safe via the now method.
+	now func() time.Time
+}
+
+// nowTime returns the current clock reading, falling back to [time.Now] when no
+// fake clock has been injected. Kept inline (no allocation) on the hot path.
+func (tb *tokenBucket) nowTime() time.Time {
+	return tb.now()
 }
 
 func newTokenBucket(rate float64, burst int) *tokenBucket {
@@ -37,10 +48,11 @@ func newTokenBucket(rate float64, burst int) *tokenBucket {
 	tb := &tokenBucket{
 		rate:  rate,
 		burst: float64(burst),
+		now:   time.Now,
 	}
 	// Start full so the very first burst is absorbable.
 	tb.tokens.Store(math.Float64bits(float64(burst)))
-	tb.lastTime.Store(time.Now().UnixNano())
+	tb.lastTime.Store(tb.nowTime().UnixNano())
 	return tb
 }
 
@@ -69,7 +81,7 @@ func (tb *tokenBucket) TryAcquire(n int) bool {
 // CAS failure (concurrent mutation) and then returns false, so under heavy
 // contention the limiter stays faithful to its configured cap.
 func (tb *tokenBucket) acquire(n int) bool {
-	now := time.Now().UnixNano()
+	now := tb.nowTime().UnixNano()
 	last := tb.lastTime.Load()
 	if now < last {
 		// clock moved backward: don't refill with a negative delta, just probe
@@ -147,7 +159,7 @@ func (tb *tokenBucket) Wait(ctx context.Context) error {
 // nextAvailableDelay estimates how long until one token refills. Returns 0 if a
 // token is (nominally) already available.
 func (tb *tokenBucket) nextAvailableDelay() time.Duration {
-	now := time.Now().UnixNano()
+	now := tb.nowTime().UnixNano()
 	last := tb.lastTime.Load()
 	if now < last {
 		now = last

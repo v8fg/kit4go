@@ -417,3 +417,141 @@ func TestTokenBucket_AcquireNegativeRefillIsUnreachable(t *testing.T) {
 
 // keep atomic import used in case future assertions need it.
 var _ = atomic.Bool{}
+
+// --- deterministic time-window correctness (fake clock) ---------------------
+//
+// These supersede the former time.Sleep-based versions of
+// TestTokenBucket_Refill and TestSlidingWindow_WindowResets. Sleeping past a
+// window boundary to assert rollover is flaky under CPU contention (E5); a fake
+// clock advances time instantaneously and deterministically.
+
+// TestTokenBucket_Refill_FakeClock drains a 5-token burst, then advances the
+// fake clock past one refill interval (rate=100/s => 10ms/token) and confirms a
+// token reappears — with zero wall-clock sleep.
+func TestTokenBucket_Refill_FakeClock(t *testing.T) {
+	clk := newFakeClock()
+	tb := newTokenBucket(100, 5) // rate=100/s => 10ms per token, burst=5
+	tb.now = clk.now
+	// Re-base lastTime to the fake clock's start (the constructor read the real
+	// wall clock); from here every refill delta is measured against clk.
+	tb.lastTime.Store(clk.now().UnixNano())
+
+	// Drain the full burst.
+	for i := 0; i < 5; i++ {
+		if !tb.Allow() {
+			t.Fatalf("burst %d denied", i)
+		}
+	}
+	if tb.Allow() {
+		t.Fatal("should be drained")
+	}
+
+	// Advance 10ms: exactly one token (rate=100/s) must have refilled.
+	clk.add(10 * time.Millisecond)
+	if !tb.Allow() {
+		t.Fatal("token did not refill after advancing 10ms at rate=100/s")
+	}
+	// The just-refilled token was consumed; advancing less than 10ms must deny.
+	clk.add(5 * time.Millisecond)
+	if tb.Allow() {
+		t.Fatal("Allow should be denied before a full refill interval elapses")
+	}
+}
+
+// TestSlidingWindow_WindowResets_FakeClock drains a 2-req/1s window, advances
+// the fake clock past the 1s window so the ring rolls over, and confirms Allow
+// succeeds again — with zero wall-clock sleep.
+func TestSlidingWindow_WindowResets_FakeClock(t *testing.T) {
+	clk := newFakeClock()
+	sw := newSlidingWindow(2, time.Second) // rate=2, 1s window
+	sw.now = clk.now
+	sw.base = clk.now().Unix() // re-base to the fake clock
+
+	if !sw.Allow() || !sw.Allow() {
+		t.Fatal("first two Allow() should succeed")
+	}
+	if sw.Allow() {
+		t.Fatal("third Allow() within window should be denied")
+	}
+
+	// Advance past the window so advance() expires every bucket.
+	clk.add(1100 * time.Millisecond)
+	if !sw.Allow() {
+		t.Fatal("Allow() after window rollover should succeed")
+	}
+	if m := sw.Metrics(); m.Allowed != 3 || m.Denied != 1 {
+		t.Fatalf("metrics = %+v, want Allowed=3 Denied=1", m)
+	}
+}
+
+// TestFixedWindow_WindowResets_FakeClock drains a 1-req/1s fixed window,
+// advances the fake clock past the window boundary, and confirms the counter
+// resets and Allow succeeds — deterministically.
+func TestFixedWindow_WindowResets_FakeClock(t *testing.T) {
+	clk := newFakeClock()
+	fw := newFixedWindow(1, time.Second)
+	fw.now = clk.now
+	fw.windowStart.Store(clk.now().UnixNano())
+
+	if !fw.Allow() {
+		t.Fatal("first Allow() within window should succeed")
+	}
+	if fw.Allow() {
+		t.Fatal("second Allow() over rate=1 should be denied")
+	}
+
+	// Advance past the window; acquire() must CAS the window forward and reset.
+	clk.add(2 * time.Second)
+	if !fw.Allow() {
+		t.Fatal("Allow() after window rollover should succeed")
+	}
+}
+
+// TestLeakyBucket_Drain_FakeClock fills the bucket to capacity, advances the
+// fake clock so the steady drain empties room, and confirms Allow succeeds —
+// deterministically (the leaky bucket drains at rate req/s).
+func TestLeakyBucket_Drain_FakeClock(t *testing.T) {
+	clk := newFakeClock()
+	lb := newLeakyBucket(1, 1) // drain 1 req/s, capacity 1
+	lb.now = clk.now
+	lb.lastTime.Store(clk.now().UnixNano())
+
+	if !lb.Allow() {
+		t.Fatal("first Allow() should succeed (bucket starts empty)")
+	}
+	if lb.Allow() {
+		t.Fatal("second Allow() should be denied (bucket at capacity)")
+	}
+
+	// Advance 1s: the single unit of water drains, freeing capacity.
+	clk.add(time.Second)
+	if !lb.Allow() {
+		t.Fatal("Allow() should succeed after 1s drain at rate=1/s")
+	}
+}
+
+// TestGCRA_BurstReplenish_FakeClock exercises the TAT-based replenish path:
+// after the burst is consumed, advancing the fake clock past the emission
+// interval must allow another request — deterministically.
+func TestGCRA_BurstReplenish_FakeClock(t *testing.T) {
+	clk := newFakeClock()
+	g := newGCRA(10, 2) // 10 req/s => emission 100ms; burst 2 => 200ms offset
+	g.now = clk.now
+
+	// Consume the burst.
+	if !g.Allow() {
+		t.Fatal("first Allow() should succeed")
+	}
+	if !g.Allow() {
+		t.Fatal("second Allow() should succeed")
+	}
+	if g.Allow() {
+		t.Fatal("third Allow() should be denied (burst exhausted)")
+	}
+
+	// Advance past one emission interval (100ms): one token replenishes.
+	clk.add(150 * time.Millisecond)
+	if !g.Allow() {
+		t.Fatal("Allow() should succeed after advancing past one emission interval")
+	}
+}

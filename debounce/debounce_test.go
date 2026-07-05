@@ -83,7 +83,7 @@ func TestThrottleFirstCallFires(t *testing.T) {
 	th := NewThrottle(50*time.Millisecond, func() { fired.Add(1) })
 	defer th.Close()
 	require.True(t, th.Call())
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond) // wait for safeFire goroutine
 	require.Equal(t, int64(1), fired.Load())
 }
 
@@ -95,33 +95,45 @@ func TestThrottleDropsWithinInterval(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		require.False(t, th.Call()) // throttled
 	}
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond) // wait for safeFire goroutine
 	require.Equal(t, int64(1), fired.Load())
 }
 
 func TestThrottleFiresAfterInterval(t *testing.T) {
 	var fired atomic.Int64
+	fc := newFakeClock()
 	th := NewThrottle(30*time.Millisecond, func() { fired.Add(1) })
 	defer th.Close()
-	th.Call()
-	time.Sleep(40 * time.Millisecond)
-	require.True(t, th.Call()) // interval elapsed
-	time.Sleep(10 * time.Millisecond)
+	th.now = fc.Now // inject fake clock: deterministic window assertion (E5)
+
+	require.True(t, th.Call())
+	// Advance the fake clock past the interval — no wall-clock Sleep. The
+	// throttle reads now via the seam, so the next Call must fire regardless of
+	// CPU contention.
+	fc.advance(40 * time.Millisecond)
+	require.True(t, th.Call())        // interval elapsed
+	time.Sleep(10 * time.Millisecond) // wait for safeFire goroutine
 	require.Equal(t, int64(2), fired.Load())
 }
 
 func TestThrottleCallBlocking(t *testing.T) {
 	var fired atomic.Int64
+	fc := newFakeClock()
 	th := NewThrottle(30*time.Millisecond, func() { fired.Add(1) })
 	defer th.Close()
+	th.now = fc.Now // inject fake clock (E5)
+
 	require.True(t, th.CallBlocking())
 	require.False(t, th.CallBlocking())
 	require.Equal(t, int64(1), fired.Load())
 }
 
 func TestThrottleCalls(t *testing.T) {
+	fc := newFakeClock()
 	th := NewThrottle(20*time.Millisecond, func() {})
 	defer th.Close()
+	th.now = fc.Now // inject fake clock (E5)
+
 	th.Call()
 	th.Call()
 	require.Equal(t, int64(1), th.Calls())

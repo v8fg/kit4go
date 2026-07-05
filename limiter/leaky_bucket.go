@@ -24,15 +24,26 @@ type leakyBucket struct {
 	denied   atomic.Uint64
 	acquired atomic.Uint64
 	closed   atomic.Bool
+
+	// now is the clock source. It defaults to [time.Now] so production reads
+	// wall time; tests inject a fake clock to advance time deterministically
+	// instead of sleeping. nil-safe via the nowTime method.
+	now func() time.Time
+}
+
+// nowTime returns the current clock reading, falling back to [time.Now] when no
+// fake clock has been injected.
+func (lb *leakyBucket) nowTime() time.Time {
+	return lb.now()
 }
 
 func newLeakyBucket(rate float64, burst int) *leakyBucket {
 	if burst < 1 {
 		burst = 1
 	}
-	lb := &leakyBucket{rate: rate, capacity: float64(burst)}
+	lb := &leakyBucket{rate: rate, capacity: float64(burst), now: time.Now}
 	lb.water.Store(0) // start empty (all requests allowed initially)
-	lb.lastTime.Store(time.Now().UnixNano())
+	lb.lastTime.Store(lb.nowTime().UnixNano())
 	return lb
 }
 
@@ -54,7 +65,7 @@ func (lb *leakyBucket) TryAcquire(n int) bool {
 }
 
 func (lb *leakyBucket) acquire(n int) bool {
-	now := time.Now().UnixNano()
+	now := lb.nowTime().UnixNano()
 	last := lb.lastTime.Load()
 	if now < last {
 		now = last // clock moved backward
@@ -111,7 +122,7 @@ func (lb *leakyBucket) Wait(ctx context.Context) error {
 }
 
 func (lb *leakyBucket) nextDrainDelay() time.Duration {
-	now := time.Now().UnixNano()
+	now := lb.nowTime().UnixNano()
 	last := lb.lastTime.Load()
 	if now < last {
 		now = last

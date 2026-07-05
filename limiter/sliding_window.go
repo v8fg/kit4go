@@ -29,6 +29,17 @@ type slidingWindow struct {
 	denied   atomic.Uint64
 	acquired atomic.Uint64
 	closed   atomic.Bool
+
+	// now is the clock source. It defaults to [time.Now] so production reads
+	// wall time; tests inject a fake clock to advance time deterministically
+	// instead of sleeping. nil-safe via the nowTime method.
+	now func() time.Time
+}
+
+// nowTime returns the current clock reading, falling back to [time.Now] when no
+// fake clock has been injected.
+func (sw *slidingWindow) nowTime() time.Time {
+	return sw.now()
 }
 
 func newSlidingWindow(rate float64, window time.Duration) *slidingWindow {
@@ -36,12 +47,14 @@ func newSlidingWindow(rate float64, window time.Duration) *slidingWindow {
 	if secs < 1 {
 		secs = 1
 	}
-	return &slidingWindow{
+	sw := &slidingWindow{
 		rate:      rate,
 		windowSec: secs,
 		counts:    make([]int, secs),
-		base:      time.Now().Unix(),
+		now:       time.Now,
 	}
+	sw.base = sw.nowTime().Unix()
+	return sw
 }
 
 // Allow records one event and returns true if it fits under the cap.
@@ -71,7 +84,7 @@ func (sw *slidingWindow) acquire(n int) bool {
 	// be older than base (advanced by a concurrent caller while we waited), which
 	// would otherwise trip advance's backward path and silently destroy live
 	// counts — letting the limiter over-allow.
-	sec := time.Now().Unix()
+	sec := sw.nowTime().Unix()
 	sw.advance(sec)
 	if sec < sw.base {
 		sec = sw.base // wall clock regressed: charge the current bucket

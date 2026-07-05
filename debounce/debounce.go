@@ -151,6 +151,8 @@ type Throttle struct {
 	closed    atomic.Bool
 	callCount atomic.Int64
 
+	now func() time.Time // injectable clock seam; defaults to time.Now (E5)
+
 	recovered uint64    // count of fn panics recovered in Call's goroutine (L5)
 	onPanic   func(any) // optional hook fired on a recovered fn panic
 }
@@ -160,7 +162,7 @@ func NewThrottle(interval time.Duration, fn func()) *Throttle {
 	if fn == nil {
 		panic("debounce: fn is required")
 	}
-	return &Throttle{interval: interval, fn: fn}
+	return &Throttle{interval: interval, fn: fn, now: time.Now}
 }
 
 // Call executes fn if at least `interval` has elapsed since the last execution.
@@ -171,7 +173,7 @@ func (t *Throttle) Call() bool {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	now := time.Now()
+	now := t.now()
 	if now.Sub(t.last) >= t.interval {
 		t.last = now
 		t.callCount.Add(1)
@@ -188,7 +190,7 @@ func (t *Throttle) CallBlocking() bool {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	now := time.Now()
+	now := t.now()
 	if now.Sub(t.last) >= t.interval {
 		t.last = now
 		t.callCount.Add(1)

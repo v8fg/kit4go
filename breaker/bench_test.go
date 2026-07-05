@@ -107,15 +107,26 @@ func BenchmarkBreaker_Metrics(b *testing.B) {
 // every probe slot, and confirms an extra caller is rejected with
 // ErrCircuitOpen — exercising beforeCall's HalfOpen branch where
 // halfOpenCount >= MaxRequests short-circuits before the Add(1) admission race.
-// Unlike TestBreaker_HalfOpenMaxRequests (which blocks probes inside fn), this
-// variant holds the slots by leaving the probes un-completed via a gate, then
-// checks the rejection from the main goroutine.
+//
+// The OpenDuration expiry is advanced through the breaker's fake-clock seam
+// (rather than a real time.Sleep, which was flaky under CPU contention). The
+// probe slots are saturated directly through the internal halfOpenCount atomic
+// so the "all slots taken" precondition is deterministic; the concurrent
+// admission-race path is covered by TestBreaker_HalfOpen_Admission_RaceLoser.
 func TestBreaker_HalfOpen_Rejects_Excess(t *testing.T) {
 	opts := benchOpts()
 	opts.MaxRequests = 2
 	opts.MinRequests = 2
 	opts.OpenDuration = 5 * time.Millisecond
-	br := NewBreaker[int](opts)
+	clock := &fakeClock{t: time.Unix(2_000_000, 0)}
+	br := &Breaker[int]{
+		opts:   opts,
+		counts: make([]int, int(opts.Interval.Seconds())),
+		fails:  make([]int, int(opts.Interval.Seconds())),
+		base:   clock.t.Unix(),
+		now:    clock.now,
+	}
+	br.state.Store(int32(StateClosed))
 
 	// Trip: two failures at FailRate 0.5 with MinRequests 2 -> rate 1.0 >= 0.5.
 	failFn := func(context.Context) (int, error) { return 0, errBench }
@@ -125,30 +136,18 @@ func TestBreaker_HalfOpen_Rejects_Excess(t *testing.T) {
 	if got := br.State(); got != StateOpen {
 		t.Fatalf("precondition: state=%s want open", got)
 	}
-	time.Sleep(opts.OpenDuration * 3)
+	clock.add(opts.OpenDuration * 3)
 
-	// Take both probe slots and hold them inside fn so they don't complete.
-	gate := make(chan struct{})
-	started := make(chan struct{}, opts.MaxRequests)
-	var wg sync.WaitGroup
-	for i := 0; i < int(opts.MaxRequests); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, _ = br.Execute(context.Background(), func(context.Context) (int, error) {
-				started <- struct{}{}
-				<-gate
-				return 1, nil
-			})
-		}()
+	// First post-expiry call transitions Open -> HalfOpen and takes slot 1.
+	if err := br.beforeCall(); err != nil {
+		t.Fatalf("first probe beforeCall err=%v want nil", err)
 	}
-	for i := 0; i < int(opts.MaxRequests); i++ {
-		select {
-		case <-started:
-		case <-time.After(time.Second):
-			t.Fatalf("timeout waiting for probe %d to start", i)
-		}
+	if br.State() != StateHalfOpen {
+		t.Fatalf("state=%s want half_open after first probe admitted", br.State())
 	}
+	// Saturate the remaining slots so every probe position is taken.
+	br.halfOpenCount.Store(int32(opts.MaxRequests))
+
 	// Extra call: all slots taken, must be rejected without running fn.
 	_, err := br.Execute(context.Background(), func(context.Context) (int, error) {
 		t.Fatalf("fn must not run when all probe slots taken")
@@ -158,10 +157,8 @@ func TestBreaker_HalfOpen_Rejects_Excess(t *testing.T) {
 		t.Fatalf("extra probe err=%v want ErrCircuitOpen", err)
 	}
 	if got := br.State(); got != StateHalfOpen {
-		t.Fatalf("state=%s want half_open while probes held", got)
+		t.Fatalf("state=%s want half_open while slots saturated", got)
 	}
-	close(gate)
-	wg.Wait()
 }
 
 // TestBreaker_Advance_BackwardClock drives advance() with a timestamp older

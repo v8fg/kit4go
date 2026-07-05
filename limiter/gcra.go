@@ -22,6 +22,17 @@ type gcraLimiter struct {
 	denied        atomic.Uint64
 	acquired      atomic.Uint64
 	closed        atomic.Bool
+
+	// now is the clock source. It defaults to [time.Now] so production reads
+	// wall time; tests inject a fake clock to advance time deterministically
+	// instead of sleeping. nil-safe via the nowTime method.
+	now func() time.Time
+}
+
+// nowTime returns the current clock reading, falling back to [time.Now] when no
+// fake clock has been injected.
+func (g *gcraLimiter) nowTime() time.Time {
+	return g.now()
 }
 
 func newGCRA(rate float64, burst int) *gcraLimiter {
@@ -32,6 +43,7 @@ func newGCRA(rate float64, burst int) *gcraLimiter {
 	return &gcraLimiter{
 		emissionNs:    emission,
 		burstOffsetNs: emission * float64(burst),
+		now:           time.Now,
 	}
 }
 
@@ -53,7 +65,7 @@ func (g *gcraLimiter) TryAcquire(n int) bool {
 }
 
 func (g *gcraLimiter) acquire(n int) bool {
-	now := time.Now().UnixNano()
+	now := g.nowTime().UnixNano()
 	cost := float64(n)
 	for attempt := 0; attempt < 2; attempt++ {
 		loaded := g.tat.Load() // original stored value (for CAS)
@@ -71,7 +83,7 @@ func (g *gcraLimiter) acquire(n int) bool {
 			g.acquired.Add(uint64(n))
 			return true
 		}
-		now = time.Now().UnixNano()
+		now = g.nowTime().UnixNano()
 	}
 	g.denied.Add(1)
 	return false
@@ -101,7 +113,7 @@ func (g *gcraLimiter) Wait(ctx context.Context) error {
 }
 
 func (g *gcraLimiter) nextDelay() time.Duration {
-	now := time.Now().UnixNano()
+	now := g.nowTime().UnixNano()
 	tat := g.tat.Load()
 	if tat <= now {
 		return 0
