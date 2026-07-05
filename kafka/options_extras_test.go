@@ -28,6 +28,7 @@ func TestOptions_AllWithSetters(t *testing.T) {
 		WithRetryMax(7),
 		WithCodec(CodecRaw{}),
 		WithDeliveryMode("channel"),
+		WithCloseFlushTimeout(15 * time.Second),
 	})
 	checks := []struct {
 		name string
@@ -51,6 +52,7 @@ func TestOptions_AllWithSetters(t *testing.T) {
 		{"RetryMax", o.RetryMax == 7},
 		{"Codec", o.Codec != nil},
 		{"DeliveryMode", o.DeliveryMode == "channel"},
+		{"CloseFlushTimeout", o.CloseFlushTimeout == 15*time.Second},
 	}
 	for _, c := range checks {
 		if !c.ok {

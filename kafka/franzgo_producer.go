@@ -92,7 +92,7 @@ func (s *franzProducer) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	flushAndClose(s.cl)
+	flushAndClose(s.cl, s.opts.CloseFlushTimeout)
 	s.fire(ProducerEvent{Name: "close"})
 	return nil
 }
@@ -191,7 +191,7 @@ func (s *franzSyncProducer) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	flushAndClose(s.cl)
+	flushAndClose(s.cl, s.opts.CloseFlushTimeout)
 	s.fire(ProducerEvent{Name: "close"})
 	return nil
 }
@@ -278,8 +278,11 @@ func (s *franzSyncProducer) fire(e ProducerEvent) {
 // vs sarama's full-drain Close (verified via broker offsets during the stress
 // matrix; see STRESS_MATRIX.md). The 30s timeout bounds shutdown so a dead
 // broker can't hang it.
-func flushAndClose(cl *kgo.Client) {
-	fctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func flushAndClose(cl *kgo.Client, timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	fctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	_ = cl.Flush(fctx)
 	cl.Close()

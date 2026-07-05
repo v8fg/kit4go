@@ -92,6 +92,12 @@ type Options struct {
 	// always defer Close() on shutdown. Monitor Metrics.InFlight for buffer depth.
 	ProducerLinger time.Duration `json:"producer_linger" mapstructure:"producer_linger"`
 
+	// CloseFlushTimeout bounds the franz-go producer's final Flush during Close
+	// (drains in-flight records before the client closes). <=0 → 30s. This sits
+	// OUTSIDE log4go's daemon-shutdown bound, so total Stop ≈ daemon-timeout +
+	// CloseFlushTimeout; lower it when the deployment's shutdown grace is tight.
+	CloseFlushTimeout time.Duration `json:"close_flush_timeout" mapstructure:"close_flush_timeout"`
+
 	// Acks controls the producer's required broker acknowledgments — the core
 	// durability-vs-throughput knob. A string (AcksLeader / AcksAll / AcksNone).
 	// Default AcksLeader (UNIFIED across both backends — applied to both async
@@ -224,6 +230,12 @@ func WithChannelBufferSize(n int) Option { return func(o *Options) { o.ChannelBu
 
 // WithProducerLinger sets the batch flush delay (0 = off; 1-10ms typical).
 func WithProducerLinger(d time.Duration) Option { return func(o *Options) { o.ProducerLinger = d } }
+
+// WithCloseFlushTimeout sets the franz-go producer's final Flush timeout on
+// Close (<=0 → 30s). See Options.CloseFlushTimeout.
+func WithCloseFlushTimeout(d time.Duration) Option {
+	return func(o *Options) { o.CloseFlushTimeout = d }
+}
 
 // WithAcks sets the producer's required acknowledgments: AcksLeader (default),
 // AcksAll (all in-sync replicas — durable, slower under RF>1), or AcksNone

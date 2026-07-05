@@ -18,7 +18,7 @@ log4go is the reference implementation of it.
 | L3 | Bounded resources | Channels, ring spill, and file spill (`SpillMaxBytes`) are all capped. log4go cannot OOM the host or fill its disk. | `kafka_overflow.go`, `file_writer.go` |
 | L4 | Downstream isolation | An inline circuit breaker around the kafka producer: when the broker-error rate is sustained, the daemon diverts records to the spill store instead of futile Sends; it half-opens to probe recovery and replays the backlog on close. | `kafka_breaker.go`, `kafka_writer.go` |
 | L5 | Observable degradation | Every recovered panic and every dropped record is counted and surfaced. Silent failure is a bug. | `runtime_metrics.go`, per-writer `Metrics()` |
-| L6 | Bounded shutdown | `Stop` waits on a writer daemon for at most `defaultShutdownTimeout` (5s). A dead or wedged daemon cannot hang process exit. | `daemon_panic.go` `waitQuit` |
+| L6 | Bounded shutdown | `Stop` waits on a writer daemon for at most `defaultShutdownTimeout` (5s), THEN closes the producer. For the kafka writer the producer Close runs a final Flush bounded by `kafka.Options.CloseFlushTimeout` (franz-go; default 30s; sarama drains its Successes/Errors channels). Total `Stop` is approximately daemon-timeout + CloseFlushTimeout, so lower `CloseFlushTimeout` when shutdown grace is tight. Neither a wedged daemon nor a dead broker can hang exit unbounded. | `daemon_panic.go` `waitQuit`, `kafka/franzgo_producer.go` `flushAndClose` |
 | L7 | Business-data protection | Critical records (Panic / Fatal) flush before exit; the spill failover keeps records durable across a kafka outage. Bounded loss is visible. | `fatal.go` `Sync`, `kafka_writer.go` failover |
 
 ## Kafka circuit breaker and failover (L4)

@@ -230,10 +230,10 @@ func TestCov_PartitionConsumer_Snapshot(t *testing.T) {
 // Close closes its channels once so the producer's drain goroutines exit
 // cleanly (the suite runs goleak).
 type blockingAsyncProducer struct {
-	in     chan *sarama.ProducerMessage
-	succ   chan *sarama.ProducerMessage
-	errs   chan *sarama.ProducerError
-	once   sync.Once
+	in   chan *sarama.ProducerMessage
+	succ chan *sarama.ProducerMessage
+	errs chan *sarama.ProducerError
+	once sync.Once
 }
 
 func newBlockingAsyncProducer() *blockingAsyncProducer {
@@ -253,14 +253,14 @@ func (b *blockingAsyncProducer) Close() error {
 	})
 	return nil
 }
-func (b *blockingAsyncProducer) Input() chan<- *sarama.ProducerMessage              { return b.in }
-func (b *blockingAsyncProducer) Successes() <-chan *sarama.ProducerMessage          { return b.succ }
-func (b *blockingAsyncProducer) Errors() <-chan *sarama.ProducerError               { return b.errs }
-func (b *blockingAsyncProducer) IsTransactional() bool                              { return false }
-func (b *blockingAsyncProducer) TxnStatus() sarama.ProducerTxnStatusFlag            { return 0 }
-func (b *blockingAsyncProducer) BeginTxn() error                                    { return nil }
-func (b *blockingAsyncProducer) CommitTxn() error                                   { return nil }
-func (b *blockingAsyncProducer) AbortTxn() error                                    { return nil }
+func (b *blockingAsyncProducer) Input() chan<- *sarama.ProducerMessage     { return b.in }
+func (b *blockingAsyncProducer) Successes() <-chan *sarama.ProducerMessage { return b.succ }
+func (b *blockingAsyncProducer) Errors() <-chan *sarama.ProducerError      { return b.errs }
+func (b *blockingAsyncProducer) IsTransactional() bool                     { return false }
+func (b *blockingAsyncProducer) TxnStatus() sarama.ProducerTxnStatusFlag   { return 0 }
+func (b *blockingAsyncProducer) BeginTxn() error                           { return nil }
+func (b *blockingAsyncProducer) CommitTxn() error                          { return nil }
+func (b *blockingAsyncProducer) AbortTxn() error                           { return nil }
 func (b *blockingAsyncProducer) AddOffsetsToTxn(map[string][]*sarama.PartitionOffsetMetadata, string) error {
 	return nil
 }
@@ -358,9 +358,9 @@ func TestCov_Producer_SendWithCodec(t *testing.T) {
 
 type noopCodec struct{}
 
-func (noopCodec) Encode(v any) ([]byte, error) { return []byte("enc"), nil }
+func (noopCodec) Encode(v any) ([]byte, error)   { return []byte("enc"), nil }
 func (noopCodec) Decode(b []byte, out any) error { return nil }
-func (noopCodec) ContentType() string           { return "application/mock" }
+func (noopCodec) ContentType() string            { return "application/mock" }
 
 // ---- sync producer closed/error paths ----
 
@@ -500,29 +500,29 @@ func TestCov_PartitionConsumer_ConsumerCloseError(t *testing.T) {
 // errCloserConsumer is a minimal sarama.Consumer whose Close errors.
 type errCloserConsumer struct{}
 
-func (errCloserConsumer) Topics() ([]string, error)                          { return nil, nil }
-func (errCloserConsumer) Partitions(string) ([]int32, error)                 { return nil, nil }
+func (errCloserConsumer) Topics() ([]string, error)          { return nil, nil }
+func (errCloserConsumer) Partitions(string) ([]int32, error) { return nil, nil }
 func (errCloserConsumer) ConsumePartition(string, int32, int64) (sarama.PartitionConsumer, error) {
 	return nil, nil
 }
 func (errCloserConsumer) HighWaterMarks() map[string]map[int32]int64 { return nil }
-func (errCloserConsumer) Close() error                                { return errBoom }
-func (errCloserConsumer) Pause(map[string][]int32)                    {}
-func (errCloserConsumer) Resume(map[string][]int32)                   {}
-func (errCloserConsumer) PauseAll()                                   {}
-func (errCloserConsumer) ResumeAll()                                  {}
+func (errCloserConsumer) Close() error                               { return errBoom }
+func (errCloserConsumer) Pause(map[string][]int32)                   {}
+func (errCloserConsumer) Resume(map[string][]int32)                  {}
+func (errCloserConsumer) PauseAll()                                  {}
+func (errCloserConsumer) ResumeAll()                                 {}
 
 // noErrPartitionConsumer is a minimal sarama.PartitionConsumer whose Close is nil.
 type noErrPartitionConsumer struct{}
 
 func (noErrPartitionConsumer) Messages() <-chan *sarama.ConsumerMessage { return nil }
-func (noErrPartitionConsumer) Errors() <-chan *sarama.ConsumerError      { return nil }
-func (noErrPartitionConsumer) Close() error                              { return nil }
-func (noErrPartitionConsumer) AsyncClose()                               {}
-func (noErrPartitionConsumer) HighWaterMarkOffset() int64                { return 0 }
-func (noErrPartitionConsumer) Pause()                                    {}
-func (noErrPartitionConsumer) Resume()                                   {}
-func (noErrPartitionConsumer) IsPaused() bool                            { return false }
+func (noErrPartitionConsumer) Errors() <-chan *sarama.ConsumerError     { return nil }
+func (noErrPartitionConsumer) Close() error                             { return nil }
+func (noErrPartitionConsumer) AsyncClose()                              {}
+func (noErrPartitionConsumer) HighWaterMarkOffset() int64               { return 0 }
+func (noErrPartitionConsumer) Pause()                                   {}
+func (noErrPartitionConsumer) Resume()                                  {}
+func (noErrPartitionConsumer) IsPaused() bool                           { return false }
 
 // silence unused imports if a test is trimmed.
 var _ = time.Second
