@@ -220,3 +220,19 @@ func TestNewReturnsUsableQueue(t *testing.T) {
 	require.NotNil(t, q)
 	require.Equal(t, 0, q.Len())
 }
+
+// TestUpdate_StaleItemIsNoOp covers the Update guard: updating a popped item
+// (index < 0), a nil item, or an out-of-range index is a silent no-op, not a
+// panic (heap.Fix on a stale index would otherwise index out of bounds).
+func TestUpdate_StaleItemIsNoOp(t *testing.T) {
+	q := New[int]()
+	it := q.Push(1, 5)
+	v, _, ok := q.Pop()
+	require.True(t, ok)
+	require.Equal(t, 1, v)
+
+	// it is now popped (index == -1): Update must be a no-op, not panic.
+	require.NotPanics(t, func() { q.Update(it, 99) })
+	require.NotPanics(t, func() { q.Update(nil, 1) })
+	require.Equal(t, 0, q.Len())
+}

@@ -50,14 +50,6 @@ type Buffer[T any] struct {
 	mu    sync.Mutex        // serializes Reload so Load runs at most once at a time
 
 	loader Loader[T]
-
-	// Start/stop bookkeeping. stopCh is closed by stop() to signal the reload
-	// goroutine to exit independently of the caller's ctx; stopOnce makes stop()
-	// idempotent (closing stopCh twice would panic); wg lets stop() (and tests)
-	// wait for the reload goroutine to exit so no goroutine leaks.
-	stopCh   chan struct{}
-	stopOnce sync.Once
-	wg       sync.WaitGroup
 }
 
 // New builds a Buffer by calling loader.Load once. It returns an error if the
@@ -119,19 +111,20 @@ func (b *Buffer[T]) Reload() error {
 // remains live); callers needing failure visibility should call Reload directly
 // or wrap the Loader.
 func (b *Buffer[T]) Start(ctx context.Context, interval time.Duration) (stop func()) {
-	// stopCh is closed by stop() to drive the reload goroutine out of its
-	// select loop. A new channel per Start keeps repeated Start/stop cycles
-	// independent; stopOnce scopes to the lifetime of this returned stop().
-	b.stopCh = make(chan struct{})
-	b.stopOnce = sync.Once{}
-	b.wg.Add(1)
+	// Each Start/stop cycle uses LOCAL bookkeeping (stopCh/stopOnce/wg) so a
+	// second Start cannot overwrite the first's channels and orphan its reload
+	// goroutine. stop() closes this cycle's stopCh and waits on this cycle's wg.
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		defer b.wg.Done()
+		defer wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-b.stopCh:
+			case <-stopCh:
 				return
 			case <-ctx.Done():
 				return
@@ -143,9 +136,7 @@ func (b *Buffer[T]) Start(ctx context.Context, interval time.Duration) (stop fun
 		}
 	}()
 	return func() {
-		b.stopOnce.Do(func() {
-			close(b.stopCh)
-		})
-		b.wg.Wait()
+		stopOnce.Do(func() { close(stopCh) })
+		wg.Wait()
 	}
 }

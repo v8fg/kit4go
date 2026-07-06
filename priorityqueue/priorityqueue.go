@@ -116,6 +116,9 @@ func (q *Queue[T]) Peek() (T, int, bool) {
 // by Push and must still be in the queue; passing an item from another queue or
 // one already popped has undefined behaviour.
 func (q *Queue[T]) Update(item *Item[T], priority int) {
+	if item == nil || item.index < 0 || item.index >= q.h.Len() {
+		return // nil, foreign, or already-popped item: no-op (out of contract)
+	}
 	item.Priority = priority
 	heap.Fix(&q.h, item.index)
 }

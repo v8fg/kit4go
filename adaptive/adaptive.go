@@ -352,11 +352,10 @@ func (p *Pool[Job]) Submit(ctx context.Context, j Job) error {
 	case <-p.done:
 		return ErrClosed
 	case <-ctx.Done():
-		// Context cancelled/timeout while waiting on a full queue: surface as
-		// ErrFull (backpressure) so callers can distinguish it from a real
-		// closure. If the pool were closed, the `<-p.done` arm above would be
-		// ready and selected, so no separate closed check is needed here.
-		return ErrFull
+		// Context cancelled/expired while waiting on a full queue: return the
+		// context error (mirrors workerpool/semaphore) so callers can tell
+		// cancellation apart from genuine backpressure via errors.Is(err, ErrFull).
+		return ctx.Err()
 	}
 }
 
