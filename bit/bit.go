@@ -118,12 +118,12 @@ func PreHighestPowerOfTwo[T Number](num T) T {
 
 // Swap swaps the first two numbers in the slice.
 func Swap[T Number](nums []T) {
-	size := len(nums)
-	if size > 0 && size&(size-1) == 0 {
-		nums[0] ^= nums[1]
-		nums[1] ^= nums[0]
-		nums[0] ^= nums[1]
+	if len(nums) < 2 {
+		return // no-op: need at least two elements to swap
 	}
+	nums[0] ^= nums[1]
+	nums[1] ^= nums[0]
+	nums[0] ^= nums[1]
 }
 
 // Sum returns the sum of x, y.

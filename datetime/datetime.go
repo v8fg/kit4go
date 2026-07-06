@@ -285,13 +285,26 @@ func AddDate(years, months, days int, t time.Time) time.Time {
 	return t.AddDate(years, months, days)
 }
 
+// maxRangeEntries bounds RangeTime/RangeDateStr output to resist untrusted
+// span/interval inputs (DoS via a huge allocation). 10000 entries is plenty
+// for any sane date/time range.
+const maxRangeEntries = 10000
+
 // RangeTime returns the range time, between the start and end, with the given interval duration.
+// It returns nil if interval <= 0 (would divide by zero) or the implied entry
+// count exceeds maxRangeEntries (would allocate unboundedly).
 func RangeTime(start, end time.Time, interval time.Duration) []time.Time {
+	if interval <= 0 {
+		return nil
+	}
 	if start.After(end) {
 		start, end = end, start
 	}
 
 	delta := int(end.Sub(start)/interval) + 1
+	if delta <= 0 || delta > maxRangeEntries {
+		return nil
+	}
 	if delta == 1 {
 		return []time.Time{start}
 	}
@@ -313,6 +326,9 @@ func RangeDateStr(start, end time.Time, layout string) []string {
 		layout = LayoutDateISO8601
 	}
 	delta := int(EndTime(end).Sub(StartTime(start)).Hours()/24.0) + 1
+	if delta <= 0 || delta > maxRangeEntries {
+		return nil
+	}
 	if delta == 1 {
 		return []string{start.Format(layout)}
 	}

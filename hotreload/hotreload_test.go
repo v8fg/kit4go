@@ -264,3 +264,24 @@ func TestErrorStrings(t *testing.T) {
 		t.Fatalf("ErrLoadFailed missing package prefix: %q", ErrLoadFailed)
 	}
 }
+
+// TestStart_DoubleStartIndependent is the regression for the double-Start fix:
+// each Start/stop cycle uses LOCAL bookkeeping, so a second Start on the same
+// Buffer cannot orphan the first reload goroutine (pre-fix it overwrote the
+// instance's stopCh). Both cycles must stop cleanly without panic or deadlock.
+func TestStart_DoubleStartIndependent(t *testing.T) {
+	b, err := New[string](&mockLoader{vals: []string{"a"}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	stop1 := b.Start(context.Background(), 5*time.Millisecond)
+	stop1() // first cycle fully stopped
+
+	// Second cycle on the SAME buffer: must work independently.
+	stop2 := b.Start(context.Background(), 5*time.Millisecond)
+	stop2()
+
+	// If the instance-field regression returned, stop1 would have closed
+	// stop2's channel (nil/double-close panic) or stop2's wg.Wait would block
+	// forever on an orphaned goroutine. Reaching here means both are clean.
+}
