@@ -76,6 +76,51 @@ func TestFlag_TimeGate(t *testing.T) {
 	}
 }
 
+// TestFlag_WithPercentageClampsOver100 covers the WithPercentage clamp branch
+// (featureflag.go:43): values above 100 must be reduced to 100, so an enabled
+// flag rolls out to everyone regardless of how far above 100 the caller went.
+// We assert "everyone enabled" both with no allowlist and with keys whose
+// hashPercent would otherwise fall outside a sub-100 band.
+func TestFlag_WithPercentageClampsOver100(t *testing.T) {
+	// Build a few keys that are NOT universally on at low percentages, so a
+	// broken clamp (leaving a >100 value, which the rollout math never treats
+	// specially) would still be distinguishable from a correctly-clamped 100.
+	// At percentage>=100 Enabled short-circuits to true before hashing, so we
+	// verify that path is reached for every sampled key.
+	keys := []string{"user-0", "user-1", "user-7", "user-42", "vip-x", "alloc-probe"}
+
+	for _, p := range []uint{101, 150, 999, 4294967295} {
+		f := New(WithEnabled(true), WithPercentage(p))
+		for _, k := range keys {
+			if !f.Enabled(k) {
+				t.Fatalf("WithPercentage(%d): key %q not enabled; clamp to 100 expected", p, k)
+			}
+		}
+	}
+}
+
+// TestFlag_SetPercentageClampsOver100 covers the SetPercentage clamp branch
+// (featureflag.go:129): runtime values above 100 are clamped to 100, so after
+// the call every key is enabled. We start at 0% (nobody) and confirm the
+// post-clamp state turns all sampled keys on.
+func TestFlag_SetPercentageClampsOver100(t *testing.T) {
+	f := New(WithEnabled(true), WithPercentage(0))
+	keys := []string{"user-0", "user-1", "user-7", "user-42", "vip-x", "alloc-probe"}
+	for _, k := range keys {
+		if f.Enabled(k) {
+			t.Fatalf("precondition: key %q enabled at 0%%", k)
+		}
+	}
+	for _, p := range []uint{101, 250, 1000, 4294967295} {
+		f.SetPercentage(p)
+		for _, k := range keys {
+			if !f.Enabled(k) {
+				t.Fatalf("SetPercentage(%d): key %q not enabled; clamp to 100 expected", p, k)
+			}
+		}
+	}
+}
+
 func TestFlag_RuntimeChanges(t *testing.T) {
 	f := New()
 	f.Enable()

@@ -173,6 +173,16 @@ func TestMachine_Can(t *testing.T) {
 		return ok
 	}
 	m := mustNew(t, StateIdle, rules...)
+
+	// Rule exists for (idle, submit) and has no guard → Can must return true
+	// regardless of ctx. This covers the nil-guard branch of Can.
+	if !m.Can(EventSubmit, nil) {
+		t.Fatal("Can(submit, nil) on a guardless rule should be true")
+	}
+	if !m.Can(EventSubmit, "anything") {
+		t.Fatal("Can(submit, ...) on a guardless rule should be true for any ctx")
+	}
+
 	_ = m.Send(EventSubmit, nil)
 
 	if !m.Can(EventPay, true) {

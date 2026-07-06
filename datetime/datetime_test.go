@@ -599,6 +599,13 @@ func TestLastDateTimeStrOfWeek(t *testing.T) {
 	if got != "2022-02-06 23:59:59" {
 		t.Errorf("LastDateTimeStrOfWeek monday-first = %q, want 2022-02-06 23:59:59", got)
 	}
+	// Empty layout falls back to DefaultLayoutDate ("2006-01-02"), the same
+	// default path the FirstDateTimeStrOfMonth sibling covers but this function
+	// previously did not.
+	got = datetime.LastDateTimeStrOfWeek("", time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC), time.Monday)
+	if got != "2022-02-06" {
+		t.Errorf("LastDateTimeStrOfWeek empty-layout = %q, want 2022-02-06", got)
+	}
 }
 
 func TestLastDateTimeOfISOWeek(t *testing.T) {
@@ -760,6 +767,25 @@ func TestRangeDateStr(t *testing.T) {
 	}
 }
 
+// TestRangeDateStrGuards covers the DoS-prevention guards: an entry count that
+// exceeds maxRangeEntries returns nil rather than allocating unboundedly.
+// (The delta<=0 half of the same guard is unreachable in practice —
+// EndTime(end) >= StartTime(start) by construction so delta is always >= 1 —
+// but the >maxRangeEntries branch is exercised here.)
+func TestRangeDateStrGuards(t *testing.T) {
+	start := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	// 10001 calendar days -> delta 10001 > maxRangeEntries (10000) -> nil.
+	end := start.AddDate(0, 0, 10000)
+	if got := datetime.RangeDateStr(start, end, ""); got != nil {
+		t.Errorf("RangeDateStr over-limit = len %d, want nil (DoS guard)", len(got))
+	}
+	// Boundary sanity: exactly maxRangeEntries (10000) is allowed, not nil.
+	endOK := start.AddDate(0, 0, 9999)
+	if got := datetime.RangeDateStr(start, endOK, ""); len(got) != 10000 {
+		t.Errorf("RangeDateStr at-limit = len %d, want 10000", len(got))
+	}
+}
+
 func TestRangeTime(t *testing.T) {
 	type args struct {
 		start    time.Time
@@ -831,6 +857,37 @@ func TestRangeTime(t *testing.T) {
 				t.Errorf("RangeTime() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestRangeTimeGuards covers the input-guard branches that the happy-path
+// table never reaches:
+//   - interval <= 0 (would divide by zero) -> nil,
+//   - entry count exceeding maxRangeEntries -> nil (DoS guard).
+//
+// The delta<=0 half of the second guard is defensive: after the start>end
+// swap, end>=start and interval>0 hold, so delta is always >= 1 and that
+// disjunct is unreachable; only the >maxRangeEntries branch is hit here.
+func TestRangeTimeGuards(t *testing.T) {
+	start := time.Date(2022, 3, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2022, 3, 2, 0, 0, 0, 0, time.UTC)
+
+	if got := datetime.RangeTime(start, end, 0); got != nil {
+		t.Errorf("RangeTime interval=0 = %v, want nil", got)
+	}
+	if got := datetime.RangeTime(start, end, -time.Second); got != nil {
+		t.Errorf("RangeTime interval<0 = %v, want nil", got)
+	}
+
+	// 10001 one-second entries -> delta 10001 > maxRangeEntries (10000) -> nil.
+	longEnd := start.Add(10000 * time.Second)
+	if got := datetime.RangeTime(start, longEnd, time.Second); got != nil {
+		t.Errorf("RangeTime over-limit = len %d, want nil (DoS guard)", len(got))
+	}
+	// Boundary sanity: exactly maxRangeEntries (10000) is allowed, not nil.
+	okEnd := start.Add(9999 * time.Second)
+	if got := datetime.RangeTime(start, okEnd, time.Second); len(got) != 10000 {
+		t.Errorf("RangeTime at-limit = len %d, want 10000", len(got))
 	}
 }
 

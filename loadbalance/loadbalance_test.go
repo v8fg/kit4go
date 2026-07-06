@@ -175,6 +175,58 @@ func TestAllIsCopy(t *testing.T) {
 	}
 }
 
+// TestNewNilID covers the nil-id fallback in New, where id defaults to
+// fmt.Sprintf("%v", v). Without this the fallback closure is never executed.
+func TestNewNilID(t *testing.T) {
+	// int values: fmt %v gives "1","2". Dedup must work through the default id.
+	b := New[int](nil, []Entry[int]{{1, 1}, {2, 1}})
+	require.Equal(t, 2, b.Len())
+	// Replacing via the default id (same value 1) must reset, not append.
+	b.Add(Entry[int]{1, 5})
+	require.Equal(t, 2, b.Len())
+	// Remove via default id works.
+	b.Remove(2)
+	require.Equal(t, 1, b.Len())
+	// Confirm the default id function is the fmt formatter.
+	require.Equal(t, "1", b.id(1))
+}
+
+// TestWeightedRandomDefaultStrategy covers nextWeightedRandom through the
+// default-fallback case path in Next (strategy != SWRR branch already covered;
+// this exercises the weighted-random loop returning from inside the loop body
+// for the last entry as well, by drawing many samples).
+func TestWeightedRandomLastEntryReachable(t *testing.T) {
+	b := New(strID, []Entry[string]{{"a", 1}, {"b", 1}, {"c", 1}},
+		WithStrategy[string](StrategyWeightedRandom))
+	seen := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		v, ok := b.Next()
+		require.True(t, ok)
+		seen[v] = true
+	}
+	// Over 1000 uniform draws all three entries are hit (the in-loop return
+	// fires for the final entry whenever r lands in its weight bucket).
+	for _, k := range []string{"a", "b", "c"} {
+		require.True(t, seen[k], "entry %q never selected", k)
+	}
+}
+
+// TestWeightedRandomFallbackDefensive documents the trailing
+// `return b.entries[len(b.entries)-1].value, true` in nextWeightedRandom.
+//
+// It is mathematically UNREACHABLE through the public API:
+//   - r = rand.IntN(totalWeight) ∈ [0, totalWeight)
+//   - the loop sums cum to exactly totalWeight (addLocked normalizes w<=0 to 1)
+//   - so the last iteration always satisfies r < cum and returns inside the loop
+//
+// The statement is a pure defensive guard against future internal-state
+// corruption. We deliberately do NOT cover it by desyncing b.totalWeight from
+// the entry-weight sum, since that would test corrupted private state rather
+// than any real code path. Skipped per the "unreachable defensive" carve-out.
+func TestWeightedRandomFallbackDefensive(t *testing.T) {
+	t.Skip("line 173 is a defensive guard, unreachable via public API; see comment")
+}
+
 func ExampleNew() {
 	// Send ~75% of traffic to the higher-capacity upstream.
 	b := New(strID, []Entry[string]{

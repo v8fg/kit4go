@@ -181,3 +181,18 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 	// Some may be dropped (buffer full), so just assert we got a lot.
 	require.Greater(t, received.Load(), int64(100))
 }
+
+// TestPublishBlockingAfterClose covers PublishBlocking's closed-guard branch
+// (the `if f.closed.Load() { return 0, false }` early return at the top of
+// PublishBlocking). Distinct from TestPublishAfterClose which only exercises
+// the non-blocking Publish path, and from the deadlock regression test which
+// hits the in-loop `<-f.done` abort rather than the top-of-function guard.
+func TestPublishBlockingAfterClose(t *testing.T) {
+	f := New[int]()
+	f.Close()
+	delivered, ok := f.PublishBlocking(context.Background(), 1)
+	require.False(t, ok)
+	require.Equal(t, 0, delivered)
+	// published counter must not advance once closed (guard returns before Add).
+	require.Equal(t, uint64(0), f.Published())
+}

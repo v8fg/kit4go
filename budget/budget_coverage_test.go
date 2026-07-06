@@ -8,17 +8,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNew_BucketsZeroFallback covers the p.buckets <= 0 branch of New (the
-// explicit guard, distinct from WithBuckets' own guard).
-func TestNew_BucketsZeroFallback(t *testing.T) {
-	// WithBuckets(0) sets p.buckets=0 only if its guard allowed it — but the
-	// guard (n > 0) skips it, so buckets stays at the New default (24). Force
-	// the New-level fallback by constructing via WithBuckets(0) which leaves
-	// p.buckets at the zero value of the field set in New... it is 24 already.
-	// To hit the New fallback, craft a Pacer directly.
-	p, err := New(100.0, 24*time.Hour, WithBuckets(0))
+// TestNew_BucketsGuards covers WithBuckets' non-positive guard. It also pins
+// the New-level `if p.buckets <= 0 { p.buckets = 24 }` fallback (budget.go:94)
+// as an UNREACHABLE defensive branch: New seeds p.buckets=24 (budget.go:87)
+// and no shipped Option ever assigns a non-positive value, so p.buckets is
+// always > 0 by the time the guard runs. The assertion documents that the
+// fallback, if ever hit, would restore the default.
+func TestNew_BucketsGuards(t *testing.T) {
+	// WithBuckets(0) / WithBuckets(-3) are both rejected by the option's own
+	// n > 0 guard, so p.buckets remains the New default of 24.
+	p, err := New(100.0, 24*time.Hour, WithBuckets(0), WithBuckets(-3))
 	require.NoError(t, err)
 	require.Equal(t, 24, p.buckets)
+}
+
+// TestUnreachableDefensiveBranches documents the four production branches that
+// are structurally unreachable through the public API and therefore intentionally
+// NOT covered. Each is a defensive clamp/guard; exercising it would require
+// manufacturing an inconsistent Pacer state that New + Options cannot produce.
+// Keeping them uncovered (rather than writing tests against impossible state)
+// is the honest representation. See budget.go:94,143,146,164.
+//
+//	budget.go:94  New:           if p.buckets <= 0 { p.buckets = 24 }
+//	                               — New sets p.buckets=24; no Option zeroes it.
+//	budget.go:143 fractionOfPeriod: if f < 0 { f = 0 }   (daily branch)
+//	                               — f = t.Sub(startOfDay)/24h; startOfDay is
+//	                                 midnight of t's OWN day, so t >= startOfDay
+//	                                 always holds and f >= 0. (Empirically the
+//	                                 daily-branch f range is [0, 0.9999...].)
+//	budget.go:146 fractionOfPeriod: if f >= 1 { f = 0.999999 } (daily branch)
+//	                               — t.Sub(startOfDay) < 24h for any wall clock,
+//	                                 and at exactly-next-midnight startOfDay is
+//	                                 recomputed from t, making f wrap to 0.
+//	budget.go:164 targetFraction:   if i >= p.buckets { i = p.buckets - 1 }
+//	                               — i = int(f*buckets); f is always < 1 (daily
+//	                                 clamp caps at 0.999999; non-daily modulo is
+//	                                 in [0,1)), so idx < buckets and i < buckets.
+func TestUnreachableDefensiveBranches(t *testing.T) {
+	// Sanity anchor: confirm the daily fraction never reaches the clamps across
+	// a sweep of the day, and targetFraction's index stays in range. This does
+	// not "cover" the guarded lines (they never execute); it asserts the
+	// invariant that makes them dead code.
+	p, _ := New(100.0, 24*time.Hour, WithBuckets(4))
+	maxF := -1.0
+	for h := 0; h < 24; h++ {
+		f := p.fractionOfPeriod(time.Date(2026, 7, 1, h, 59, 59, 999999999, time.UTC))
+		if f > maxF {
+			maxF = f
+		}
+	}
+	require.GreaterOrEqual(t, maxF, 0.0)
+	require.Less(t, maxF, 1.0, "daily fraction must stay in [0,1) so the clamps never fire")
 }
 
 // TestFractionOfPeriod_DailyEndOfDay covers the daily-period branch near the
@@ -61,28 +101,18 @@ func TestFractionOfPeriod_NonDailyPreEpoch(t *testing.T) {
 	require.InDelta(t, 0.0, f, 1e-9, "negative fraction must clamp to 0")
 }
 
-// TestTargetFraction_BucketBoundary covers the i >= p.buckets branch of
-// targetFraction (fraction == 1.0 makes idx == buckets).
+// TestTargetFraction_BucketBoundary exercises the bucket-boundary
+// interpolation path of targetFraction (idx landing on a whole bucket index).
+// It does NOT cover the `if i >= p.buckets` guard (budget.go:164): that guard
+// is structurally unreachable since f is always < 1, so int(f*buckets) <
+// buckets. See TestUnreachableDefensiveBranches for the full rationale.
 func TestTargetFraction_BucketBoundary(t *testing.T) {
-	p, _ := New(100.0, 24*time.Hour, WithBuckets(4))
-	// fractionOfPeriod returns 0.999999 (clamped), idx = 0.999999*4 = 3.9999.
-	// i = int(3.9999) = 3 < buckets(4), so this covers the i < buckets path. To
-	// hit i >= buckets we need fraction exactly == 1.0, which the daily clamp
-	// prevents — so call targetFraction via a t that yields f exactly 1 through
-	// the non-daily branch.
 	p2, _ := New(100.0, 1*time.Hour, WithBuckets(4))
 	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	// t at exactly the period boundary: UnixNano%period == 0 -> f == 0, not 1.
-	// Drive i >= buckets by making f * buckets >= buckets, i.e. f == 1. The
-	// non-daily branch computes f = (unixNano % period) / period which is in
-	// [0,1); we cannot get exactly 1. Instead use Deviation at midnight where
-	// planned becomes ~0 (covered below). For the i >= buckets guard, the
-	// pre-clamp on the daily branch forces f <= 0.999999 so i is always < buckets.
-	// Still exercise the boundary interpolation path.
-	tf := p2.targetFraction(base.Add(45 * time.Minute)) // f=0.75, idx=3.0, i=3
+	// f=0.75, idx=3.0, i=3 -> interpolates between weight[3] and weight[4].
+	tf := p2.targetFraction(base.Add(45 * time.Minute))
 	require.Greater(t, tf, 0.7)
 	require.Less(t, tf, 1.0)
-	_ = p
 }
 
 // TestDeviation_PlannedZero covers the planned <= 0 branch of Deviation (early

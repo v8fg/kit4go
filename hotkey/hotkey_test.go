@@ -163,6 +163,62 @@ func TestTopExcludesZeroCountKeys(t *testing.T) {
 	require.Empty(t, top) // no keys -> empty
 }
 
+// TestTopPrunesIdleEntryLeftByCount covers the in-map idle-pruning branch of
+// Top (delete + continue on a key whose trimmed window is empty). Count leaves
+// an empty (but still-present) slice for an expired key instead of deleting the
+// map entry; Top must then observe that idle entry and remove it. This drives
+// the Top branch that ordinary Touch+evictIdleLocked never expose, because
+// Touch prunes idle keys before Top can see them.
+func TestTopPrunesIdleEntryLeftByCount(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(8000, 0)}
+	d := New(time.Second, 5, WithClock(clk.now))
+
+	// "stale" is in-window at touch time, then ages out.
+	d.Touch("stale")
+	clk.t = clk.t.Add(2 * time.Second) // past the 1s window
+
+	// Count trims "stale" to an empty slice and writes it back WITHOUT deleting
+	// the map entry, leaving an idle key resident in d.keys.
+	require.Equal(t, 0, d.Count("stale"))
+	require.Equal(t, 1, d.Len(), "Count must leave the idle entry in the map")
+
+	// Touching a fresh key adds it; evictIdleLocked prunes the idle "stale"
+	// entry too, but the assertion below holds regardless.
+	d.Touch("live")
+	require.Equal(t, 1, d.Len(), "idle stale key must be gone after fresh touch")
+
+	// Re-establish an idle-in-map entry and drive Top's own delete branch.
+	clk.t = clk.t.Add(2 * time.Second)
+	require.Equal(t, 0, d.Count("live")) // trims live to empty, leaves entry
+	require.Equal(t, 1, d.Len())
+
+	top := d.Top()
+	require.Empty(t, top, "Top must exclude the idle entry and report nothing")
+	require.Equal(t, 0, d.Len(), "Top must delete the idle entry it encountered")
+}
+
+// TestEvictIdleLockedVictimEmptyGuard documents the defensive victim==""
+// guard in evictIdleLocked (hotkey.go:180-182). The eviction loop only runs
+// while d.maxKeys > 0 && len(d.keys) > d.maxKeys, so the map is non-empty. The
+// inner range loop unconditionally sets victim to the first key it sees
+// (minCount starts at -1, so the first key always wins). Therefore victim==""
+// is unreachable unless len(d.keys)==0, which the loop guard forbids. The
+// branch is pure defensive code and cannot be driven by any external input;
+// this test pins the reasoning rather than the line.
+func TestEvictIdleLockedVictimEmptyGuard(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(9000, 0)}
+	// maxKeys=1 with two in-window keys forces the eviction loop's inner body
+	// to run and pick a non-empty victim; the empty-victim guard is never hit.
+	d := New(time.Hour, 5, WithMaxKeys(1), WithClock(clk.now))
+	d.Touch("a")
+	clk.t = clk.t.Add(time.Second)
+	d.Touch("b") // over cap of 1 -> evict "a"
+	require.Equal(t, 1, d.Len())
+	top := d.Top()
+	require.Len(t, top, 1)
+	require.Equal(t, "b", top[0].Key, "b has more recent hits, a is the victim")
+}
+
 func TestConcurrency(t *testing.T) {
 	d := New(time.Second, 5)
 	var wg sync.WaitGroup
