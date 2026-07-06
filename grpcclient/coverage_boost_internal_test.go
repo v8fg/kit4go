@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -239,5 +240,66 @@ func TestRetryableFalseCoversLoopExit(t *testing.T) {
 	}
 	if !o.retryable(codes.Unavailable) {
 		t.Fatal("retryable(Unavailable) = false, want true")
+	}
+}
+
+// TestUnaryInterceptorNegativeRetryMaxFallback covers the defensive `return err`
+// at the end of UnaryClientInterceptor's retry loop (interceptors.go line 105).
+//
+// Why it is cold under the public API: NewMiddleware runs ClientOptions through
+// withDefaults, which clamps RetryMax<=0 to the default (2). With RetryMax>=0
+// the `for attempt := 0; attempt <= m.opts.RetryMax` body always runs at least
+// once (attempt 0) and every iteration returns at one of the four exit points
+// (success / ctx-err / non-retryable / attempts-exhausted). The post-loop
+// `return err` can therefore only fire when RetryMax<0, i.e. a caller bypassed
+// NewMiddleware and hand-built a Middleware with a negative RetryMax.
+//
+// Behaviour on that misconfigured path: the loop's `var err error` is never
+// assigned (the body never runs), so line 105 returns the zero value — nil.
+// The outer accounting block then sees a nil err and tallies the call as a
+// success. This is a known quirk of the defensive guard (a negative RetryMax
+// silently reads as success), which is why withDefaults clamps RetryMax before
+// the public API ever sees it; the branch exists solely so the compiler keeps
+// `err` in scope at the function tail rather than erroring on an unused
+// variable / falling through. We exercise it here to pin the behaviour and
+// keep the line covered against future refactors. No production code is
+// changed.
+func TestUnaryInterceptorNegativeRetryMaxFallback(t *testing.T) {
+	calls := 0
+	invoker := func(
+		ctx context.Context, method string, req, reply any, cc *grpc.ClientConn,
+		opts ...grpc.CallOption,
+	) error {
+		calls++
+		return status.Error(codes.Unavailable, "injected")
+	}
+
+	// Hand-built Middleware bypasses withDefaults so RetryMax stays negative.
+	// The retry loop's condition `attempt <= -1` is false from the start, so the
+	// body never runs and control reaches the post-loop `return err`, which
+	// surfaces the zero-value (nil) err.
+	mw := &Middleware{
+		opts:    ClientOptions{RetryMax: -1, RetryCodes: []codes.Code{codes.Unavailable}},
+		metrics: &Client{opts: ClientOptions{RetryMax: -1, RetryCodes: []codes.Code{codes.Unavailable}}},
+	}
+
+	got := mw.UnaryClientInterceptor()(
+		context.Background(), "/echo.Echo/Echo", nil, nil, nil, invoker,
+	)
+	if got != nil {
+		t.Fatalf("surfaced err = %v, want nil (post-loop return of the unassigned err)", got)
+	}
+	if calls != 0 {
+		t.Fatalf("invoker calls = %d, want 0 (loop body never ran under RetryMax<0)", calls)
+	}
+	// total is bumped at the top of the interceptor. Because the defensive
+	// return surfaces a nil err, the outer block tallies the call as success and
+	// fires the "success" event. Retried stays 0 (the loop never ran). This pins
+	// the exact — and admittedly surprising — accounting of the defensive path,
+	// which is precisely why withDefaults forbids a negative RetryMax at the
+	// public API.
+	m := mw.Metrics()
+	if m.Total != 1 || m.Success != 1 || m.Failed != 0 || m.Retried != 0 {
+		t.Fatalf("metrics = %+v, want total=1 success=1 failed=0 retried=0", m)
 	}
 }

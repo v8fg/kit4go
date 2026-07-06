@@ -29,6 +29,13 @@ type mockKafkaProducer struct {
 	// across the whole batch. Default 0 (no impact on other tests). Used to show
 	// that BatchMode wins when the producer call is the bottleneck.
 	callDelay time.Duration
+	// sendErr, when non-nil, makes Send return this error synchronously (the
+	// record is NOT appended). Exercises the writer's client-side error paths
+	// (sendOne err branch, drainSpillToProducer no-op).
+	sendErr error
+	// sendBatchErr, when non-nil, makes SendBatch return this error
+	// synchronously. Exercises the batch flush error/drop branches.
+	sendBatchErr error
 }
 
 func newMockKafkaProducer() *mockKafkaProducer { return &mockKafkaProducer{} }
@@ -36,6 +43,12 @@ func newMockKafkaProducer() *mockKafkaProducer { return &mockKafkaProducer{} }
 func (m *mockKafkaProducer) Send(_ context.Context, msg kafka.Message) error {
 	if m.callDelay > 0 {
 		time.Sleep(m.callDelay) // per-call cost (once per Send)
+	}
+	if m.sendErr != nil {
+		m.mu.Lock()
+		m.sendCalls++
+		m.mu.Unlock()
+		return m.sendErr
 	}
 	m.mu.Lock()
 	m.sent = append(m.sent, msg)
@@ -77,6 +90,12 @@ func (m *mockKafkaProducer) Backend() string                         { return "m
 func (m *mockKafkaProducer) SendBatch(_ context.Context, msgs []kafka.Message) error {
 	if m.callDelay > 0 {
 		time.Sleep(m.callDelay) // per-call cost ONCE (amortized across the batch)
+	}
+	if m.sendBatchErr != nil {
+		m.mu.Lock()
+		m.sendBatchCalls++
+		m.mu.Unlock()
+		return m.sendBatchErr
 	}
 	m.mu.Lock()
 	m.sent = append(m.sent, msgs...)

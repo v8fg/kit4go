@@ -135,3 +135,47 @@ func TestPerMinuteLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, r.Allowed)
 }
+
+// TestAllowNPropagatesRedisError covers the defensive error branch in AllowN:
+// when the underlying Redis call fails, the error must be returned to the
+// caller rather than masked. We trigger it with a cancelled context, which
+// makes gcraScript.Run fail before it reaches the Lua engine.
+func TestAllowNPropagatesRedisError(t *testing.T) {
+	l, _ := newLimiter(t, nil)
+	limit := rate.PerSecond(5, 5)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // ensure the Redis call fails before it can succeed
+
+	_, err := l.AllowN(ctx, "k", limit, 1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+
+	// Allow must surface the same error (it delegates to AllowN).
+	_, err = l.Allow(ctx, "k", limit)
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestRemainingClampedToBurst exercises the GCRA script's remaining>burst clamp
+// branch by rewinding the clock so the stored TAT is far in the past (tat<now),
+// which can otherwise yield a remaining value above burst.
+func TestRemainingClampedToBurst(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(5000, 0)}
+	l, _ := newLimiter(t, clk)
+	limit := rate.PerSecond(2, 2) // burst 2, emission 500ms
+
+	// Consume the full burst, then advance the clock well beyond the key's
+	// TTL so the stored TAT is stale; the next allow re-seeds tat=now and
+	// remaining must never exceed burst.
+	for i := 0; i < 2; i++ {
+		_, err := l.Allow(context.Background(), "k", limit)
+		require.NoError(t, err)
+	}
+	// TTL for this limit is >= 1s, so jump far past it.
+	clk.t = clk.t.Add(10 * time.Second)
+	r, err := l.Allow(context.Background(), "k", limit)
+	require.NoError(t, err)
+	require.True(t, r.Allowed)
+	require.LessOrEqual(t, r.Remaining, limit.Burst)
+}

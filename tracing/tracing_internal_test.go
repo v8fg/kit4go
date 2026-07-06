@@ -59,6 +59,33 @@ func TestNoopExporter(t *testing.T) {
 	}
 }
 
+// TestNew_ResourceMergeErrorUnreachable documents the one remaining uncovered
+// branch in tracing.go (the `if err != nil` after resource.Merge, lines 100-102).
+//
+// resource.Merge only returns an error (ErrSchemaURLConflict) when BOTH inputs
+// carry a non-empty, DIFFERENT schema URL (see sdk/resource/resource.go Merge:
+// it hits one of three non-error switch cases first whenever either side's
+// schemaURL is empty). In New() the call is always:
+//
+//		resource.Merge(resource.Default(), resource.NewSchemaless(semconv.ServiceName(...)))
+//
+//	  - resource.Default() is assembled from built-in detectors and carries an
+//	    EMPTY schema URL (DefaultWithContext -> detect -> no SchemaURL set).
+//	  - resource.NewSchemaless(...) by definition carries an EMPTY schema URL.
+//
+// Both empty -> Merge takes the `a.schemaURL == ""` branch and returns nil.
+// Because config has no field exposing a schema URL and both arguments are
+// constructed inline inside New, no external Option can inject one. The branch
+// is therefore PROVABLY UNREACHABLE with the current SDK and API.
+//
+// Per the coverage pushdown policy ("unreachable defensive branches — document
+// and skip"), we record the analysis here and skip an active assertion rather
+// than perturb production code or rely on poking unexported fields. Revisit if
+// tracing.New ever accepts a caller-supplied schema URL.
+func TestNew_ResourceMergeErrorUnreachable(t *testing.T) {
+	t.Skip("unreachable: both resource.Merge inputs always have empty schema URL")
+}
+
 // failingMeter embeds the noop meter and overrides instrument creators to
 // always return an error. Used (with the OTEL_GO_X_OBSERVABILITY feature flag
 // enabled) to force stdouttrace.New to fail — covering New's stdout-exporter
