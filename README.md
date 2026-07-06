@@ -117,7 +117,7 @@ graph TB
 | **Clients** | [httpclient](httpclient) · [tcpclient](tcpclient) · [udpclient](udpclient) |
 | **Servers** | [httpserver](httpserver) · [grpcserver](grpcserver) · [middleware](middleware) (request-id/ratelimit/CORS) |
 | **Observability** | [latency](latency) (sharded tail-latency histogram) |
-| **Utilities** | [bit](bit) · [datetime](datetime) · [file](file) · [ip](ip) · [json](json) · [number](number) · [str](str) · [uuid](uuid) · [xlo](xlo) · [random](random) · [otp](otp) · [base62](base62) · [hash](hash) · [config](config) · [maxprocs](maxprocs) · [backoff](backoff) · [health](health) · [stress](stress) · [featureflag](featureflag) · [errcode](errcode) |
+| **Utilities** | [bit](bit) · [datetime](datetime) · [file](file) · [ip](ip) · [json](json) · [number](number) · [str](str) · [uuid](uuid) · [xlo](xlo) · [random](random) · [otp](otp) · [base62](base62) · [hash](hash) · [config](config) · [maxprocs](maxprocs) · [backoff](backoff) · [health](health) · [stress](stress) · [featureflag](featureflag) · [errcode](errcode) · [hotreload](hotreload) · [signing](signing) |
 
 ### Sub-modules (own go.mod — heavy deps isolated)
 
@@ -135,6 +135,7 @@ graph TB
 | [email](email) | SMTP via go-mail (TLS Mandatory by default) | wneessen/go-mail |
 | [metrics](metrics) | Prometheus wrapper | prometheus/client_golang |
 | [tracing](tracing) | OpenTelemetry wrapper | go.opentelemetry.io/otel |
+| [adaptive](adaptive) | CPU-aware worker-pool (scales to keep CPU under a target, leaves headroom for latency-critical paths) | shirou/gopsutil |
 
 Importing `github.com/v8fg/kit4go/log4go` does **not** pull pgx or grpc into your
 module graph — each sub-module owns only its own dependencies. Local development
@@ -155,7 +156,7 @@ go get github.com/v8fg/kit4go/redislock           # distributed lock (standalone
 - **Deep concurrency audit**: 6 rounds, ~23 real bugs fixed (deadlocks, races, leaks, panics). See [QUALITY_RULES.md](QUALITY_RULES.md) for the framework.
 - **log4go resilience**: circuit breaker + spill failover, observable degradation, bounded shutdown. See [log4go/RESILIENCE.md](log4go/RESILIENCE.md).
 - **Callback-recover policy**: library-owned workers recover panics (`Recovered()` + `SetOnPanic`).
-- **CI**: all 12 sub-modules, ubuntu + macOS, `-race`, `-short`.
+- **CI**: all 13 sub-modules, ubuntu + macOS, `-race`, `-short`.
 - **Lint**: golangci-lint v2 with 11 high-signal linters.
 - **Coverage**: 90%+ across root-module packages.
 
