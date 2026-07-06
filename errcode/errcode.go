@@ -119,6 +119,9 @@ func (e *Error) Is(target error) bool {
 	}
 	var t *Error
 	if errors.As(target, &t) {
+		if t == nil { // typed-nil *Error target: errors.Is(err, (*Error)(nil))
+			return false
+		}
 		return e.Code == t.Code
 	}
 	return false

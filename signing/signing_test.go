@@ -262,3 +262,12 @@ func TestConstantTimeCompare_Internal(t *testing.T) {
 	// Truncated signature (different length) must not match and must not panic.
 	require.False(t, Verify(recv, testSecret, sig[:10], WithNow(fixedNow)))
 }
+
+// TestSign_NoParameterInjection is the P1 regression: after QueryEscape, a
+// single key whose value embeds the separators must NOT collide with two
+// distinct keys (parameter-injection resistance).
+func TestSign_NoParameterInjection(t *testing.T) {
+	one, _ := Sign(map[string]string{"a": "1&b=2"}, testSecret, WithTimestamp(fixedNow()))
+	two, _ := Sign(map[string]string{"a": "1", "b": "2"}, testSecret, WithTimestamp(fixedNow()))
+	require.NotEqual(t, one, two, "parameter-injection collision: {a:1&b=2} vs {a:1,b:2}")
+}

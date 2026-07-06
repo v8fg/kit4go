@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -134,9 +135,10 @@ func Verify(params map[string]string, secret, signature string, opts ...Option) 
 
 // canonical builds the deterministic signing string: params sorted by key
 // (excluding SignatureKey and TimestampKey) as k=v pairs joined by '&', then a
-// trailing &_ts=<unixSeconds>. The timestamp is always appended last so the
-// sorted params portion is unaffected by its presence, and Sign and Verify
-// produce the same string for the same inputs.
+// trailing &_ts=<unixSeconds>. Keys and values are url.QueryEscape'd so the
+// separators '&' and '=' are NOT ambiguous — a value containing "&b=2" cannot
+// masquerade as a second parameter (parameter-injection resistance). The
+// timestamp is appended last so the sorted params portion is unaffected by it.
 func canonical(params map[string]string, ts int64) string {
 	keys := make([]string, 0, len(params))
 	for k := range params {
@@ -153,9 +155,9 @@ func canonical(params map[string]string, ts int64) string {
 		if i > 0 {
 			b.WriteByte('&')
 		}
-		b.WriteString(k)
+		b.WriteString(url.QueryEscape(k))
 		b.WriteByte('=')
-		b.WriteString(params[k])
+		b.WriteString(url.QueryEscape(params[k]))
 	}
 	// Append the bound timestamp. Use a leading '&' only when there were other
 	// params, so an empty param set still has a well-formed canonical string.

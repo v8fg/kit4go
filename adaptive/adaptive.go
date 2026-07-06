@@ -384,6 +384,11 @@ func (p *Pool[Job]) Workers() int { return int(p.workers.Load()) }
 // queued jobs with the surviving workers, then waits for them to exit. Bounded:
 // drains only jobs already queued at close time (Submit after Close is
 // rejected). Idempotent and safe to call concurrently.
+//
+// Close waits for in-flight jobs to finish, so a Work func that blocks
+// indefinitely (stuck network call, held lock, infinite loop) will hang Close.
+// Work MUST be non-blocking or honor a context/deadline internally — Go cannot
+// preempt it. Close's wait bound is: (in-flight jobs) x max(Work duration).
 func (p *Pool[Job]) Close() error {
 	p.closeOnce.Do(func() {
 		p.closed.Store(true)

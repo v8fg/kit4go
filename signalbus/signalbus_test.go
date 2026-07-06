@@ -450,3 +450,36 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// TestSetPanicHook_NoRaceWithPanickingHandler is the P0 regression: a
+// concurrent SetPanicHook while a panicking handler is recovered must not race
+// on the hook field (the hook is now snapshotted under the lock in Send).
+func TestSetPanicHook_NoRaceWithPanickingHandler(t *testing.T) {
+	b := New()
+	b.Connect("boom", func(...any) { panic("nope") })
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+				if i%2 == 0 {
+					b.SetPanicHook(func(string, uint64, any) {})
+				} else {
+					b.SetPanicHook(nil)
+				}
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		b.Send("boom")
+	}
+	close(stop)
+	<-done
+	if b.Recovered() == 0 {
+		t.Fatal("expected panics recovered")
+	}
+}

@@ -198,3 +198,21 @@ func TestNilErrorMethodReceivers(t *testing.T) {
 		t.Fatal("nil.Is(nonNil) = true, want false")
 	}
 }
+
+// TestIs_TypedNilTarget is the P0 regression: errors.Is against a typed-nil
+// *Error target must not panic (it used to nil-deref t.Code) — it returns false.
+func TestIs_TypedNilTarget(t *testing.T) {
+	err := New(NotFound, "x")
+	var nilTarget *Error
+	var got any
+	func() {
+		defer func() { got = recover() }()
+		_ = err.Is(nilTarget)
+	}()
+	if got != nil {
+		t.Fatalf("Is(typed-nil *Error) panicked: %v", got)
+	}
+	if err.Is(nilTarget) {
+		t.Fatal("Is(typed-nil *Error) = true, want false")
+	}
+}

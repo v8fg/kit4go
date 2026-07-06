@@ -109,29 +109,31 @@ func (b *Bus) remove(name string, id uint64) {
 // deadlocking. Handlers added or removed during the dispatch are not visible to
 // the in-flight Send.
 func (b *Bus) Send(name string, args ...any) {
-	// Snapshot the handlers under the lock, dispatch outside it. This keeps the
-	// critical section tiny and lets handlers re-enter the Bus (a handler that
-	// Connects, Disconnects, or Sends will not self-deadlock).
+	// Snapshot the handlers AND the panic hook under the lock, dispatch outside
+	// it. The hook is read in the recover path (invoke); snapshotting it here
+	// avoids a data race with concurrent SetPanicHook. The critical section
+	// stays tiny and handlers can still re-enter the Bus without self-deadlock.
 	b.mu.Lock()
 	subs := b.subs[name]
 	snapshot := make([]entry, len(subs))
 	copy(snapshot, subs)
+	hook := b.hook
 	b.mu.Unlock()
 
 	for _, e := range snapshot {
-		b.invoke(name, e, args)
+		b.invoke(name, e, hook, args)
 	}
 }
 
 // invoke calls one handler with panic recovery. A panic is counted and surfaced
 // via the hook (if set) but never re-panicked, so one buggy handler cannot abort
 // the dispatch or crash the process.
-func (b *Bus) invoke(name string, e entry, args []any) {
+func (b *Bus) invoke(name string, e entry, hook func(string, uint64, any), args []any) {
 	defer func() {
 		if r := recover(); r != nil {
 			b.recovered.Add(1)
-			if b.hook != nil {
-				b.hook(name, e.id, r)
+			if hook != nil {
+				hook(name, e.id, r)
 			}
 		}
 	}()
