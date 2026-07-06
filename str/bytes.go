@@ -1,31 +1,17 @@
 package str
 
-import (
-	"reflect"
-	"unsafe"
-)
+import "unsafe"
 
-// StringToBytes converts a string to a byte slice.
+// StringToBytes converts a string to a byte slice without copying. The result
+// aliases the string's immutable backing array — DO NOT mutate the returned
+// slice; doing so is undefined behavior.
 func StringToBytes(s string) []byte {
-	// fixed:  govet  unsafeptr: possible misuse of reflect.SliceHeader
-	// sh := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	// return *(*[]byte)(unsafe.Pointer(&reflect.SliceHeader{
-	// 	Data: sh.Data,
-	// 	Len:  sh.Len,
-	// 	Cap:  sh.Len,
-	// }))
-
-	p := unsafe.Pointer((*reflect.StringHeader)(unsafe.Pointer(&s)).Data)
-
-	var b []byte
-	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	hdr.Data = uintptr(p)
-	hdr.Cap = len(s)
-	hdr.Len = len(s)
-	return b
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-// BytesToString converts a byte slice to a string.
+// BytesToString converts a byte slice to a string without copying. The input
+// slice must not be mutated after this call (the string shares its backing
+// array).
 func BytesToString(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }

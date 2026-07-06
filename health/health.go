@@ -82,7 +82,7 @@ func WithCacheTTL(d time.Duration) Option {
 }
 
 // New builds a Health instance. Liveness starts healthy; readiness starts
-// unhealthy until SetReady(true) or all checks pass.
+// unhealthy until all configured checks pass (poll via IsReady).
 func New(opts ...Option) *Health {
 	h := &Health{startTime: time.Now()}
 	h.live.Store(true)

@@ -47,14 +47,14 @@ It enables you to easily add TOTPs to your own application, increasing your user
   - `GenerateURLHOTP(opts KeyOpts) (string, error)` generates the hotp url; returns a non-nil error (incl. `ErrSecretReadFailed`) if the random source fails to fill the secret
   - `GenerateURLTOTP(opts KeyOpts) (string, error)` generates the totp url; returns a non-nil error (incl. `ErrSecretReadFailed`) if the random source fails to fill the secret
 - **code totp** _most commonly used_
-  - `Code(secret string) string` generates the totp code
-  - `CodeCustom(secret string, t time.Time) string` generates the totp code with time
-  - `TOTPCode(secret string) (code string)` generates the totp code
-  - `TOTPCodeCustom(secret string, t time.Time, opts *Opts) string` generates the totp code with time and opts
+  - `Code(secret string) (string, error)` generates the totp code; returns a non-nil error (incl. `otp.ErrValidateSecretInvalidBase32`) if the secret is not valid base32, empty code otherwise MUST NOT be used
+  - `CodeCustom(secret string, t time.Time) (string, error)` generates the totp code with time; returns a non-nil error (incl. `otp.ErrValidateSecretInvalidBase32`) if the secret is not valid base32, empty code otherwise MUST NOT be used
+  - `TOTPCode(secret string) (string, error)` generates the totp code; returns a non-nil error (incl. `otp.ErrValidateSecretInvalidBase32`) if the secret is not valid base32, empty code otherwise MUST NOT be used
+  - `TOTPCodeCustom(secret string, t time.Time, opts *Opts) (string, error)` generates the totp code with time and opts; returns a non-nil error (incl. `otp.ErrValidateSecretInvalidBase32`) if the secret is not valid base32, empty code otherwise MUST NOT be used
   - `VerifyTOTP(passcode string, secret string) bool` verifies the code of totp
   - `VerifyTOTPCustom(passcode string, secret string, t time.Time, opts *Opts) bool` verifies the code of totp with opts
 - code hotp
-  - `HOTPCode(secret string, counter uint64) string` generates the hotp code
-  - `HOTPCodeCustom(secret string, counter uint64, opts *Opts) string` generates the hotp code with the opts
+  - `HOTPCode(secret string, counter uint64) (string, error)` generates the hotp code; returns a non-nil error (incl. `otp.ErrValidateSecretInvalidBase32`) if the secret is not valid base32, empty code otherwise MUST NOT be used
+  - `HOTPCodeCustom(secret string, counter uint64, opts *Opts) (string, error)` generates the hotp code with the opts; returns a non-nil error (incl. `otp.ErrValidateSecretInvalidBase32`) if the secret is not valid base32, empty code otherwise MUST NOT be used
   - `VerifyHOTP(passcode string, counter uint64, secret string) bool` verifies the code of hotp
   - `VerifyHOTPCustom(passcode string, counter uint64, secret string, opts *Opts) bool` verifies the code of hotp with opts
