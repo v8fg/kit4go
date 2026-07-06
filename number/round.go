@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // Int marks the integer type or underlying integer type.
@@ -24,25 +25,30 @@ type Float interface {
 	~float32 | ~float64
 }
 
-var regForNumber *regexp.Regexp
+// regForNumber holds the active regex used to parse string numbers. It is accessed
+// concurrently (RestoreToRealNumberStr / regSplitNormalNumber read it while
+// SetRegForNumber may swap it), so it is stored in an atomic pointer to keep all
+// reads and writes race-free.
+var regForNumber atomic.Pointer[regexp.Regexp]
 var regForNumber6 = regexp.MustCompile(`([+\-])?(?:(0|[1-9]\d*)?(?:\.?)(\d*)?|\.\d+)(?:[eE]([+\-])?(\d+))?`)
 var regForNumber7 = regexp.MustCompile(`([+\-])?(?:(0|[1-9]\d*)?(\.?)(\d*)?|\.\d+)(?:[eE]([+\-])?(\d+))?`)
 
 func init() {
 	// subMatch size shall 6
-	regForNumber = regForNumber6
+	regForNumber.Store(regForNumber6)
 }
 
 // SetRegForNumber sets which the regex string will use for parse the string number.
+// The swap is atomic and safe to call concurrently with readers.
 //
 //	true: regForNumber7
 //	false: regForNumber6
 func SetRegForNumber(useRegForNumber7 bool) {
 	if useRegForNumber7 {
 		// subMatch size shall 7
-		regForNumber = regForNumber7
+		regForNumber.Store(regForNumber7)
 	} else {
-		regForNumber = regForNumber6
+		regForNumber.Store(regForNumber6)
 	}
 }
 
@@ -163,7 +169,8 @@ func RoundTruncStr[T Int | Uint | Float](f T, precision int) string {
 
 // regSplitNormalNumber input shall only contain: sig, integer and fractional parts
 func regSplitNormalNumber(s string) (sig, integer, fractional string) {
-	matches := regForNumber.FindStringSubmatch(s)
+	re := regForNumber.Load()
+	matches := re.FindStringSubmatch(s)
 
 	if len(matches) == 6 {
 		sig = matches[1]
@@ -203,7 +210,8 @@ func RestoreToRealNumberStr[T Int | Uint | Float](f T) string {
 		return "0"
 	}
 
-	matches := regForNumber.FindStringSubmatch(s)
+	re := regForNumber.Load()
+	matches := re.FindStringSubmatch(s)
 
 	var sig string
 	var integer string

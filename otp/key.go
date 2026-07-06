@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"strconv"
@@ -25,6 +26,15 @@ const (
 )
 
 var b32NoPadding = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+// ErrSecretReadFailed is returned when the random source underlying opts.Rand
+// fails to fill the secret (CSPRNG failure / entropy exhaustion / short read).
+// In that case the secret MUST NOT be used: an all-zero or partial secret
+// would be publicly visible in the otpauth URL and let an attacker bypass 2FA.
+//
+// Use io.ReadFull semantics: any error (including io.EOF before n bytes were
+// read) is propagated rather than swallowed.
+var ErrSecretReadFailed = errors.New("otp: failed to read random secret from Rand")
 
 // KeyOpts provides options for Generate().  The default values
 // are compatible with Google-Authenticator.
@@ -74,20 +84,31 @@ func VerifySecret(secret string) bool {
 }
 
 // GenerateURLHOTP returns the HOTP URL as a string.
-func GenerateURLHOTP(opts KeyOpts) (url string) {
-	if key, err := simpleURL(opts, "hotp"); err == nil {
-		key.Type()
-		url = key.URL()
+//
+// It returns a non-nil error if opts is invalid or if the random source
+// (opts.Rand, defaulting to crypto/rand.Reader) fails to fill the secret.
+// On error the returned string is empty; callers MUST NOT use a partial or
+// empty secret to provision 2FA.
+func GenerateURLHOTP(opts KeyOpts) (string, error) {
+	key, err := simpleURL(opts, "hotp")
+	if err != nil {
+		return "", err
 	}
-	return
+	return key.URL(), nil
 }
 
 // GenerateURLTOTP returns the TOTP URL as a string.
-func GenerateURLTOTP(opts KeyOpts) (url string) {
-	if key, err := simpleURL(opts, "totp"); err == nil {
-		url = key.URL()
+//
+// It returns a non-nil error if opts is invalid or if the random source
+// (opts.Rand, defaulting to crypto/rand.Reader) fails to fill the secret.
+// On error the returned string is empty; callers MUST NOT use a partial or
+// empty secret to provision 2FA.
+func GenerateURLTOTP(opts KeyOpts) (string, error) {
+	key, err := simpleURL(opts, "totp")
+	if err != nil {
+		return "", err
 	}
-	return
+	return key.URL(), nil
 }
 
 // KeyFromTOTPOpts creates a new TOTP Key.
@@ -154,7 +175,14 @@ func simpleURL(opts KeyOpts, otpType string) (*xtp.Key, error) {
 		v.Set("secret", b32NoPadding.EncodeToString(opts.Secret))
 	} else {
 		secret := make([]byte, opts.SecretSize)
-		_, _ = opts.Rand.Read(secret)
+		// io.ReadFull returns an error if fewer than len(secret) bytes were
+		// read (including io.EOF when nothing was read). The previous code
+		// discarded both the error and the short count, so a CSPRNG failure
+		// silently produced an all-zero secret that was then embedded —
+		// visibly — in the otpauth URL, making 2FA trivially bypassable.
+		if _, err := io.ReadFull(opts.Rand, secret); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrSecretReadFailed, err)
+		}
 		v.Set("secret", b32NoPadding.EncodeToString(secret))
 	}
 

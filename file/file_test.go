@@ -231,6 +231,19 @@ func TestCopyDir(t *testing.T) {
 		convey.So(file.IsFile(filepath.Join(td, "dir2", "foo3")), convey.ShouldBeFalse)
 	})
 
+	// regression: a non-existent src dir must surface ListFiles' error.
+	// Previously CopyDir declared a fresh err scoped to an if-init block; when
+	// ListFiles failed the block was skipped and the outer named-return err
+	// (still nil) was returned, so CopyDir silently reported success.
+	convey.Convey("TestCopyDir_NonexistentSrcReturnsError", t, func() {
+		src := filepath.Join(td, "does_not_exist")
+		dst := filepath.Join(td, "dir_dst_nonexistent")
+		err := file.CopyDir(src, dst)
+		convey.So(err, convey.ShouldBeError)
+		convey.So(errors.Is(err, fs.ErrNotExist), convey.ShouldBeTrue)
+		convey.So(file.IsExist(dst), convey.ShouldBeFalse)
+	})
+
 	// error-path: CopyFile (invoked per walked file) fails and propagates.
 	// We walk a real source dir but inject a Copy failure via the mock FS so
 	// the inner CopyFile returns an error, exercising CopyDir's error branch.

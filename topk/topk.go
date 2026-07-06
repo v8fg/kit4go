@@ -79,39 +79,50 @@ func (t *Tracker) Touch(key string) {
 }
 
 // TouchN increments the count for key by n and updates the top-K set.
+//
+// To keep memory bounded at O(K), only keys currently in the top-K set are
+// retained in the count map. A key that has never entered the set, or that has
+// been evicted, is not tracked — its accumulated count is discarded and Count()
+// reports 0 for it. This trades exact per-key counts for non-top-K keys (which
+// a leaderboard cannot surface anyway) for a hard O(K) memory bound.
 func (t *Tracker) TouchN(key string, n int64) {
 	if n <= 0 {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.counts[key] += n
 
-	// Check if key is already in the heap.
-	found := false
+	// Key already in the top-K set: bump its count and re-sift the heap.
 	for _, it := range *t.minHeap {
 		if it.key == key {
+			t.counts[key] += n
 			it.count = t.counts[key]
 			heap.Fix(t.minHeap, it.index)
-			found = true
-			break
+			return
 		}
 	}
-	if found {
+
+	// Key not in the set. Compute the count it would have if admitted, counting
+	// only what we still track (0 once a key has been evicted).
+	newCount := t.counts[key] + n
+
+	if t.minHeap.Len() < t.k {
+		// Room available: admit the key unconditionally.
+		t.counts[key] = newCount
+		heap.Push(t.minHeap, &item{key: key, count: newCount})
 		return
 	}
 
-	// Key not in heap. Add if there's room, or replace the min if we exceed k.
-	if t.minHeap.Len() < t.k {
-		heap.Push(t.minHeap, &item{key: key, count: t.counts[key]})
-	} else {
-		// Replace the min element if this key's count exceeds it.
-		minItem := (*t.minHeap)[0]
-		if t.counts[key] > minItem.count {
-			heap.Pop(t.minHeap)
-			heap.Push(t.minHeap, &item{key: key, count: t.counts[key]})
-		}
+	// Set is full: admit only if this key beats the current minimum.
+	minItem := (*t.minHeap)[0]
+	if newCount > minItem.count {
+		heap.Pop(t.minHeap)
+		// Drop the evicted key's count so counts stays bounded at ~K.
+		delete(t.counts, minItem.key)
+		t.counts[key] = newCount
+		heap.Push(t.minHeap, &item{key: key, count: newCount})
 	}
+	// else: key not competitive — do not store it, keeping counts bounded.
 }
 
 // Top returns the current top-K items sorted by count descending.
@@ -131,7 +142,9 @@ func (t *Tracker) Top() []Entry {
 	return entries
 }
 
-// Count returns the current count for key (0 if unseen).
+// Count returns the current count for key, or 0 if the key is unseen or has
+// fallen out of the top-K set (evicted keys are no longer tracked, so their
+// count is reported as 0 once they leave the leaderboard).
 func (t *Tracker) Count(key string) int64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()

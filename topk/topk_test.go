@@ -1,6 +1,7 @@
 package topk
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -132,4 +133,58 @@ func TestConcurrency(t *testing.T) {
 		}
 		return keys
 	}(), "shared")
+}
+
+// TestCountsMapBounded is a regression test for an unbounded-growth bug where
+// Tracker.counts kept an entry for every distinct key ever seen, even after the
+// key was evicted from the size-K minHeap. On a high-cardinality stream (auction
+// IDs, user IDs) this leaked O(distinct keys) memory despite the package's
+// O(K) claim. Counts must now stay bounded at ~K regardless of stream cardinality.
+func TestCountsMapBounded(t *testing.T) {
+	const k = 10
+	const n = 10000
+	tr := New(k)
+	for i := 0; i < n; i++ {
+		tr.Touch(fmt.Sprintf("key-%d", i))
+	}
+
+	// Heap must hold exactly K items.
+	require.Equal(t, k, tr.Len())
+
+	// counts map must be bounded — at most K (in-heap) plus tiny slack. The old
+	// buggy code left len(counts) == 10000 here.
+	tr.mu.Lock()
+	countsLen := len(tr.counts)
+	tr.mu.Unlock()
+	require.LessOrEqual(t, countsLen, k, "counts map grew to %d, expected <= %d", countsLen, k)
+	require.Less(t, countsLen, n, "counts map should be bounded well below stream cardinality")
+
+	// Top() result is unaffected: still K entries. Keys that never entered the
+	// heap (the vast majority here) are not tracked and report Count 0.
+	top := tr.Top()
+	require.Len(t, top, k)
+	require.Equal(t, int64(0), tr.Count("key-9999"), "never-admitted key should not be tracked")
+}
+
+// TestEvictedKeyCountDropped targets the eviction branch directly: a key that
+// was admitted to the top-K set and later displaced must have its count entry
+// removed from the count map (the original P0 leak).
+func TestEvictedKeyCountDropped(t *testing.T) {
+	tr := New(2)
+	tr.TouchN("a", 5) // admitted
+	tr.TouchN("b", 3) // admitted; heap full {b=3, a=5}
+	require.Equal(t, int64(5), tr.Count("a"))
+
+	tr.TouchN("c", 10) // displaces "b" (min); evicted key must be dropped
+	top := tr.Top()
+	require.Len(t, top, 2)
+	require.Equal(t, "c", top[0].Key)
+
+	tr.mu.Lock()
+	_, aStillThere := tr.counts["a"]
+	_, bStillThere := tr.counts["b"]
+	tr.mu.Unlock()
+	require.True(t, aStillThere, "in-heap key a should still be tracked")
+	require.False(t, bStillThere, "evicted key b should be dropped from counts")
+	require.Equal(t, int64(0), tr.Count("b"), "evicted key should report count 0")
 }

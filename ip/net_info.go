@@ -8,10 +8,15 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
-var cacheLocalIP *localIP
+// cacheLocalIP holds the cached local IP snapshot. It is read and written
+// concurrently after the TTL expires, so it uses an atomic pointer
+// (copy-on-write): readers Load once and read the snapshot's fields without
+// any lock, and UpdateCacheLocalIP builds a fresh snapshot and Stores it.
+var cacheLocalIP atomic.Pointer[localIP]
 
 type localIP struct {
 	IP         net.IP
@@ -20,11 +25,11 @@ type localIP struct {
 }
 
 func init() {
-	cacheLocalIP = &localIP{
+	cacheLocalIP.Store(&localIP{
 		IP:         nil,
 		LatestTime: time.Now(),
 		TTL:        time.Minute,
-	}
+	})
 }
 
 // TypeFlag for ip type
@@ -63,24 +68,44 @@ var APIListForPublicIP = []string{
 	// "https://icanhazip.com", // maybe ipv6 formatted, ignore now
 }
 
-func (cacheLocalIP *localIP) LocalIP() (localIP string) {
-	if cacheLocalIP == nil || cacheLocalIP.IP == nil || time.Now().After(cacheLocalIP.LatestTime.Add(cacheLocalIP.TTL)) {
-		localIP = cacheLocalIP.UpdateCacheLocalIP()
-	}
-	if cacheLocalIP.IP != nil {
-		localIP = cacheLocalIP.IP.String()
-	}
-	return localIP
+// loadLocalIPSnapshot returns the current cached snapshot, or nil if it has
+// never been populated. The returned pointer is never mutated by other
+// goroutines (copy-on-write), so callers may read its fields freely.
+func loadLocalIPSnapshot() *localIP {
+	return cacheLocalIP.Load()
 }
 
-func (cacheLocalIP *localIP) UpdateCacheLocalIP() (localIP string) {
-	if ip := getLocalIPBytes(); ip != nil {
-		cacheLocalIP.IP = ip
-		cacheLocalIP.LatestTime = time.Now()
-		cacheLocalIP.TTL = time.Minute
-		localIP = ip.String()
+// localIPFromSnapshot resolves the cached local IPv4 from a single immutable
+// snapshot. If the snapshot is missing or stale (TTL expired) it triggers a
+// refresh via updateCacheLocalIP; on a successful refresh it re-reads the
+// freshly stored snapshot, otherwise it falls back to the prior snapshot.
+func localIPFromSnapshot(snapshot *localIP) string {
+	if snapshot == nil || snapshot.IP == nil || time.Now().After(snapshot.LatestTime.Add(snapshot.TTL)) {
+		if refreshed := updateCacheLocalIP(); refreshed != "" {
+			return refreshed
+		}
+		// Refresh produced nothing (e.g. no usable interface): fall back to
+		// whatever the snapshot already held, if any.
 	}
-	return localIP
+	if snapshot != nil && snapshot.IP != nil {
+		return snapshot.IP.String()
+	}
+	return ""
+}
+
+// updateCacheLocalIP recomputes the local IPv4 and publishes a fresh snapshot
+// via the atomic pointer (copy-on-write). It returns the resolved IPv4 string,
+// or "" if no usable interface address was found.
+func updateCacheLocalIP() string {
+	if ip := getLocalIPBytes(); ip != nil {
+		cacheLocalIP.Store(&localIP{
+			IP:         ip,
+			LatestTime: time.Now(),
+			TTL:        time.Minute,
+		})
+		return ip.String()
+	}
+	return ""
 }
 
 // GetIPAll returns all the local IP list with the given params.
@@ -153,7 +178,7 @@ func LocalIPRealTime() (ipv4 string) {
 
 // LocalIP returns the local ipv4 string with the local cache.
 func LocalIP() (ipv4 string) {
-	return cacheLocalIP.LocalIP()
+	return localIPFromSnapshot(loadLocalIPSnapshot())
 }
 
 // getLocalIPBytes returns the local ipv4 format net.IP

@@ -1,7 +1,8 @@
 # topk
 
 Maintains the top-K most frequent items in a stream using a min-heap of size K.
-O(log K) per touch, O(K) heap + O(N) count-map memory. Pure standard library.
+O(log K) per touch, O(K) memory (heap + count-map are both bounded at K; the
+count for an evicted key is dropped). Pure standard library.
 
 ## Why
 
@@ -30,7 +31,7 @@ top := tr.Top()  // []Entry{{Key:"ssp:appnexus", Count:8}, {Key:"ssp:rubicon", C
 | `New(k)` | Build (panics if k ≤ 0) |
 | `Touch(key)` / `TouchN(key, n)` | Increment + update top-K |
 | `Top() []Entry` | Sorted by count desc (Entry{Key, Count}) |
-| `Count(key) int64` | Exact count for a key |
+| `Count(key) int64` | Count for a key (0 if unseen or evicted from top-K) |
 | `Len()` / `K()` | Items in heap / configured K |
 | `Reset()` | Clear all |
 

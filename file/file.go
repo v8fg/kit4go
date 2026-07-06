@@ -80,13 +80,15 @@ func CopyFile(src string, dst string) (err error) {
 
 // CopyDir recursively copies all files from src to dst，attributes will be ignored.
 func CopyDir(src string, dst string) (err error) {
-	if list, err := ListFiles(src, TypeFile); err == nil {
-		for _, srcFile := range list {
-			stripSrcDir := strings.TrimPrefix(srcFile, src)
-			dstFile := filepath.Join(dst, stripSrcDir)
-			if err = CopyFile(srcFile, dstFile); err != nil {
-				return err
-			}
+	list, err := ListFiles(src, TypeFile)
+	if err != nil {
+		return err
+	}
+	for _, srcFile := range list {
+		stripSrcDir := strings.TrimPrefix(srcFile, src)
+		dstFile := filepath.Join(dst, stripSrcDir)
+		if err = CopyFile(srcFile, dstFile); err != nil {
+			return err
 		}
 	}
 	return err

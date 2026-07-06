@@ -3,6 +3,8 @@ package otp_test
 import (
 	"encoding/base32"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/smartystreets/goconvey/convey"
@@ -72,27 +74,145 @@ func TestVerifySecret(t *testing.T) {
 func TestGenerateURLHOTP(t *testing.T) {
 	convey.SetDefaultFailureMode(convey.FailureContinues)
 	convey.Convey("TestGenerateURLHOTP", t, func() {
-		convey.So(otp.GenerateURLHOTP(otp.KeyOpts{Issuer: ""}), convey.ShouldBeEmpty)
-		convey.So(otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88"}), convey.ShouldBeEmpty)
-		convey.So(otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com"}), convey.ShouldNotBeEmpty)
-		convey.So(otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Algorithm: otp.AlgorithmSHA512}), convey.ShouldNotBeEmpty)
-		convey.So(otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM")}), convey.ShouldNotBeEmpty)
-		convey.So(otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", SecretSize: uint(0)}), convey.ShouldNotBeEmpty)
-		convey.So(otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM"), Digits: 8}), convey.ShouldNotBeEmpty)
+		// invalid opts -> non-nil error, empty URL.
+		url, err := otp.GenerateURLHOTP(otp.KeyOpts{Issuer: ""})
+		convey.So(err, convey.ShouldBeError)
+		convey.So(url, convey.ShouldBeEmpty)
+
+		url, err = otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88"})
+		convey.So(err, convey.ShouldBeError)
+		convey.So(url, convey.ShouldBeEmpty)
+
+		// success paths -> non-empty URL, nil error.
+		url, err = otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com"})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+		convey.So(url, convey.ShouldStartWith, "otpauth://hotp/")
+
+		url, err = otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Algorithm: otp.AlgorithmSHA512})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+
+		url, err = otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM")})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+
+		url, err = otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", SecretSize: uint(0)})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+
+		url, err = otp.GenerateURLHOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM"), Digits: 8})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
 	})
 }
 
 func TestGenerateURLTOTP(t *testing.T) {
 	convey.SetDefaultFailureMode(convey.FailureContinues)
 	convey.Convey("TestGenerateURLTOTP", t, func() {
-		convey.So(otp.GenerateURLTOTP(otp.KeyOpts{Issuer: ""}), convey.ShouldBeEmpty)
-		convey.So(otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88"}), convey.ShouldBeEmpty)
-		convey.So(otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com"}), convey.ShouldNotBeEmpty)
-		convey.So(otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Algorithm: otp.AlgorithmSHA512}), convey.ShouldNotBeEmpty)
-		convey.So(otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM")}), convey.ShouldNotBeEmpty)
-		convey.So(otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", SecretSize: uint(0)}), convey.ShouldNotBeEmpty)
-		convey.So(otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM"), Digits: 8}), convey.ShouldNotBeEmpty)
+		// invalid opts -> non-nil error, empty URL.
+		url, err := otp.GenerateURLTOTP(otp.KeyOpts{Issuer: ""})
+		convey.So(err, convey.ShouldBeError)
+		convey.So(url, convey.ShouldBeEmpty)
+
+		url, err = otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88"})
+		convey.So(err, convey.ShouldBeError)
+		convey.So(url, convey.ShouldBeEmpty)
+
+		// success paths -> non-empty URL, nil error.
+		url, err = otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com"})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+		convey.So(url, convey.ShouldStartWith, "otpauth://totp/")
+
+		url, err = otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Algorithm: otp.AlgorithmSHA512})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+
+		url, err = otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM")})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+
+		url, err = otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", SecretSize: uint(0)})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+
+		url, err = otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM"), Digits: 8})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
 	})
+}
+
+// TestGenerateURLRandFailure is the regression test for the P0 CSPRNG-failure
+// bug: previously simpleURL did `_, _ = opts.Rand.Read(secret)`, discarding
+// both the error and the short-read count. On entropy exhaustion the secret
+// stayed all-zero and was embedded — visibly — in the returned otpauth URL,
+// silently breaking 2FA. The fix uses io.ReadFull and propagates the error.
+//
+// We exercise three failing-reader shapes through the opts.Rand seam:
+//   - read returns an error (e.g. CSPRNG failure);
+//   - read returns fewer than SecretSize bytes then io.EOF (entropy source
+//     exhausted early — io.ReadFull treats any short read ending in io.EOF
+//     before the buffer is full as io.ErrUnexpectedEOF);
+//   - read returns a partial buffer with io.EOF on the same call.
+//
+// All three must surface a non-nil error wrapping otp.ErrSecretReadFailed and
+// an empty URL. The pre-fix code returned a URL carrying an all-zero (or
+// partial) secret and no error.
+func TestGenerateURLRandFailure(t *testing.T) {
+	convey.SetDefaultFailureMode(convey.FailureContinues)
+
+	base := otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com"}
+
+	cases := []struct {
+		name string
+		rand io.Reader
+	}{
+		{name: "read-error", rand: errReader{}},
+		{name: "short-then-eof", rand: strings.NewReader("short")}, // 5 < 20 bytes -> EOF
+		{name: "partial-then-eof", rand: partialEOFReader{n: 4}},
+	}
+
+	for _, tc := range cases {
+		convey.Convey("HOTP/"+tc.name, t, func() {
+			opts := base
+			opts.Rand = tc.rand
+			url, err := otp.GenerateURLHOTP(opts)
+			convey.So(err, convey.ShouldBeError)
+			convey.So(errors.Is(err, otp.ErrSecretReadFailed), convey.ShouldBeTrue)
+			convey.So(url, convey.ShouldBeEmpty)
+		})
+		convey.Convey("TOTP/"+tc.name, t, func() {
+			opts := base
+			opts.Rand = tc.rand
+			url, err := otp.GenerateURLTOTP(opts)
+			convey.So(err, convey.ShouldBeError)
+			convey.So(errors.Is(err, otp.ErrSecretReadFailed), convey.ShouldBeTrue)
+			convey.So(url, convey.ShouldBeEmpty)
+		})
+	}
+}
+
+// errReader always fails to read.
+type errReader struct{}
+
+func (errReader) Read(p []byte) (int, error) { return 0, errors.New("entropy exhausted") }
+
+// partialEOFReader returns at most n bytes then io.EOF on the first call,
+// so the secret buffer is never filled and io.ReadFull returns an error.
+type partialEOFReader struct{ n int }
+
+func (r partialEOFReader) Read(p []byte) (int, error) {
+	if r.n < len(p) {
+		for i := 0; i < r.n && i < len(p); i++ {
+			p[i] = 0xAA
+		}
+		return r.n, io.EOF
+	}
+	for i := range p {
+		p[i] = 0xAA
+	}
+	return len(p), io.EOF
 }
 
 func TestKeyFromURL(t *testing.T) {

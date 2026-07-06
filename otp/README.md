@@ -44,8 +44,8 @@ It enables you to easily add TOTPs to your own application, increasing your user
   - `RandomSecret(length int) string`  generates a random secret, b32NoPadding.
   - `VerifySecret(secret string) bool` verifies the secret is base32.
 - otp url
-  - `GenerateURLHOTP(opts KeyOpts) string` generates the hotp url
-  - `GenerateURLTOTP(opts KeyOpts) string` generates the totp url
+  - `GenerateURLHOTP(opts KeyOpts) (string, error)` generates the hotp url; returns a non-nil error (incl. `ErrSecretReadFailed`) if the random source fails to fill the secret
+  - `GenerateURLTOTP(opts KeyOpts) (string, error)` generates the totp url; returns a non-nil error (incl. `ErrSecretReadFailed`) if the random source fails to fill the secret
 - **code totp** _most commonly used_
   - `Code(secret string) string` generates the totp code
   - `CodeCustom(secret string, t time.Time) string` generates the totp code with time
