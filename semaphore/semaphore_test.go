@@ -161,3 +161,135 @@ func TestZeroNDefaultsToOne(t *testing.T) {
 	s.Release(0) // n=0 → 1
 	require.Equal(t, int64(2), s.Available())
 }
+
+// TestWeightedAcquireBlocksUntilReleased exercises the n>1 blocking slow path:
+// a weighted acquire must wait until enough permits are returned, atomically.
+func TestWeightedAcquireBlocksUntilReleased(t *testing.T) {
+	s := New(5)
+	require.NoError(t, s.Acquire(context.Background(), 4)) // 1 left
+	require.Equal(t, int64(1), s.Available())
+
+	acquired := make(chan struct{})
+	go func() {
+		_ = s.Acquire(context.Background(), 3) // needs 3, only 1 free → blocks
+		close(acquired)
+	}()
+	time.Sleep(30 * time.Millisecond)
+	select {
+	case <-acquired:
+		t.Fatal("weighted Acquire should have blocked")
+	default:
+	}
+	require.NoError(t, s.Acquire(context.Background(), 1)) // consumes the last free permit
+	s.Release(2)                                           // now 2 free, still < 3
+	time.Sleep(30 * time.Millisecond)
+	select {
+	case <-acquired:
+		t.Fatal("weighted Acquire still short of permits")
+	default:
+	}
+	s.Release(2) // now 4 free ≥ 3 → unblocks
+	select {
+	case <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("weighted Acquire not unblocked once enough permits returned")
+	}
+	// After the weighted acquire succeeded, exactly 3 permits were consumed.
+	require.Equal(t, int64(1), s.Available())
+}
+
+func TestTryAcquireExceedsCapacity(t *testing.T) {
+	s := New(3)
+	require.False(t, s.TryAcquire(4), "TryAcquire above capacity must be false")
+}
+
+// TestReleaseAfterCloseIsNoop documents the Close/Release semantic: a deferred
+// Release that races with shutdown must not panic (the channel is closed).
+func TestReleaseAfterCloseIsNoop(t *testing.T) {
+	s := New(2)
+	require.NoError(t, s.Acquire(context.Background(), 2))
+	s.Close()
+	require.NotPanics(t, func() { s.Release(2) }) // would otherwise exceed capacity
+}
+
+// TestAcquireUnitAfterClose exercises the n==1 fast-path select against a
+// closed semaphore. With the channel empty and s.closed closed, the pre-check
+// select races <-s.closed against default; both routes still return ErrClosed
+// (the second select also has a closed case). Run many iterations to exercise
+// both resolutions under the race detector.
+func TestAcquireUnitAfterClose(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		s := New(1)
+		require.NoError(t, s.Acquire(context.Background(), 1)) // drain the only permit
+		s.Close()
+		err := s.Acquire(context.Background(), 1)
+		require.ErrorIs(t, err, ErrClosed, "iteration %d", i)
+	}
+}
+
+// TestWeightedAcquireClose exercises the weighted (n>1) slow-path Close case:
+// a multi-token Acquire blocked waiting for enough permits must return ErrClosed
+// when Close is called.
+func TestWeightedAcquireClose(t *testing.T) {
+	s := New(5)
+	require.NoError(t, s.Acquire(context.Background(), 4)) // 1 free, weighted Acquire(3) blocks
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.Acquire(context.Background(), 3)
+	}()
+	time.Sleep(30 * time.Millisecond) // let it park in the weighted select
+
+	select {
+	case <-errCh:
+		t.Fatal("weighted Acquire should have blocked")
+	default:
+	}
+
+	s.Close()
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, ErrClosed)
+	case <-time.After(time.Second):
+		t.Fatal("weighted Acquire not woken by Close")
+	}
+}
+
+// TestWeightedAcquireContextCancel exercises the weighted (n>1) slow-path ctx
+// cancellation case: a multi-token Acquire blocked waiting for permits must
+// return ctx.Err() when the context is cancelled.
+func TestWeightedAcquireContextCancel(t *testing.T) {
+	s := New(5)
+	require.NoError(t, s.Acquire(context.Background(), 4)) // 1 free, weighted Acquire(3) blocks
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.Acquire(ctx, 3)
+	}()
+	time.Sleep(30 * time.Millisecond) // let it park in the weighted select
+
+	select {
+	case <-errCh:
+		t.Fatal("weighted Acquire should have blocked")
+	default:
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("weighted Acquire not cancelled")
+	}
+}
+
+// TestTryAcquireZeroN exercises the n<=0 clamp in TryAcquire: it must behave
+// exactly like TryAcquire(1).
+func TestTryAcquireZeroN(t *testing.T) {
+	s := New(1)
+	require.True(t, s.TryAcquire(0))   // n=0 → 1, one permit available
+	require.False(t, s.TryAcquire(-1)) // n=-1 → 1, now full
+	require.Equal(t, int64(0), s.Available())
+}

@@ -3,7 +3,7 @@ package uuid
 import (
 	"encoding/hex"
 
-	uid "github.com/satori/go.uuid"
+	uid "github.com/gofrs/uuid"
 )
 
 // RequestID returns the request ID with UUID V4, in hash-like format, 32 chars.

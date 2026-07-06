@@ -4,15 +4,15 @@
 
 Several uuid libraries are commonly used for integration.
 
-- [go.uuid](https://github.com/satori/go.uuid)
+- [uuid](https://github.com/gofrs/uuid) (maintained community fork of the archived `satori/go.uuid`)
 - [ksuid](https://github.com/segmentio/ksuid)
-- [xid](https://github.com/rs/xid) 
+- [xid](https://github.com/rs/xid)
 
 ## Compare
 
 |Name|Binary Size| String Size | Features                      | Notes                                             |
 |:---|:---|:------------|:------------------------------|:--------------------------------------------------|
-|[go.uuid](https://github.com/satori/go.uuid)|16 bytes| 36 chars    |configuration free, not sortable| recommended **V4**                                    |
+|[uuid](https://github.com/gofrs/uuid)|16 bytes| 36 chars    |configuration free, not sortable| recommended **V4**; `gofrs/uuid` v1.x is a drop-in for the archived `satori/go.uuid`                                    |
 |[ksuid](https://github.com/segmentio/ksuid) |20 bytes| 27 chars    | configuration free, sortable   | collision-free, coordination-free, dependency-free|
 |[xid](https://github.com/rs/xid)            |12 bytes| 20 chars    | configuration free, sortable   | not cryptographically secure                      |
 
@@ -22,7 +22,7 @@ Several uuid libraries are commonly used for integration.
 
 ## Features
 
->go.uuid
+>uuid (gofrs/uuid v1.x — maintained fork of satori/go.uuid)
 
 - ~~Version 1~~, based on timestamp and MAC address (RFC 4122)
 - ~~Version 2~~, based on timestamp, MAC address and POSIX UID/GID (DCE 1.1)

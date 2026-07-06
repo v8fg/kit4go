@@ -1,7 +1,7 @@
 package uuid
 
 import (
-	uid "github.com/satori/go.uuid"
+	uid "github.com/gofrs/uuid"
 )
 
 // Equal returns true if u1 and u2 equals, otherwise returns false.

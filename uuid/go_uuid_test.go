@@ -3,7 +3,7 @@ package uuid_test
 import (
 	"testing"
 
-	uid "github.com/satori/go.uuid"
+	uid "github.com/gofrs/uuid"
 	"github.com/smartystreets/goconvey/convey"
 
 	"github.com/v8fg/kit4go/uuid"
