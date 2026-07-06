@@ -1,8 +1,13 @@
-// Package maxprocs right-sizes GOMAXPROCS to the container's CPU quota at
-// process start. Import it for its side effect, once, in main:
+// Package maxprocs right-sizes GOMAXPROCS to the container's CPU quota.
+// Call Set explicitly, once near main:
 //
-//	import _ "github.com/v8fg/kit4go/maxprocs"
+//	import "github.com/v8fg/kit4go/maxprocs"
 //
+//	func main() {
+//	    maxprocs.Set(nil) // or maxprocs.Set(log.Printf)
+//	}
+//
+// This package does not mutate global state at import — opt in by calling Set.
 // # When you need this
 //
 // Go 1.25+ already sets GOMAXPROCS from the cgroup CPU quota, so on Go 1.26 this

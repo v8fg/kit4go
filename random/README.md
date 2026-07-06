@@ -56,7 +56,10 @@ concurrent use and panics (`index out of range [-1]`) under parallel load.
 
 ### sampling (pseudo-random)
 
-- `RandIn[T any](slice []T) T` one element (panics on empty).
+- `RandIn[T any](slice []T) (T, error)` one element; empty slice returns
+  `ErrEmptySlice` (no panic).
+- `MustRandIn[T any](slice []T) T` one element; panics on empty (for callers
+  that have already validated non-emptiness).
 - `RandNIn[T any](n int, slice []T) []T` n distinct elements.
 
 ### cryptographically secure
@@ -73,7 +76,7 @@ import "github.com/v8fg/kit4go/random"
 
 code := random.NumericCode(6)               // "048213" — SMS OTP
 id    := random.RandStringWithLetterDigits(16)
-pick  := random.RandIn([]string{"a", "b", "c"})
+pick, _ := random.RandIn([]string{"a", "b", "c"})
 tok, _ := random.CryptoInt(1 << 62)         // secure range-limited int
 ```
 

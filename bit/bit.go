@@ -1,7 +1,13 @@
 // Package bit contains some bit ops, some bithacks ref: https:graphics.stanford.edu/~seander/bithacks.html.
 package bit
 
+import "errors"
+
 const intSize = 32 << (^uint(0) >> 63) // 32 or 64
+
+// ErrNegativeBit is returned when a bit operation is given a negative bit index.
+// Callers may branch on it with errors.Is.
+var ErrNegativeBit = errors.New("bit: negative bit index")
 
 // Number marks the integer number or underlying integer number.
 type Number interface {
@@ -146,38 +152,42 @@ func MaxBits[T Number](num T) (bits int) {
 	return bits
 }
 
-// GetBit returns the specified bit of a binary number.
-// If y less than 0, will panic.
-func GetBit[T Number](x T, y int) T {
+// Bit returns the specified bit of a binary number.
+// Returns ErrNegativeBit if y is less than 0.
+func Bit[T Number](x T, y int) (T, error) {
 	if y < 0 {
-		panic("the specified bit value y must >= 0")
+		var zero T
+		return zero, ErrNegativeBit
 	}
-	return (x >> y) & 1
+	return (x >> y) & 1, nil
 }
 
 // ReverseBit reverses the specified bit of a binary number, 0 to 1 and 1 to 0.
-// If y less than 0, will panic.
-func ReverseBit[T Number](x T, y int) T {
+// Returns ErrNegativeBit if y is less than 0.
+func ReverseBit[T Number](x T, y int) (T, error) {
 	if y < 0 {
-		panic("the specified bit value y must >= 0")
+		var zero T
+		return zero, ErrNegativeBit
 	}
-	return x ^ (1 << y)
+	return x ^ (1 << y), nil
 }
 
 // SetBit sets the specified bit of a binary number to 1.
-// If y less than 0, will panic.
-func SetBit[T Number](x T, y int) T {
+// Returns ErrNegativeBit if y is less than 0.
+func SetBit[T Number](x T, y int) (T, error) {
 	if y < 0 {
-		panic("the specified bit value y must >= 0")
+		var zero T
+		return zero, ErrNegativeBit
 	}
-	return x | (1 << y)
+	return x | (1 << y), nil
 }
 
 // UnsetBit sets the specified bit of a binary number to 0.
-// If y less than 0, will panic.
-func UnsetBit[T Number](x T, y int) T {
+// Returns ErrNegativeBit if y is less than 0.
+func UnsetBit[T Number](x T, y int) (T, error) {
 	if y < 0 {
-		panic("the specified bit value y must >= 0")
+		var zero T
+		return zero, ErrNegativeBit
 	}
-	return x & ^(1 << y)
+	return x & ^(1 << y), nil
 }

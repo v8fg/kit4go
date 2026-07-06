@@ -210,8 +210,8 @@
 // With a slow (~1us) writer, 4 shards reach ~3x one shard. With an instant
 // (discard/memory) writer, sharding only adds dispatch overhead — a single
 // bootstrap already keeps up. AutoShardCount reads GOMAXPROCS, which Go 1.25+
-// derives from the cgroup quota; on older runtimes import
-// _ "github.com/v8fg/kit4go/maxprocs".
+// derives from the cgroup quota; on older runtimes call
+// maxprocs.Set(nil) ("github.com/v8fg/kit4go/maxprocs") near main.
 //
 // Knobs, roughly by effect:
 //

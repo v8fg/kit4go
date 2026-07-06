@@ -125,39 +125,39 @@ func CamelToSnakeWithDelimiter(s, delimiter string) string {
 	return strings.Join(words, delimiter)
 }
 
-// SnakeToCamelWithInitialismList converts snake to camel with given initializes, if given initializes null,
-// use the default initializes.
-func SnakeToCamelWithInitialismList(s string, capitalizeFirstLetter bool, initializes ...string) string {
-	if len(initializes) == 0 {
-		return SnakeToCamelWithInitializes(s, capitalizeFirstLetter, commonInitializes)
+// SnakeToCamelWithInitialismList converts snake to camel with given initialisms, if given initialisms null,
+// use the default initialisms.
+func SnakeToCamelWithInitialismList(s string, capitalizeFirstLetter bool, initialisms ...string) string {
+	if len(initialisms) == 0 {
+		return SnakeToCamelWithInitialisms(s, capitalizeFirstLetter, commonInitialisms)
 	}
 
-	inputInitializes := make(map[string]bool)
-	for _, initialism := range initializes {
-		inputInitializes[initialism] = true
+	inputInitialisms := make(map[string]bool)
+	for _, initialism := range initialisms {
+		inputInitialisms[initialism] = true
 	}
-	return SnakeToCamelWithInitializes(s, capitalizeFirstLetter, inputInitializes)
+	return SnakeToCamelWithInitialisms(s, capitalizeFirstLetter, inputInitialisms)
 }
 
-// SnakeToCamelWithDefaultInitializes converts snake to camel with the global initializes, initialism will be treated as one word.
-func SnakeToCamelWithDefaultInitializes(s string, capitalizeFirstLetter bool) string {
-	return SnakeToCamelWithInitializes(s, capitalizeFirstLetter, commonInitializes)
+// SnakeToCamelWithDefaultInitialisms converts snake to camel with the global initialisms, initialism will be treated as one word.
+func SnakeToCamelWithDefaultInitialisms(s string, capitalizeFirstLetter bool) string {
+	return SnakeToCamelWithInitialisms(s, capitalizeFirstLetter, commonInitialisms)
 }
 
-// SnakeToCamelWithInitializes converts snake to camel with the default initializes, initialism will be treated as one word.
-func SnakeToCamelWithInitializes(s string, capitalizeFirstLetter bool, initializes map[string]bool) string {
+// SnakeToCamelWithInitialisms converts snake to camel with the default initialisms, initialism will be treated as one word.
+func SnakeToCamelWithInitialisms(s string, capitalizeFirstLetter bool, initialisms map[string]bool) string {
 	if IsEmpty(s) {
 		return s
 	}
 
-	if len(initializes) == 0 {
-		initializes = commonInitializes
+	if len(initialisms) == 0 {
+		initialisms = commonInitialisms
 	}
 
 	sb := strings.Builder{}
 	words := strings.Split(s, "_")
 	for i, word := range words {
-		if upper := strings.ToUpper(word); initializes[upper] {
+		if upper := strings.ToUpper(word); initialisms[upper] {
 			sb.WriteString(upper)
 			continue
 		}
@@ -174,22 +174,22 @@ func SnakeToCamelWithInitializes(s string, capitalizeFirstLetter bool, initializ
 }
 
 func initialismExtract(s string) (initialism string) {
-	for i := 1; i <= maxLengthOfInitializes; i++ {
-		if len(s) > i-1 && commonInitializes[s[:i]] {
+	for i := 1; i <= maxLengthOfInitialisms; i++ {
+		if len(s) > i-1 && commonInitialisms[s[:i]] {
 			initialism = s[:i]
 		}
 	}
 	return initialism
 }
 
-// current the maximum length of the commonInitializes elements
-const maxLengthOfInitializes = 5
+// current the maximum length of the commonInitialisms elements
+const maxLengthOfInitialisms = 5
 
-// some initializes, ref https://github.com/golang/lint/blob/master/lint.go
-// commonInitializes is a set of common initializes.
-// Only add entries that are highly unlikely to be non-initializes.
+// some initialisms, ref https://github.com/golang/lint/blob/master/lint.go
+// commonInitialisms is a set of common initialisms.
+// Only add entries that are highly unlikely to be non-initialisms.
 // For instance, "ID" is fine (Freudian code is rare), but "AND" is not.
-var commonInitializes = map[string]bool{
+var commonInitialisms = map[string]bool{
 	"ACL":   true,
 	"API":   true,
 	"ASCII": true,

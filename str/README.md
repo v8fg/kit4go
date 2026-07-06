@@ -30,6 +30,6 @@
 - `str.CamelToSnake` converts a string to the camel case, with the default delimiter `_`
 - `str.CamelToSnakeWithDelimiter` converts a string to the snake case from camel case, with given delimiter
 - `str.SnakeToCamel` converts a string from snake case to camel case
-- `str.SnakeToCamelWithDefaultInitializes` converts a string from snake to camel with default initializes
+- `str.SnakeToCamelWithDefaultInitialisms` converts a string from snake to camel with default initialisms
 - `str.SnakeToCamelWithInitialismList` converts a string from snake to camel with your given initialism list
-- `str.SnakeToCamelWithInitializes` converts a string from snake to camel with your given initializes mapping
+- `str.SnakeToCamelWithInitialisms` converts a string from snake to camel with your given initialisms mapping

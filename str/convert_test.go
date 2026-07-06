@@ -115,25 +115,25 @@ func TestSnakeToCamelWithInitialismList(t *testing.T) {
 	})
 }
 
-func TestSnakeToCamelWithDefaultInitializes(t *testing.T) {
-	convey.Convey("TestSnakeToCamelWithDefaultInitializes", t, func() {
-		convey.So(str.SnakeToCamelWithDefaultInitializes("", true), convey.ShouldEqual, "")
-		convey.So(str.SnakeToCamelWithDefaultInitializes("snake_to_camel_with_initializes", true), convey.ShouldEqual, "SnakeToCamelWithInitializes")
-		convey.So(str.SnakeToCamelWithDefaultInitializes("snake_to_camel_with_initializes", false), convey.ShouldEqual, "snakeToCamelWithInitializes")
-		convey.So(str.SnakeToCamelWithDefaultInitializes("net_protocol_tcp_and_udp", true), convey.ShouldEqual, "NetProtocolTCPAndUDP")
-		convey.So(str.SnakeToCamelWithDefaultInitializes("net_protocol_tcp_and_udp", false), convey.ShouldEqual, "netProtocolTCPAndUDP")
+func TestSnakeToCamelWithDefaultInitialisms(t *testing.T) {
+	convey.Convey("TestSnakeToCamelWithDefaultInitialisms", t, func() {
+		convey.So(str.SnakeToCamelWithDefaultInitialisms("", true), convey.ShouldEqual, "")
+		convey.So(str.SnakeToCamelWithDefaultInitialisms("snake_to_camel_with_initializes", true), convey.ShouldEqual, "SnakeToCamelWithInitializes")
+		convey.So(str.SnakeToCamelWithDefaultInitialisms("snake_to_camel_with_initializes", false), convey.ShouldEqual, "snakeToCamelWithInitializes")
+		convey.So(str.SnakeToCamelWithDefaultInitialisms("net_protocol_tcp_and_udp", true), convey.ShouldEqual, "NetProtocolTCPAndUDP")
+		convey.So(str.SnakeToCamelWithDefaultInitialisms("net_protocol_tcp_and_udp", false), convey.ShouldEqual, "netProtocolTCPAndUDP")
 	})
 }
 
-func TestSnakeToCamelWithInitializes(t *testing.T) {
-	convey.Convey("TestSnakeToCamelWithInitializes", t, func() {
-		convey.So(str.SnakeToCamelWithInitializes("", true, nil), convey.ShouldEqual, "")
-		convey.So(str.SnakeToCamelWithInitializes("snake_to_camel_with_initializes", true, nil), convey.ShouldEqual, "SnakeToCamelWithInitializes")
-		convey.So(str.SnakeToCamelWithInitializes("snake_to_camel_with_initializes", false, nil), convey.ShouldEqual, "snakeToCamelWithInitializes")
-		convey.So(str.SnakeToCamelWithInitializes("net_protocol_tcp_and_udp", true, nil), convey.ShouldEqual, "NetProtocolTCPAndUDP")
-		convey.So(str.SnakeToCamelWithInitializes("net_protocol_tcp_and_udp", true, map[string]bool{"TCP": true}), convey.ShouldEqual, "NetProtocolTCPAndUdp")
-		convey.So(str.SnakeToCamelWithInitializes("net_protocol_tcp_and_udp", false, nil), convey.ShouldEqual, "netProtocolTCPAndUDP")
-		convey.So(str.SnakeToCamelWithInitializes("net_protocol_tcp_and_udp", false, map[string]bool{"TCP": true, "UDP": false}), convey.ShouldEqual, "netProtocolTCPAndUdp")
-		convey.So(str.SnakeToCamelWithInitializes("net_protocol_tcp_and_udp", false, map[string]bool{"TCP": true, "UDP": true}), convey.ShouldEqual, "netProtocolTCPAndUDP")
+func TestSnakeToCamelWithInitialisms(t *testing.T) {
+	convey.Convey("TestSnakeToCamelWithInitialisms", t, func() {
+		convey.So(str.SnakeToCamelWithInitialisms("", true, nil), convey.ShouldEqual, "")
+		convey.So(str.SnakeToCamelWithInitialisms("snake_to_camel_with_initializes", true, nil), convey.ShouldEqual, "SnakeToCamelWithInitializes")
+		convey.So(str.SnakeToCamelWithInitialisms("snake_to_camel_with_initializes", false, nil), convey.ShouldEqual, "snakeToCamelWithInitializes")
+		convey.So(str.SnakeToCamelWithInitialisms("net_protocol_tcp_and_udp", true, nil), convey.ShouldEqual, "NetProtocolTCPAndUDP")
+		convey.So(str.SnakeToCamelWithInitialisms("net_protocol_tcp_and_udp", true, map[string]bool{"TCP": true}), convey.ShouldEqual, "NetProtocolTCPAndUdp")
+		convey.So(str.SnakeToCamelWithInitialisms("net_protocol_tcp_and_udp", false, nil), convey.ShouldEqual, "netProtocolTCPAndUDP")
+		convey.So(str.SnakeToCamelWithInitialisms("net_protocol_tcp_and_udp", false, map[string]bool{"TCP": true, "UDP": false}), convey.ShouldEqual, "netProtocolTCPAndUdp")
+		convey.So(str.SnakeToCamelWithInitialisms("net_protocol_tcp_and_udp", false, map[string]bool{"TCP": true, "UDP": true}), convey.ShouldEqual, "netProtocolTCPAndUDP")
 	})
 }

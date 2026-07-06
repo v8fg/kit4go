@@ -1,14 +1,18 @@
 package maxprocs_test
 
-import "github.com/v8fg/kit4go/maxprocs"
+import (
+	"log"
 
-// ExampleSet shows the explicit form. The package also runs Set automatically
-// via init(), so a blank import is enough for most programs:
+	"github.com/v8fg/kit4go/maxprocs"
+)
+
+// ExampleSet shows the explicit opt-in API. Pass nil for a silent apply, or a
+// Logger (e.g. log.Printf) to log the resolved value:
 //
-//	import _ "github.com/v8fg/kit4go/maxprocs"
-//
-// Set's diagnostic output goes to the standard logger (stderr), not stdout.
+//	maxprocs.Set(nil)
+//	maxprocs.Set(log.Printf)
 func ExampleSet() {
-	maxprocs.Set()
+	maxprocs.Set(nil)
+	maxprocs.Set(log.Printf)
 	// Output:
 }

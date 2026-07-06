@@ -44,19 +44,47 @@ func TestRandUniCodeByUIDWithSalt(t *testing.T) {
 
 func TestRandIn(t *testing.T) {
 	convey.Convey("TestRandIn", t, func() {
-		convey.So(func() { random.RandIn([]int{}) }, convey.ShouldPanic)
-		convey.So(random.RandIn([]int{1}), convey.ShouldEqual, 1)
-		convey.So(random.RandIn([]int{1, 2}), convey.ShouldBeIn, []int{1, 2})
-		convey.So(random.RandIn([]string{"1", "2"}), convey.ShouldBeIn, []string{"1", "2"})
-		convey.So(random.RandIn([]float64{1, 2}), convey.ShouldBeIn, []float64{1, 2})
-		convey.So(random.RandIn([]float32{1, 2}), convey.ShouldNotBeIn, []float64{1, 2})
+		// Empty slice: error contract (no panic).
+		v, err := random.RandIn([]int{})
+		convey.So(err, convey.ShouldEqual, random.ErrEmptySlice)
+		convey.So(v, convey.ShouldEqual, 0)
+
+		v2, err2 := random.RandIn([]int{1})
+		convey.So(err2, convey.ShouldBeNil)
+		convey.So(v2, convey.ShouldEqual, 1)
+
+		v3, err3 := random.RandIn([]int{1, 2})
+		convey.So(err3, convey.ShouldBeNil)
+		convey.So(v3, convey.ShouldBeIn, []int{1, 2})
+
+		v4, err4 := random.RandIn([]string{"1", "2"})
+		convey.So(err4, convey.ShouldBeNil)
+		convey.So(v4, convey.ShouldBeIn, []string{"1", "2"})
+
+		v5, err5 := random.RandIn([]float64{1, 2})
+		convey.So(err5, convey.ShouldBeNil)
+		convey.So(v5, convey.ShouldBeIn, []float64{1, 2})
+
+		v6, err6 := random.RandIn([]float32{1, 2})
+		convey.So(err6, convey.ShouldBeNil)
+		convey.So(v6, convey.ShouldNotBeIn, []float64{1, 2})
+	})
+
+}
+
+func TestMustRandIn(t *testing.T) {
+	convey.Convey("TestMustRandIn", t, func() {
+		convey.So(func() { random.MustRandIn([]int{}) }, convey.ShouldPanic)
+		convey.So(random.MustRandIn([]int{1}), convey.ShouldEqual, 1)
+		convey.So(random.MustRandIn([]int{1, 2}), convey.ShouldBeIn, []int{1, 2})
+		convey.So(random.MustRandIn([]string{"1", "2"}), convey.ShouldBeIn, []string{"1", "2"})
 	})
 
 }
 
 func TestRandNIn(t *testing.T) {
 	convey.Convey("TestRandNIn", t, func() {
-		convey.So(func() { random.RandIn([]int{}) }, convey.ShouldPanic)
+		convey.So(func() { random.MustRandIn([]int{}) }, convey.ShouldPanic)
 		convey.So(random.RandNIn(0, []int{}), convey.ShouldResemble, []int{})
 		convey.So(random.RandNIn(0, []int{1}), convey.ShouldHaveLength, 0)
 		convey.So(random.RandNIn(0, []int{1}), convey.ShouldResemble, []int{})

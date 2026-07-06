@@ -18,7 +18,10 @@ The `Number` constraint covers signed and unsigned integers.
 - `NextHighestPowerOfTwo[T Number](num T) T` round up to next power of two.
 - `PreHighestPowerOfTwo[T Number](num T) T` round down to previous power of two.
 - `MaxBits[T Number](num T) int` bit width needed to represent `num`.
-- `GetBit[T Number](x T, y int) T` value of bit `y`.
+- `Bit[T Number](x T, y int) (T, error)` value of bit `y`; `bit.ErrNegativeBit` if `y < 0`.
+- `SetBit[T Number](x T, y int) (T, error)` set bit `y` to 1.
+- `UnsetBit[T Number](x T, y int) (T, error)` set bit `y` to 0.
+- `ReverseBit[T Number](x T, y int) (T, error)` toggle bit `y`.
 - `Swap[T Number](nums []T)` swap two elements by index.
 - `Sum[T Number](x, y T) T`.
 

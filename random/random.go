@@ -1,10 +1,14 @@
 package random
 
 import (
+	"errors"
 	"math/rand/v2"
 	"strings"
 	"unsafe"
 )
+
+// ErrEmptySlice is returned by RandIn when the input slice is empty.
+var ErrEmptySlice = errors.New("random: empty slice")
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"                // 52 characters
 const letterDigitBytes = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" // 62 characters
@@ -118,7 +122,7 @@ func RandStringWithKind(n int, kind int) []byte {
 
 	var ik int
 	for i := 0; i < n; i++ {
-		ik = RandIn(posIndex)
+		ik = MustRandIn(posIndex) // posIndex is non-empty here.
 		count, base := characters[ik][0], characters[ik][1]
 		result[i] = uint8(base + rand.IntN(count))
 	}
@@ -126,17 +130,29 @@ func RandStringWithKind(n int, kind int) []byte {
 }
 
 // RandIn returns one random value from the given slice.
-// If empty slice will panic.
-func RandIn[T any](slice []T) T {
+// An empty slice returns the zero value of T together with ErrEmptySlice.
+func RandIn[T any](slice []T) (T, error) {
+	var zero T
 	n := len(slice)
 	if n == 0 {
-		panic("slice nil")
+		return zero, ErrEmptySlice
 	}
 
 	idxBits := maxBits(n)
 	idxMask := int64(1<<idxBits - 1)
 	idx := int(rand.Int64()&idxMask) % n
-	return slice[idx]
+	return slice[idx], nil
+}
+
+// MustRandIn is like RandIn but panics on an empty slice. Use it when the
+// caller has already guaranteed the slice is non-empty and wants a
+// panic-on-programmer-error contract.
+func MustRandIn[T any](slice []T) T {
+	v, err := RandIn(slice)
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 // RandNIn returns a specified number of elements random value from the input slice.
