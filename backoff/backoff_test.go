@@ -135,3 +135,52 @@ func TestDefaults(t *testing.T) {
 func TestErrSentinel(t *testing.T) {
 	require.True(t, errors.Is(ErrMaxAttempts, ErrMaxAttempts))
 }
+
+// TestDecorrelatedCapsAtMax covers the `if d > b.max { d = b.max }` branch in
+// computeLocked (backoff.go:116-118). With base << max, last*3 quickly exceeds
+// max, so randRange(base, last*3) routinely draws a value larger than max and
+// the cap clamps it back down. This is reachable purely through the public API.
+func TestDecorrelatedCapsAtMax(t *testing.T) {
+	const max = 3 * time.Nanosecond
+	b := New(WithJitter(JitterDecorrelated), WithBase(1), WithMax(max), WithFactor(2))
+	for i := 0; i < 2000; i++ {
+		d, ok := b.Next()
+		require.True(t, ok)
+		require.LessOrEqual(t, d, max, "decorrelated delay must never exceed max")
+	}
+}
+
+// TestFullJitterZeroBase covers the `if hi <= lo { return lo }` guard in
+// randRange (backoff.go:186-188). With base=0 the first raw value is 0, so the
+// Full-jitter call randRange(0, 0) hits hi<=lo and returns 0. Reachable via the
+// public API.
+func TestFullJitterZeroBase(t *testing.T) {
+	b := New(WithBase(0), WithJitter(JitterFull), WithMax(time.Second))
+	for i := 0; i < 5; i++ {
+		d, ok := b.Next()
+		require.True(t, ok)
+		require.Equal(t, time.Duration(0), d, "randRange(0,0) guard must return 0 while raw==0")
+	}
+}
+
+// TestDecorrelatedGuardFloor covers the defensive `if hi < b.base { hi = b.base }`
+// branch in computeLocked (backoff.go:112-114). This arm is unreachable through
+// the public API: b.last is only ever assigned b.base (in New/Reset) or a
+// returned delay d, and d >= b.base always holds (randRange(base, hi) with
+// hi >= base yields d >= base), so the invariant b.last >= b.base makes
+// b.last*3 >= b.base. The guard protects computeLocked against a corrupted
+// internal state; exercise it here by forcing b.last below base/3 directly.
+func TestDecorrelatedGuardFloor(t *testing.T) {
+	const base = 30 * time.Nanosecond
+	b := New(WithJitter(JitterDecorrelated), WithBase(base), WithMax(time.Second), WithFactor(2))
+	// Break the invariant on purpose to reach the defensive floor.
+	b.mu.Lock()
+	b.last = 1 * time.Nanosecond // 1ns*3 = 3ns < base=30ns → forces hi = base
+	b.mu.Unlock()
+	// With hi clamped to base, randRange(base, base) yields exactly base. (Only
+	// this first call hits the floor; the returned base restores the invariant,
+	// so subsequent calls follow the normal path and are bounded only by max.)
+	d, ok := b.Next()
+	require.True(t, ok)
+	require.Equal(t, base, d, "floor must clamp hi to base, yielding exactly base")
+}

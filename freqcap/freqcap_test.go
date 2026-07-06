@@ -188,3 +188,60 @@ func TestConcurrency(t *testing.T) {
 type fakeClock struct{ t time.Time }
 
 func (f *fakeClock) now() time.Time { return f.t }
+
+// TestEvictionSecondLoopCannotSeeEmptySlice pins the invariant that makes two
+// branches of evictIdleLocked unreachable, so they are documented here rather
+// than left as silent coverage gaps.
+//
+// The second eviction loop (drop oldest-start key once the idle prune is not
+// enough) has two defensive branches:
+//
+//	if len(ts) == 0 { victim = k; break }   // freqcap.go:146-148
+//	if victim == "" { return }              // freqcap.go:154-156
+//
+// Both are unreachable given the first loop: the first loop deletes every key
+// whose trimmed slice is empty, and trimBefore only ever shrinks a slice, so
+// every key that survives into the second loop has len(ts) >= 1. Therefore the
+// len(ts) == 0 check can never fire, and because the second loop only runs when
+// len(c.keys) > c.maxKeys >= 0 (i.e. at least one key is present) the inner
+// range always sets `victim` on its first iteration (the `first` flag is true),
+// so victim == "" can never fire either. This test asserts the surviving-keys
+// property directly so a future change to the first loop does not silently make
+// the second loop's branches reachable (and buggy) without flagging it here.
+func TestEvictionSecondLoopCannotSeeEmptySlice(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	c := New(time.Second, 1, WithMaxKeys(1), WithClock(clk.now))
+
+	// "a" gets one event, then ages out; Count() lazy-trims it to an empty
+	// slice still held under the key.
+	c.Allow("a")
+	clk.t = clk.t.Add(2 * time.Second)
+	c.Count("a") // stores []time.Time{} under "a", does not prune
+
+	// Confirm the empty-slice state was in fact materialised by Count.
+	c.mu.Lock()
+	ts, ok := c.keys["a"]
+	c.mu.Unlock()
+	require.True(t, ok)
+	require.Len(t, ts, 0)
+
+	// A new in-window key forces evictIdleLocked. The first loop must delete
+	// "a" (its trimmed slice is empty); the second loop then never runs since
+	// len(c.keys)==1 <= maxKeys==1. The empty-slice branch in loop 2 is
+	// therefore never reached, and "b" is recorded cleanly.
+	require.True(t, c.Allow("b"))
+	require.Equal(t, 1, c.Len())
+	require.Equal(t, 1, c.Count("b"))
+
+	// Drive the multi-key, all-non-empty path through loop 2 to confirm that
+	// path deletes the oldest-start key without needing either defensive
+	// branch.
+	c2 := New(time.Hour, 5, WithMaxKeys(2), WithClock(clk.now))
+	c2.Allow("a")
+	clk.t = clk.t.Add(time.Second)
+	c2.Allow("b")
+	clk.t = clk.t.Add(time.Second)
+	require.True(t, c2.Allow("c")) // 3 > 2 -> evict oldest-start ("a")
+	require.Equal(t, 2, c2.Len())
+	require.Equal(t, 0, c2.Count("a")) // evicted -> 0, not stored empty slice
+}

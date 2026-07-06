@@ -120,3 +120,56 @@ func TestGate_SetMax(t *testing.T) {
 		}
 	}
 }
+
+func TestGate_SetMaxNegativeClampsToZero(t *testing.T) {
+	g := New(2)
+	// SetMax must clamp a negative capacity to 0 exactly like New does.
+	g.SetMax(-3)
+	if g.Max() != 0 {
+		t.Fatalf("SetMax(-3) should clamp to 0, got %d", g.Max())
+	}
+	// max=0 means the gate rejects everything.
+	if g.TryAcquire() {
+		t.Fatal("after SetMax(<0) the gate should reject all attempts")
+	}
+	if g.Rejected() != 1 {
+		t.Fatalf("rejected = %d, want 1", g.Rejected())
+	}
+	if !g.IsOverloaded() {
+		t.Fatal("gate with max=0 and current 0 should report overloaded (0 >= 0)")
+	}
+}
+
+func TestGate_SetMaxBelowCurrentDoesNotRejectInflight(t *testing.T) {
+	g := New(5)
+	// Fill 3 in-flight slots.
+	for i := 0; i < 3; i++ {
+		if !g.TryAcquire() {
+			t.Fatalf("acquire %d should succeed at max=5", i+1)
+		}
+	}
+	// Hot-reload down to 1. Per the contract, already-in-flight items are NOT
+	// evicted; current stays at 3 until they Release.
+	g.SetMax(1)
+	if g.Current() != 3 {
+		t.Fatalf("current after SetMax(1) = %d, want 3 (no eviction)", g.Current())
+	}
+	// New admissions are now blocked until current drops to 0 (< max).
+	if g.TryAcquire() {
+		t.Fatal("should reject new acquire while current exceeds new max")
+	}
+	// Draining one slot is not enough — current(2) is still >= max(1).
+	if !g.Release() {
+		t.Fatal("Release should decrement and return true")
+	}
+	if g.TryAcquire() {
+		t.Fatal("should still reject while current(2) >= max(1)")
+	}
+	// Drain to 0; now admissions resume.
+	for g.Current() > 0 {
+		g.Release()
+	}
+	if !g.TryAcquire() {
+		t.Fatal("should admit again once current drops below max")
+	}
+}

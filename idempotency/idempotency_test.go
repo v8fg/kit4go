@@ -208,3 +208,45 @@ func TestEvictionNeverEvictsInFlight(t *testing.T) {
 	require.Equal(t, 2, c.Len()) // both present; in-flight leader not evicted
 	close(block)
 }
+
+// TestEviction_OldestByExpiry exercises evictLocked's second pass: when the
+// cache is over capacity but the expired-pass leaves it over (nothing expired),
+// the oldest COMPLETED entry by expiry is dropped. This covers the
+// "!found || expiresAt.Before(oldestT)" update and the delete(oldestK) path,
+// which the ExpiredFirst test never reaches (there the expired pass alone
+// relieves the pressure).
+func TestEviction_OldestByExpiry(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	var calls atomic.Int64
+	c := New[int](WithTTL[int](100*time.Second), WithMaxEntries[int](2), withClock[int](clk.now))
+	work := func(context.Context) (int, error) { n := calls.Add(1); return int(n), nil }
+
+	// "a" inserted at t=0 -> expires at 100; "b" at t=10 -> expires at 110.
+	// Neither expired at the current clock, so the expired pass cannot fire.
+	c.Do(context.Background(), "a", work)
+	clk.t = clk.t.Add(10 * time.Second)
+	c.Do(context.Background(), "b", work)
+	require.Equal(t, int64(2), calls.Load())
+
+	// Insert "c" (still t=10): entries = {a, b (both completed), c (in-flight
+	// leader, not completed)}, len 3 > maxEntries 2, nothing expired -> the
+	// oldest-completed-by-expiry pass runs and must evict "a" (earliest expiry).
+	clk.t = clk.t.Add(1 * time.Second) // t=11; a(100) and b(110) both unexpired
+	c.Do(context.Background(), "c", work)
+
+	require.Equal(t, int64(3), calls.Load(), "c ran once")
+	require.Equal(t, 2, c.Len(), "back at cap after evicting one completed entry")
+
+	// "a" was evicted (oldest expiry) -> re-running it must execute fn again.
+	// "b" must still be cached (served from cache, no new call).
+	callsBefore := calls.Load()
+	v, err := c.Do(context.Background(), "b", work)
+	require.NoError(t, err)
+	require.Equal(t, 2, v) // value from original call #2
+	require.Equal(t, callsBefore, calls.Load(), "b served from cache, not re-run")
+
+	v, err = c.Do(context.Background(), "a", work)
+	require.NoError(t, err)
+	require.Equal(t, 4, v) // re-ran as call #4
+	require.Equal(t, callsBefore+1, calls.Load(), "a re-ran after being evicted")
+}

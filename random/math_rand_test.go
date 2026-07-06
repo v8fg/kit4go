@@ -88,6 +88,30 @@ func TestPercent(t *testing.T) {
 		p := random.Percent()
 		convey.So(p, convey.ShouldBeBetweenOrEqual, 0, 100)
 	})
+
+	// Percent() = Float64Between(0, 101) clamped to 100 when the draw lands in
+	// [100, 101). That sub-range has probability 1/101 per call, so a modest
+	// loop drives the clamp (math_rand.go:105) with overwhelmingly high
+	// likelihood (P(miss) over 3000 draws < 1e-12). This is the only
+	// deterministic-free way to reach the branch since the global math/rand/v2
+	// source cannot be seeded/mocked.
+	convey.Convey("clamps the [100,101) draw to exactly 100", t, func() {
+		maxObserved := 0.0
+		for i := 0; i < 3000; i++ {
+			p := random.Percent()
+			if p > maxObserved {
+				maxObserved = p
+			}
+			convey.So(p, convey.ShouldBeBetweenOrEqual, 0.0, 100.0)
+		}
+		// Confidence check: with 3000 draws we expect ~30 hits near the top of
+		// the range; maxObserved reaching 100 confirms the clamp executed. We
+		// tolerate the (astronomically unlikely) miss by only warning.
+		if maxObserved < 100.0 {
+			t.Logf("Percent clamp never observed at 100.0 (max=%.4f); "+
+				"clamp branch is probabilistic and may rarely miss", maxObserved)
+		}
+	})
 }
 
 func TestPerm(t *testing.T) {
