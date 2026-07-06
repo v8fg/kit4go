@@ -61,8 +61,13 @@ func TestCustomAlphabetRoundTrip(t *testing.T) {
 func TestAlphabetValidation(t *testing.T) {
 	_, err := DecodeWithAlphabet("0", "0123456789abcdefghijklmnopqrstuvwxyz") // 36 chars
 	require.ErrorIs(t, err, ErrAlphabet)
-	// Duplicate byte -> ErrAlphabet.
-	_, err = DecodeWithAlphabet("0", "00123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+	// Duplicate byte in an otherwise 62-byte alphabet -> ErrAlphabet. The
+	// string must be exactly 62 bytes so it passes the length guard and reaches
+	// the duplicate-detection branch of buildDecodeTableErr (replacing 'Z' with
+	// '0' yields two '0's and no 'Z', length unchanged).
+	dup := Alphabet[:35] + "0" + Alphabet[36:]
+	require.Len(t, dup, 62)
+	_, err = DecodeWithAlphabet("0", dup)
 	require.ErrorIs(t, err, ErrAlphabet)
 }
 

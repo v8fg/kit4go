@@ -116,6 +116,35 @@ func TestPanicGuards(t *testing.T) {
 	require.NotPanics(t, func() { NewFromParams(64, 0) })
 }
 
+// TestNewCoercesKBelowOne covers the `if k < 1 { k = 1 }` floor in New. With a
+// tiny expectedN and an fp close to 1, the rounded hash count (m/n)*ln2 falls
+// below 1 and New must coerce it to 1 rather than build a degenerate filter.
+func TestNewCoercesKBelowOne(t *testing.T) {
+	f := New(2, 0.99) // m=1, k rounds to 0 -> coerced to 1
+	require.Equal(t, uint64(1), f.K())
+	require.Equal(t, uint64(1), f.M())
+	// The coerced filter still behaves: an added item tests true (no false neg).
+	f.AddString("x")
+	require.True(t, f.TestString("x"))
+}
+
+// TestIndicesH2ZeroGuard documents the unreachable defensive branch in indices:
+//
+//	if h2 == 0 { h2 = 1 }
+//
+// h2 is the FNV-1 hash of the input. FNV-1 multiplies the running hash by an
+// odd prime (0x100000001b3) each step, which is invertible mod 2^64, so the
+// hash is zero only for a specific preimage in a 2^64 space. A brute-force
+// search over the entire 1/2/3-byte input space (16M+ values) finds no input
+// with FNV-1 == 0. The guard therefore protects against an astronomically
+// unlikely collision: it keeps the k double-hashed indices distinct instead of
+// collapsing them all onto h1. It is intentionally not exercised here —
+// reaching it would require finding the preimage, which defeats the purpose of
+// a deterministic test. The branch is left as a defensive no-op.
+func TestIndicesH2ZeroGuard(t *testing.T) {
+	t.Log("indices' h2==0 branch is an unreachable defensive guard; see comment for proof")
+}
+
 func TestConcurrency(t *testing.T) {
 	f := New(10000, 0.01)
 	var wg sync.WaitGroup

@@ -8,6 +8,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ----------------------------------------------------------------------------
+// Unreachable defensive branches (documented, intentionally NOT covered)
+// ----------------------------------------------------------------------------
+//
+// money.go FromMajor, lines 113-115:
+//
+//	scaledFrac, err := strconv.ParseInt(fracStr, 10, 64)
+//	if err != nil {
+//	    return Money{}, fmt.Errorf("%w: %w", ErrInvalidAmount, err)
+//	}
+//
+// fracStr is built as `strings.Repeat("0", c.Decimals-len(strconv.Itoa(absInt(frac)))) + strconv.Itoa(absInt(frac))`.
+// absInt always returns >= 0, and strconv.Itoa of a non-negative int always
+// produces a digit-only string [0-9]+. The preceding `len(fracStr) > c.Decimals`
+// guard guarantees fracStr has exactly c.Decimals runes (<= 3 for every ISO
+// currency). ParseInt of a short digit-only string in base 10 cannot fail, so
+// this error branch is structurally unreachable. Excluded from the 100% target.
+// ----------------------------------------------------------------------------
+
 // TestRegisterCurrency_EmptyCode covers the `c.Code == ""` early-return branch
 // of RegisterCurrency (a no-op for empty codes so the registry isn't polluted
 // with an "" entry).
@@ -172,4 +191,92 @@ func TestErrorsSentinals(t *testing.T) {
 	require.True(t, errors.Is(ErrNoRatios, ErrNoRatios))
 	require.True(t, errors.Is(ErrNegativeRatio, ErrNegativeRatio))
 	require.True(t, errors.Is(ErrZeroRatios, ErrZeroRatios))
+}
+
+// TestFromMajor_UnknownCurrency covers FromMajor's `!ok` error branch
+// (money.go:98-100): an unknown currency code returns ErrUnknownCurrency.
+func TestFromMajor_UnknownCurrency(t *testing.T) {
+	_, err := FromMajor(12, 34, "NOPE")
+	require.ErrorIs(t, err, ErrUnknownCurrency)
+}
+
+// TestFromMajor_MulCheckedOverflow covers FromMajor's `mulChecked` overflow in
+// the decimals-scaling loop (money.go:119-121). whole = math.MaxInt64 parses
+// fine, but whole*10 (first loop iteration for a 2-decimal currency) overflows
+// int64, so the error is the checked-arithmetic ErrOverflow — not a parse error.
+func TestFromMajor_MulCheckedOverflow(t *testing.T) {
+	_, err := FromMajor(math.MaxInt64, 0, "USD")
+	require.ErrorIs(t, err, ErrOverflow)
+	// 3-decimal currency: a smaller whole already overflows when scaled by 1000.
+	_, err = FromMajor(1<<60, 0, "KWD")
+	require.ErrorIs(t, err, ErrOverflow)
+}
+
+// TestParse_FracParseIntError covers Parse's fractional ParseInt error branch
+// (money.go:163-165). "1.2a" in a 3-decimal currency (KWD): whole "1" parses
+// OK, frac "2a" is within the decimals budget but isn't a valid integer, so
+// strconv.ParseInt fails -> ErrInvalidAmount. (frac < 0 is structurally
+// impossible here because the sign was already stripped, so this is the only
+// reachable arm of the `err != nil || frac < 0` guard.)
+func TestParse_FracParseIntError(t *testing.T) {
+	_, err := Parse("KWD", "1.2a")
+	require.ErrorIs(t, err, ErrInvalidAmount)
+}
+
+// TestParse_MulCheckedOverflow covers Parse's `mulChecked` overflow in the
+// decimals-scaling loop (money.go:170-172). whole = math.MaxInt64 parses as a
+// valid int64, but whole*10 overflows on the first scaling iteration.
+func TestParse_MulCheckedOverflow(t *testing.T) {
+	_, err := Parse("USD", "9223372036854775807")
+	require.ErrorIs(t, err, ErrOverflow)
+}
+
+// TestAllocate_MulCheckedOverflow covers Allocate's `mulChecked` overflow
+// (money.go:323-325). Allocating math.MaxInt64 minor units with a ratio of 2
+// makes mulChecked(MaxInt64, 2) overflow before any share is computed.
+func TestAllocate_MulCheckedOverflow(t *testing.T) {
+	big := MustFromMinor(math.MaxInt64, "USD")
+	_, err := big.Allocate([]int{2, 1})
+	require.ErrorIs(t, err, ErrOverflow)
+}
+
+// TestAllocate_RemainderPicksLaterIndex covers Allocate's inner selection-loop
+// body `best = j` (money.go:350-352), the arm that fires when a later share has
+// a strictly larger fractional remainder than the current best. With ratios
+// {1, 2} of 100 cents: ideal shares are 33.33 / 66.67, integer division yields
+// 33 / 66 leaving remainder 1. The fractional remainders are 0.33 and 0.67, so
+// index 1 beats the initial best (0) and receives the extra cent (67). This is
+// the only configuration that exercises the `>` arm; the {1,1,1} test leaves
+// index 0 as the persistent maximum.
+func TestAllocate_RemainderPicksLaterIndex(t *testing.T) {
+	m := MustFromMinor(100, "USD")
+	parts, err := m.Allocate([]int{1, 2})
+	require.NoError(t, err)
+	require.Len(t, parts, 2)
+	// 67/33: the larger-ratio share got the rounding remainder.
+	require.Equal(t, int64(67), parts[1].Amount())
+	require.Equal(t, int64(33), parts[0].Amount())
+	require.Equal(t, int64(100), parts[0].Amount()+parts[1].Amount())
+}
+
+// TestRoundFloatToInt64_RoundUpNegative covers roundFloatToInt64's RoundUp
+// negative arm (money.go:400): for f < 0, RoundUp floors (rounds away from
+// zero). Exercised both directly and through Scale on a negative Money.
+func TestRoundFloatToInt64_RoundUpNegative(t *testing.T) {
+	// Direct: -1.5 with RoundUp -> floor(-1.5) = -2 (away from zero).
+	r, err := roundFloatToInt64(-1.5, RoundUp)
+	require.NoError(t, err)
+	require.Equal(t, int64(-2), r)
+
+	// Via Scale: -100 minor (-1.00) * 0.005 = -0.5 -> RoundUp negative -> -1.
+	neg := MustFromMinor(-100, "USD")
+	scaled, err := neg.Scale(0.005, RoundUp)
+	require.NoError(t, err)
+	require.Equal(t, int64(-1), scaled.Amount())
+
+	// Sanity: positive RoundUp still ceils (1.5 -> 2), confirming the branch
+	// taken is the negative one above and not the `f >= 0` arm.
+	pos, err := roundFloatToInt64(1.5, RoundUp)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), pos)
 }

@@ -2,6 +2,7 @@ package hyperloglog
 
 import (
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"sync"
 	"testing"
@@ -112,6 +113,38 @@ func TestLowPrecisionEstimates(t *testing.T) {
 		require.Greater(t, est, 0.0)
 		require.Less(t, est, float64(n)*4)
 	}
+}
+
+// TestEstimateLargeRangeCorrection exercises Estimate's large-range correction
+// branch (Flajolet's correction for cardinalities approaching 2^32). Reaching it
+// naturally needs ~150M distinct elements (raw est must exceed 2^32/30 ≈ 1.4e8),
+// which is impractical for a unit test, so this is a white-box test that sets the
+// registers directly to a state the algorithm would reach for such cardinalities:
+// every register at rho≈14 (no zeros, so the small-range branch is skipped) yields
+// a raw estimate just over the threshold but below 2^32, giving a finite corrected
+// value. The correction strictly increases the estimate (log term is positive).
+func TestEstimateLargeRangeCorrection(t *testing.T) {
+	h, _ := New(14)
+	for i := range h.reg {
+		h.reg[i] = 14 // no zero registers -> small-range branch bypassed
+	}
+	rawSum := 0.0
+	for _, r := range h.reg {
+		rawSum += math.Pow(2, -float64(r))
+	}
+	m := float64(h.m)
+	rawEst := alpha(m) * m * m / rawSum
+	require.Greater(t, rawEst, (1.0/30.0)*float64(1<<32),
+		"registers must put the raw estimate over the large-range threshold")
+	require.Less(t, rawEst, float64(1<<32),
+		"keep est/2^32 < 1 so the correction is finite")
+
+	got := h.Estimate()
+	require.False(t, math.IsNaN(got), "corrected estimate must be finite")
+	require.False(t, math.IsInf(got, 0), "corrected estimate must be finite")
+	// The large-range correction is monotonically increasing in the raw estimate,
+	// so the corrected value must exceed the raw estimate.
+	require.Greater(t, got, rawEst)
 }
 
 // A hash whose trailing (64-p) bits are all zero exercises the rho upper-bound

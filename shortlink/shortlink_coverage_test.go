@@ -1,7 +1,9 @@
 package shortlink
 
 import (
+	"crypto/rand"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -166,4 +168,76 @@ func TestIDShortener_DecodeEmpty(t *testing.T) {
 	if id != 0 {
 		t.Fatalf("Decode(\"\") = %d, want 0", id)
 	}
+}
+
+// errRandReader is an io.Reader that always fails, used to exercise the
+// crypto/rand error branches in randomCode and Generate. crypto/rand.Reader is
+// a package-level var; swapping it is a white-box technique that requires no
+// change to production code.
+type errRandReader struct{}
+
+func (errRandReader) Read(p []byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+// withFailingRand swaps crypto/rand.Reader for a failing reader for the
+// duration of fn, restoring the original on return. It serializes access to
+// the process-global reader via the test framework (tests using this helper
+// must not run in parallel with each other).
+func withFailingRand(t *testing.T, fn func()) {
+	t.Helper()
+	orig := rand.Reader
+	rand.Reader = errRandReader{}
+	defer func() { rand.Reader = orig }()
+	fn()
+}
+
+// TestRandomCode_RandError covers randomCode's defensive branch where
+// rand.Int fails (crypto/rand.Reader returns an error).
+func TestRandomCode_RandError(t *testing.T) {
+	s := New(WithCodeLength(6))
+	withFailingRand(t, func() {
+		_, err := s.randomCode()
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("expected io.ErrUnexpectedEOF from randomCode, got %v", err)
+		}
+	})
+}
+
+// TestGenerate_RandError covers Generate's branch where randomCode fails and
+// the error propagates immediately (no retry, no store call).
+func TestGenerate_RandError(t *testing.T) {
+	// failStore's Save must never be called when randomCode already failed —
+	// if it were, the test fails, proving Generate short-circuits on the
+	// randomCode error.
+	store := &recordingStore{}
+	s := New(WithStore(store), WithCodeLength(6))
+	withFailingRand(t, func() {
+		_, err := s.Generate("https://example.com")
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("expected io.ErrUnexpectedEOF from Generate, got %v", err)
+		}
+	})
+	if store.saves != 0 {
+		t.Fatalf("expected 0 Save calls after randomCode failure, got %d", store.saves)
+	}
+}
+
+// recordingStore counts Save calls and always succeeds (used to prove Generate
+// never reaches Save when randomCode errors).
+type recordingStore struct {
+	saves int
+	m     map[string]string
+}
+
+func (s *recordingStore) Save(code, url string) error {
+	s.saves++
+	if s.m == nil {
+		s.m = make(map[string]string)
+	}
+	s.m[code] = url
+	return nil
+}
+
+func (s *recordingStore) Load(code string) (string, bool) {
+	url, ok := s.m[code]
+	return url, ok
 }

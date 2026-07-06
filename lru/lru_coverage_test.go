@@ -10,13 +10,22 @@ import (
 
 // TestEvict_BackNil covers the el == nil branch of evict. evict reads
 // ll.Back(); when the list is empty, Back() is nil and evict must return without
-// panicking. Resize down on an empty cache exercises this via the for-loop body.
+// panicking.
+//
+// This branch is unreachable through the public API: every public caller of
+// evict (set at lru.go:125, Resize at lru.go:273) guards with a
+// "Len() > maxSize" condition that guarantees the list is non-empty before
+// evict runs, so ll.Back() is never nil in production. It is defensive against
+// a future caller that forgets the guard. Because the test is white-box
+// (package lru), we invoke evict directly on an empty cache to exercise the
+// nil-Back() early return.
 func TestEvict_BackNil(t *testing.T) {
 	c := New[string, int](WithMaxSize[string, int](4))
-	// Empty cache; Resize to a smaller size — the eviction loop calls evict
-	// while ll.Len() == 0, hitting the nil-Back() branch.
-	evicted := c.Resize(2)
-	require.Equal(t, 0, evicted)
+	// Empty cache: ll.Back() is nil, so evict must take the early-return path
+	// and neither panic nor mutate state.
+	var evicted []evictedKV[string, int]
+	c.evict(&evicted)
+	require.Empty(t, evicted)
 	require.Equal(t, 0, c.Len())
 }
 

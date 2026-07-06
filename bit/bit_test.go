@@ -199,6 +199,30 @@ func TestSwap(t *testing.T) {
 		convey.So(nums, convey.ShouldResemble, []int{2, 1})
 		bit.Swap(nums)
 		convey.So(nums, convey.ShouldResemble, []int{1, 2})
+
+		convey.Convey("nil slice is a no-op", func() {
+			var nilSlice []int
+			bit.Swap(nilSlice)
+			convey.So(nilSlice, convey.ShouldBeNil)
+		})
+
+		convey.Convey("empty slice is a no-op", func() {
+			empty := []int{}
+			bit.Swap(empty)
+			convey.So(empty, convey.ShouldResemble, []int{})
+		})
+
+		convey.Convey("single-element slice is a no-op", func() {
+			single := []int{42}
+			bit.Swap(single)
+			convey.So(single, convey.ShouldResemble, []int{42})
+		})
+
+		convey.Convey("only the first two elements are swapped", func() {
+			three := []int{1, 2, 3}
+			bit.Swap(three)
+			convey.So(three, convey.ShouldResemble, []int{2, 1, 3})
+		})
 	})
 }
 

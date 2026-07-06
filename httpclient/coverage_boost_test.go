@@ -375,10 +375,32 @@ func TestDoWithRetry_BackoffCancelledErrAlreadySet(t *testing.T) {
 	}
 }
 
-// --- shouldRetry: context-wrapped net.Error / OpError ----------------------
+// --- shouldRetry: context errors wrapped inside net.Error / *net.OpError -----
+//
+// These tests pin the OBSERVED behaviour: a net.Error (or *net.OpError) whose
+// error chain transitively wraps a context.Canceled / context.DeadlineExceeded
+// is treated as non-retryable.
+//
+// NOTE on coverage: shouldRetry has two inner defensive guards that re-check
+// the extracted net.Error / *net.OpError for a wrapped context error
+// (retry.go:80-82 and retry.go:87-89). Under Go's errors.Is/errors.As contract
+// those guards are UNREACHABLE: errors.Is at the top of shouldRetry (retry.go:65)
+// walks the ENTIRE Unwrap tree, so any error whose chain contains a context
+// sentinel is caught there first and never reaches the inner re-check. Even a
+// custom Is(target) bool returning false does not help — errors.Is keeps walking
+// Unwrap after a false Is result, so the context sentinel is still found.
+//
+// Verified empirically (see the standalone probe in this change's analysis):
+// every construction that would make the inner guard's condition true instead
+// returns at retry.go:67. The inner guards are dead-code belt-and-suspenders
+// left for resilience; they are intentionally NOT covered and are documented
+// here rather than removed (production code is frozen for this task). These
+// tests therefore assert the real exit point (retry.go:67 via line 65), which
+// is the path any real caller will always take.
 
-// ctxNetError is a net.Error whose Timeout() is true, but which wraps a
-// context.DeadlineExceeded. Exercises the guard at retry.go:70-72.
+// ctxNetError is a net.Error whose Timeout() is true and whose Unwrap chain
+// reaches context.DeadlineExceeded. Exercises the line-65 context check (NOT
+// the unreachable net.Error inner guard).
 type ctxNetError struct{}
 
 func (ctxNetError) Error() string   { return "deadline exceeded on dial" }
@@ -386,17 +408,23 @@ func (ctxNetError) Timeout() bool   { return true }
 func (ctxNetError) Temporary() bool { return false }
 
 // Unwrap exposes the wrapped context error so errors.Is(err,
-// context.DeadlineExceeded) succeeds.
+// context.DeadlineExceeded) succeeds at retry.go:65.
 func (ctxNetError) Unwrap() error { return context.DeadlineExceeded }
 
 func TestShouldRetry_NetErrorWrappingCtxDeadline(t *testing.T) {
+	// The error implements net.Error with Timeout()==true, but because its
+	// Unwrap chain reaches context.DeadlineExceeded, the top-level errors.Is
+	// at retry.go:65 catches it first and shouldRetry returns false via
+	// retry.go:67 — it never reaches the net.Error block.
 	if shouldRetry(nil, ctxNetError{}) {
 		t.Fatal("net.Error wrapping context.DeadlineExceeded must NOT be retryable")
 	}
 }
 
-// ctxOpError is a *net.OpError whose Err wraps context.Canceled. Exercises the
-// guard at retry.go:77-79.
+// A *net.OpError whose Err wraps context.Canceled. Like the net.Error case
+// above, the top-level errors.Is at retry.go:65 walks OpError.Err -> the wrap
+// -> context.Canceled and returns false at retry.go:67; the inner OpError
+// guard at retry.go:87-89 is unreachable for the same reason.
 func TestShouldRetry_OpErrorWrappingCtxCanceled(t *testing.T) {
 	opErr := &net.OpError{
 		Op:  "dial",

@@ -140,6 +140,13 @@ func TestGenerateURLTOTP(t *testing.T) {
 		url, err = otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Secret: []byte("7ZDW4TVCYM"), Digits: 8})
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(url, convey.ShouldNotBeEmpty)
+
+		// non-zero Period: simpleURL only emits the period query param when
+		// otpType == "totp" && opts.Period != 0 (key.go line 200).
+		url, err = otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "xwi88", AccountName: "xwi88.com", Period: 60})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(url, convey.ShouldNotBeEmpty)
+		convey.So(url, convey.ShouldContainSubstring, "period=60")
 	})
 }
 
