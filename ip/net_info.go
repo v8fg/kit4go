@@ -68,6 +68,32 @@ var APIListForPublicIP = []string{
 	// "https://icanhazip.com", // maybe ipv6 formatted, ignore now
 }
 
+// PublicIPResultSink is an optional, host-supplied sink for the diagnostic
+// output that PublicIPByHTTPGet produces when called with printResult=true.
+// A library must not write to stdout/stderr itself (QUALITY_RULES G2), so the
+// previous fmt.Printf calls are routed through this callback instead.
+//
+// Set it once during host initialization, e.g.:
+//
+//	ip.PublicIPResultSink = log.Printf
+//
+// The arguments mirror the old printf format ("url:<u>, contentType:<c>,
+// ret:<r>"): url is the requested URL, contentType the response Content-Type,
+// and ret a stringified view of the parsed body (the resolved IP, or the JSON
+// map for application/json responses).
+//
+// It is consulted only on the printResult=true path. If printResult is false
+// the sink is never invoked. If printResult is true and the sink is nil, the
+// diagnostic is silently dropped (no stdout output) — callers that still want
+// the old behavior must install the sink explicitly.
+//
+// Read/write of this variable is goroutine-safe across distinct function
+// values: the sink is loaded once per PublicIPByHTTPGet call into a local
+// (PublicIPByHTTPGet never runs concurrently with itself in a way that shares
+// intermediate state), but as with all package-level configuration, install it
+// before starting goroutines that call into the package.
+var PublicIPResultSink func(url, contentType, ret string)
+
 // loadLocalIPSnapshot returns the current cached snapshot, or nil if it has
 // never been populated. The returned pointer is never mutated by other
 // goroutines (copy-on-write), so callers may read its fields freely.
@@ -261,6 +287,10 @@ func PublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 		return
 	}
 
+	// loadSink once per call; a nil sink makes printResult a silent no-op,
+	// keeping this library stdout-free (QUALITY_RULES G2).
+	sink := PublicIPResultSink
+
 	// #nosec
 	if response, err = http.Get(url); err == nil {
 		defer func(Body io.ReadCloser) {
@@ -271,8 +301,8 @@ func PublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 			contentType := response.Header.Get("Content-Type")
 			if strings.Contains(contentType, HeaderContentTypeTextPlain) {
 				ip = string(bytes.Trim(body, " "))
-				if printResult {
-					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, ip)
+				if printResult && sink != nil {
+					sink(url, contentType, ip)
 				}
 			} else if strings.Contains(contentType, HeaderContentTypeApplicationJSON) {
 				data := make(map[string]interface{})
@@ -280,18 +310,29 @@ func PublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 				if err == nil {
 					ip, _ = data["ip"].(string)
 				}
-				if printResult {
-					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, data)
+				if printResult && sink != nil {
+					sink(url, contentType, jsonRet(data))
 				}
 			} else if strings.Contains(contentType, HeaderContentTypeTextHTML) {
 				ip = string(bytes.Trim(body, " "))
-				if printResult {
-					fmt.Printf("url:%v, contentType:%v, ret:%v\n", url, contentType, ip)
+				if printResult && sink != nil {
+					sink(url, contentType, ip)
 				}
 			}
 		}
 	}
 	return ip, err
+}
+
+// jsonRet renders the parsed JSON body for the diagnostic sink. It mirrors the
+// old fmt "%v" formatting of the map; on marshal failure (malformed map, which
+// should not happen for a freshly unmarshalled map[string]interface{}) it falls
+// back to fmt.Sprintf("%v", data) so the sink still receives something useful.
+func jsonRet(data map[string]interface{}) string {
+	if b, mErr := json.Marshal(data); mErr == nil {
+		return string(b)
+	}
+	return fmt.Sprintf("%v", data)
 }
 
 func getPublicIPByHTTPGet(ret chan string, url string) {

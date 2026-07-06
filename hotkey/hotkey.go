@@ -5,6 +5,11 @@
 // count on demand. Idle keys (no hits in the window) are pruned so memory tracks
 // active keys only. Pure standard library.
 //
+// By default a Detector tracks at most DefaultMaxKeys keys; once that ceiling is
+// reached the key with the fewest hits (ties broken by oldest last-touch) is
+// dropped. Pass WithMaxKeys(0) to disable the cap entirely (unbounded, the
+// pre-default behaviour), or WithMaxKeys(n) for a custom ceiling.
+//
 // Ad-tech uses: detect hot SSP endpoints, hot creatives, hot user segments, or
 // hot auction IDs that are skewing load — then route them to a local cache, a
 // dedicated shard, or throttle them individually. Pair with countmin for an
@@ -16,6 +21,12 @@ import (
 	"sync"
 	"time"
 )
+
+// DefaultMaxKeys is the default ceiling on the number of tracked keys applied
+// when WithMaxKeys is not used. It is large enough for typical hot-key detection
+// (a few thousand active keys) while bounding memory if the key space runs away.
+// Use WithMaxKeys(0) to disable the cap, or WithMaxKeys(n) for a custom ceiling.
+const DefaultMaxKeys = 10000
 
 // HotKey is a key with its current window count.
 type HotKey struct {
@@ -41,8 +52,13 @@ type Detector struct {
 // Option configures a Detector.
 type Option func(*Detector)
 
-// WithMaxKeys caps the number of tracked keys; idle keys are pruned first.
-// 0 = unbounded (default).
+// WithMaxKeys caps the number of tracked keys; idle keys are pruned first, then
+// the key with the fewest hits is dropped (ties broken by oldest last-touch).
+//
+// n <= 0 disables the cap (unbounded). When this option is omitted, New applies
+// DefaultMaxKeys as a sane ceiling so a runaway key space cannot grow the map
+// without bound. Pass WithMaxKeys(0) explicitly to restore fully unbounded
+// tracking.
 func WithMaxKeys(n int) Option { return func(d *Detector) { d.maxKeys = n } }
 
 // WithClock injects a clock for tests.
@@ -58,10 +74,11 @@ func New(window time.Duration, topK int, opts ...Option) *Detector {
 		panic("hotkey: topK must be > 0")
 	}
 	d := &Detector{
-		window: window,
-		topK:   topK,
-		clock:  time.Now,
-		keys:   make(map[string][]time.Time),
+		window:  window,
+		topK:    topK,
+		maxKeys: DefaultMaxKeys,
+		clock:   time.Now,
+		keys:    make(map[string][]time.Time),
 	}
 	for _, opt := range opts {
 		opt(d)

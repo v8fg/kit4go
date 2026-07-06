@@ -16,8 +16,10 @@ keeping full fidelity with the `errors` package, so wrapping code never drops
 information and guards stay stable regardless of the per-instance message.
 
 Two `*Error` compare equal under `errors.Is` when their codes match, enabling
-`errors.Is(err, errcode.New(errcode.NotFound, ""))` style guards against any
-error constructed with that code.
+`errors.Is(err, errcode.ErrNotFound)` style guards against any error
+constructed with that code. The package ships ready-made sentinels
+(`ErrNotFound`, `ErrInvalidArgument`, `ErrPermissionDenied`, `ErrInternal`,
+`ErrUnavailable`, `ErrUnauthenticated`) for the most common codes.
 
 ## API
 
@@ -29,6 +31,7 @@ error constructed with that code.
 | `(*Error).WithDetail(d) *Error` | Append a structured detail; fluent, chain off `New`/`Wrap` |
 | `(*Error).Error() / Unwrap() / Is(target)` | `error` interface + chain traversal |
 | `CodeOf(err) Code` | First code in the unwrap chain; `OK` for nil, `Unknown` for a non-`*Error` |
+| `ErrNotFound`, `ErrInvalidArgument`, ... | Package-level sentinels for common codes; use as `errors.Is` targets only |
 
 ## Example
 
@@ -60,6 +63,16 @@ Pure standard library; no external services. `errors.Is`/`As`/`Unwrap`
 semantics, `WithDetail` fluency, `CodeOf` over nil / plain errors / wrapped
 chains, and `Code.String` for known and out-of-range values.
 
-```bash
-go test -race -cover ./errcode/...
+```go
+// Concise guard via the package-level sentinel.
+err := someLookup()
+if errors.Is(err, errcode.ErrNotFound) {
+	// handle missing entity
+}
+
+// Sentinels are comparison targets only; return a fresh *Error from failures.
+return errcode.New(errcode.NotFound, "user 42 not found").
+    WithDetail("req-123")
 ```
+
+## Testing

@@ -25,6 +25,21 @@ func ExampleNew() {
 	// true
 }
 
+func ExampleErrNotFound() {
+	// The package-level sentinels give the concise guard form promised by the
+	// doc: errors.Is matches any *Error with the same code, regardless of the
+	// per-instance message, and traverses Wrap / fmt.Errorf %w chains.
+	err := fmt.Errorf("handler: %w",
+		errcode.Wrap(errcode.NotFound, errors.New("missing row"), "user 42"))
+
+	fmt.Println(errors.Is(err, errcode.ErrNotFound))
+	fmt.Println(errors.Is(err, errcode.ErrInternal))
+
+	// output:
+	// true
+	// false
+}
+
 func ExampleCodeOf() {
 	// nil is OK.
 	fmt.Println(errcode.CodeOf(nil))

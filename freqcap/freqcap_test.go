@@ -79,6 +79,84 @@ func TestMaxKeysEviction(t *testing.T) {
 	require.True(t, c.Allow("c"))
 }
 
+// TestDefaultMaxKeysApplied guards the D5 fix: omitting WithMaxKeys (or passing
+// 0) must cap tracked keys at DefaultMaxKeys instead of leaving the map
+// unbounded.
+func TestDefaultMaxKeysApplied(t *testing.T) {
+	// Sanity: the documented default is a sane, finite ceiling.
+	require.Equal(t, 10000, DefaultMaxKeys)
+
+	t.Run("omitted option applies default", func(t *testing.T) {
+		c := New(time.Hour, 1)
+		require.Equal(t, DefaultMaxKeys, c.maxKeys)
+	})
+	t.Run("explicit zero applies default", func(t *testing.T) {
+		c := New(time.Hour, 1, WithMaxKeys(0))
+		require.Equal(t, DefaultMaxKeys, c.maxKeys)
+	})
+	t.Run("explicit positive cap is preserved", func(t *testing.T) {
+		c := New(time.Hour, 1, WithMaxKeys(42))
+		require.Equal(t, 42, c.maxKeys)
+	})
+	t.Run("negative means unbounded", func(t *testing.T) {
+		c := New(time.Hour, 1, WithMaxKeys(-1))
+		require.Equal(t, -1, c.maxKeys)
+	})
+}
+
+// TestDefaultMaxKeysEvictsOverCeiling drives the default cap to overflow and
+// confirms eviction keeps the map at exactly DefaultMaxKeys entries.
+func TestDefaultMaxKeysEvictsOverCeiling(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	c := New(time.Hour, 1, WithClock(clk.now)) // no WithMaxKeys -> default
+	require.Equal(t, DefaultMaxKeys, c.maxKeys)
+
+	// Fill to the ceiling; each Allow triggers a prune of idle keys, so the
+	// map size never exceeds the cap while events are all in-window.
+	for i := 0; i < DefaultMaxKeys; i++ {
+		c.Allow(stringKey(i))
+	}
+	require.Equal(t, DefaultMaxKeys, c.Len())
+
+	// One more distinct, in-window key must evict the oldest-start key rather
+	// than grow the map past the default ceiling.
+	clk.t = clk.t.Add(time.Second)
+	c.Allow("overflow")
+	require.Equal(t, DefaultMaxKeys, c.Len(), "default ceiling must hold")
+}
+
+// TestUnboundedNoEviction confirms the negative-sentinel escape hatch disables
+// the key cap entirely (legacy 0=unbounded behaviour, now opt-in).
+func TestUnboundedNoEviction(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	c := New(time.Hour, 1, WithMaxKeys(-1), WithClock(clk.now))
+	const n = 50
+	for i := 0; i < n; i++ {
+		c.Allow(stringKey(i))
+	}
+	require.Equal(t, n, c.Len(), "unbounded map must not prune over the cap")
+}
+
+// stringKey returns a deterministic distinct key for i.
+func stringKey(i int) string {
+	return "k" + itoa(i)
+}
+
+// itoa is a stdlib-free non-negative int -> string for tests.
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	return string(buf[pos:])
+}
+
 func TestConcurrency(t *testing.T) {
 	c := New(time.Second, 100)
 	const goroutines = 32

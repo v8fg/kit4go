@@ -25,8 +25,19 @@ func CryptoRead(b []byte) (n int, err error) {
 	return DefaultCryptoSource.Read(b)
 }
 
-// CryptoReadString returns the random string with the length == len(b).
+// CryptoReadString fills b with cryptographically secure random bytes (via
+// CryptoRead) and returns them base64 (StdEncoding) encoded. n <= 0 or a nil
+// buffer returns "".
+//
+// On a Read error it returns "" rather than encoding potentially-unfilled
+// bytes, so callers can treat any non-empty result as fully random. Inspect
+// the underlying error via CryptoRead if you need the cause.
 func CryptoReadString(b []byte) string {
-	_, _ = DefaultCryptoSource.Read(b)
+	if len(b) == 0 {
+		return ""
+	}
+	if _, err := DefaultCryptoSource.Read(b); err != nil {
+		return ""
+	}
 	return base64.StdEncoding.EncodeToString(b)
 }

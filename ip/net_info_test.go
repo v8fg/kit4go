@@ -295,6 +295,104 @@ func TestPublicIPByHTTPGet(t *testing.T) {
 
 }
 
+// sinkCall captures one PublicIPResultSink invocation.
+type sinkCall struct {
+	url         string
+	contentType string
+	ret         string
+}
+
+// withPublicIPResultSink installs fn as the package-level sink for the duration
+// of fn and unconditionally restores the prior value on exit. The default value
+// of PublicIPResultSink is nil, so tests using this helper always leave it nil.
+func withPublicIPResultSink(fn func(url, contentType, ret string), body func()) {
+	orig := ip.PublicIPResultSink
+	ip.PublicIPResultSink = fn
+	defer func() { ip.PublicIPResultSink = orig }()
+	body()
+}
+
+// TestPublicIPByHTTPGetResultSink verifies the G2 fix: printResult=true output
+// is routed through the optional PublicIPResultSink callback, never fmt.Printf.
+func TestPublicIPByHTTPGetResultSink(t *testing.T) {
+	jsonRet := map[string]string{"city": "Beijing", "ip": "220.147.128.110"}
+	jsonResp, _ := json.Marshal(jsonRet)
+	plainResp := []byte("49.55.188.188")
+
+	convey.Convey("TestPublicIPByHTTPGetResultSink", t, func() {
+		convey.Convey("sink receives each content type with printResult=true", func() {
+			var calls []sinkCall
+			rec := func(u, ct, r string) { calls = append(calls, sinkCall{u, ct, r}) }
+
+			ts := mockServer(jsonResp, ip.HeaderContentTypeApplicationJSON, 0)
+			defer ts.Close()
+			ipStr, err := ip.PublicIPByHTTPGet("", true)
+			convey.So(ipStr, convey.ShouldEqual, "")
+			convey.So(err, convey.ShouldBeNil)
+
+			withPublicIPResultSink(rec, func() {
+				// JSON branch: ret is the marshalled body map.
+				ts2 := mockServer(jsonResp, ip.HeaderContentTypeApplicationJSON, 0)
+				defer ts2.Close()
+				ipStr, err = ip.PublicIPByHTTPGet(ts2.URL, true)
+				convey.So(ipStr, convey.ShouldEqual, "220.147.128.110")
+				convey.So(err, convey.ShouldBeNil)
+
+				// text/plain branch: ret is the resolved IP string.
+				ts3 := mockServer(plainResp, ip.HeaderContentTypeTextPlain, 0)
+				defer ts3.Close()
+				ipStr, err = ip.PublicIPByHTTPGet(ts3.URL, true)
+				convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
+				convey.So(err, convey.ShouldBeNil)
+
+				// text/html branch: ret is the resolved IP string.
+				ts4 := mockServer(plainResp, ip.HeaderContentTypeTextHTML, 0)
+				defer ts4.Close()
+				ipStr, err = ip.PublicIPByHTTPGet(ts4.URL, true)
+				convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
+				convey.So(err, convey.ShouldBeNil)
+			})
+
+			convey.So(len(calls), convey.ShouldEqual, 3)
+			// JSON: ret is the marshalled map containing the ip key.
+			convey.So(calls[0].contentType, convey.ShouldContainSubstring, ip.HeaderContentTypeApplicationJSON)
+			convey.So(calls[0].ret, convey.ShouldContainSubstring, "220.147.128.110")
+			convey.So(calls[0].ret, convey.ShouldContainSubstring, "Beijing")
+			// text/plain and text/html: ret is the bare IP.
+			convey.So(calls[1].contentType, convey.ShouldContainSubstring, ip.HeaderContentTypeTextPlain)
+			convey.So(calls[1].ret, convey.ShouldEqual, "49.55.188.188")
+			convey.So(calls[2].contentType, convey.ShouldContainSubstring, ip.HeaderContentTypeTextHTML)
+			convey.So(calls[2].ret, convey.ShouldEqual, "49.55.188.188")
+		})
+
+		convey.Convey("printResult=false never invokes the sink", func() {
+			var calls []sinkCall
+			rec := func(u, ct, r string) { calls = append(calls, sinkCall{u, ct, r}) }
+
+			ts := mockServer(plainResp, ip.HeaderContentTypeTextPlain, 0)
+			defer ts.Close()
+			withPublicIPResultSink(rec, func() {
+				ipStr, err := ip.PublicIPByHTTPGet(ts.URL, false)
+				convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
+				convey.So(err, convey.ShouldBeNil)
+			})
+			convey.So(calls, convey.ShouldBeEmpty)
+		})
+
+		convey.Convey("nil sink with printResult=true silently skips (default, no stdout)", func() {
+			// No sink installed (default nil). Must not panic and must still
+			// resolve the IP — this is the backward-compatible default.
+			ts := mockServer(plainResp, ip.HeaderContentTypeTextPlain, 0)
+			defer ts.Close()
+			withPublicIPResultSink(nil, func() {
+				ipStr, err := ip.PublicIPByHTTPGet(ts.URL, true)
+				convey.So(ipStr, convey.ShouldEqual, "49.55.188.188")
+				convey.So(err, convey.ShouldBeNil)
+			})
+		})
+	})
+}
+
 func TestPublicIP(t *testing.T) {
 	// jsonRet := `{"city":"Beijing","country":"CN","hostname":"118.128.147.222.broad.bj.bj.dynamic.163data.com.cn","ip":"220.147.128.110","loc":"39.9075,116.3972","org":"AS4847 China Networks Inter-Exchange","region":"Beijing","timezone":"Asia/Shanghai"}`
 	jsonRet := map[string]string{"city": "Beijing", "country": "CN", "hostname": "118.128.147.222.broad.bj.bj.dynamic.163data.com.cn", "ip": "220.147.128.110", "loc": "39.9075,116.3972", "org": "AS4847 China Networks Inter-Exchange", "region": "Beijing", "timezone": "Asia/Shanghai"}

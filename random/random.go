@@ -27,11 +27,19 @@ func maxBits(num int) (bits int) {
 // RandStringWithLetter only returns a random string(uppercase or lowercase) of length n, with no numbers.
 //
 //	more details ref: https://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-go/31832326#31832326
+//
+// This is a convenience over the package's math/rand/v2 global source and is NOT
+// cryptographically secure; for secrets/tokens use the crypto sources
+// (CryptoInt/CryptoRead/CryptoReadString).
 func RandStringWithLetter(n int) string {
 	return randStringWithLetterDigits(n, false)
 }
 
 // RandStringWithLetterDigits only returns a random string(uppercase or lowercase) of length n.
+//
+// This is a convenience over the package's math/rand/v2 global source and is NOT
+// cryptographically secure; for secrets/tokens use the crypto sources
+// (CryptoInt/CryptoRead/CryptoReadString).
 func RandStringWithLetterDigits(n int) string {
 	return randStringWithLetterDigits(n, true)
 }

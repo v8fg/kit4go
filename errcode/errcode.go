@@ -9,8 +9,10 @@
 // fidelity.
 //
 // Two [*Error] compare equal under errors.Is when their codes match — this
-// lets callers write errors.Is(err, errcode.NotFound) style guards against
+// lets callers write errors.Is(err, errcode.ErrNotFound) style guards against
 // any error constructed with that code, regardless of the per-instance message.
+// The package-level sentinels (ErrNotFound, ErrInvalidArgument, ...) provide
+// ready-made targets for the common codes.
 //
 // The package uses only the standard library.
 package errcode
@@ -146,6 +148,40 @@ func New(code Code, msg string) *Error {
 func Wrap(code Code, cause error, msg string) *Error {
 	return &Error{Code: code, Message: msg, cause: cause}
 }
+
+// Package-level sentinels for the most common codes. Each is an [*Error] built
+// with [New] and an empty message, so errors.Is(err, ErrNotFound) matches any
+// [*Error] constructed with [NotFound] — the same code-equality rule documented
+// on (*Error).Is — regardless of its per-instance message. They let callers
+// write concise, stable guards instead of errors.Is(err, New(NotFound, "")).
+//
+// Sentinels are comparison targets only; do not return them directly from a
+// failing operation. Build a fresh [*Error] via New / Wrap so the message and
+// optional cause describe the specific failure.
+var (
+	// ErrNotFound is the sentinel for [NotFound]: the requested entity was not
+	// found.
+	ErrNotFound = New(NotFound, "")
+
+	// ErrInvalidArgument is the sentinel for [InvalidArgument]: the client
+	// supplied an invalid argument.
+	ErrInvalidArgument = New(InvalidArgument, "")
+
+	// ErrPermissionDenied is the sentinel for [PermissionDenied]: the caller
+	// lacks permission to perform the operation.
+	ErrPermissionDenied = New(PermissionDenied, "")
+
+	// ErrInternal is the sentinel for [Internal]: an unexpected internal error.
+	ErrInternal = New(Internal, "")
+
+	// ErrUnavailable is the sentinel for [Unavailable]: the service is
+	// currently unavailable, typically a transient condition.
+	ErrUnavailable = New(Unavailable, "")
+
+	// ErrUnauthenticated is the sentinel for [Unauthenticated]: the request
+	// lacks valid authentication credentials.
+	ErrUnauthenticated = New(Unauthenticated, "")
+)
 
 // CodeOf walks the errors.Unwrap chain of err and returns the [Code] of the
 // first [*Error] it meets. It returns OK when err is nil and Unknown for a

@@ -155,6 +155,9 @@ func TestCryptoReadString(t *testing.T) {
 		ret := random.CryptoReadString(nil)
 		convey.So(ret, convey.ShouldEqual, "")
 
+		ret = random.CryptoReadString([]byte{})
+		convey.So(ret, convey.ShouldEqual, "")
+
 		ret = random.CryptoReadString([]byte{1})
 		convey.So(ret, convey.ShouldNotEqual, "")
 
@@ -164,19 +167,31 @@ func TestCryptoReadString(t *testing.T) {
 		ret = random.CryptoReadString([]byte{1, 2, 3, 5})
 		convey.So(ret, convey.ShouldNotEqual, "")
 
-		// error-path via mock: Read returns short counts; CryptoReadString
-		// still base64-encodes whatever bytes are in the buffer.
-		convey.Convey("Mocked", func() {
+		convey.Convey("Mocked happy-path encodes the filled buffer", func() {
 			mockSource := new(random.MockCryptoSource)
-			mockSource.EXPECT().Read(mock.Anything).Return(0, nil).Once()
 			mockSource.EXPECT().Read(mock.Anything).Return(1, nil).Once()
 			mockSource.EXPECT().Read(mock.Anything).Return(2, nil).Once()
 			mockSource.EXPECT().Read(mock.Anything).Return(4, nil).Once()
 			withCryptoSource(t, mockSource, func() {
+				// nil/empty buffers short-circuit before Read, so no
+				// expectation is consumed for them.
 				convey.So(random.CryptoReadString(nil), convey.ShouldEqual, "")
+				convey.So(random.CryptoReadString([]byte{}), convey.ShouldEqual, "")
 				convey.So(random.CryptoReadString([]byte{1}), convey.ShouldNotEqual, "")
 				convey.So(random.CryptoReadString([]byte{1, 2}), convey.ShouldNotEqual, "")
 				convey.So(random.CryptoReadString([]byte{1, 2, 3, 5}), convey.ShouldNotEqual, "")
+			})
+		})
+
+		// B4: a Read error must surface as "" rather than encoding
+		// potentially-unfilled bytes. Covers the previous _,_ = discard.
+		convey.Convey("Mocked Read error returns empty string", func() {
+			mockSource := new(random.MockCryptoSource)
+			mockSource.EXPECT().Read(mock.Anything).Return(0, errors.New("short read")).Once()
+			mockSource.EXPECT().Read(mock.Anything).Return(2, errors.New("io error")).Once()
+			withCryptoSource(t, mockSource, func() {
+				convey.So(random.CryptoReadString([]byte{1, 2}), convey.ShouldEqual, "")
+				convey.So(random.CryptoReadString([]byte{1, 2, 3, 5}), convey.ShouldEqual, "")
 			})
 		})
 	})

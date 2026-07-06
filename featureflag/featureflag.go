@@ -7,9 +7,20 @@
 package featureflag
 
 import (
-	"hash/fnv"
 	"sync"
 	"time"
+)
+
+// FNV-1a 32-bit constants (identical to hash/fnv.New32a), inlined so the
+// rollout hash is computed over the key with zero allocations. hash/fnv's
+// hash.Hash32.Write goes through an interface and forces the []byte(key)
+// conversion to escape; the inline form avoids both that escape and the
+// per-call hasher object, removing every allocation from the hot path that
+// previously sat under the read lock (D6). A golden test pins this to the
+// stdlib implementation.
+const (
+	fnv32aOffsetBasis uint32 = 2166136261
+	fnv32aPrime       uint32 = 16777619
 )
 
 // Flag is a single feature toggle with rollout controls. Safe for concurrent use.
@@ -77,25 +88,34 @@ func New(opts ...Option) *Flag {
 //  3. Key in allowlist → true.
 //  4. Percentage rollout (hash(key) % 100 < percentage).
 func (f *Flag) Enabled(key string) bool {
+	// Snapshot all guarded state under the read lock, then release it before
+	// hashing. This keeps the FNV-1a computation (and any allocation it could
+	// cause) strictly outside the critical section, so the read lock is held
+	// only for three field reads (D6 fix).
 	f.mu.RLock()
-	defer f.mu.RUnlock()
 	if !f.enabled {
+		f.mu.RUnlock()
 		return false
 	}
 	if !f.notBefore.IsZero() && time.Now().Before(f.notBefore) {
+		f.mu.RUnlock()
 		return false
 	}
-	if _, ok := f.allowlist[key]; ok {
+	_, allowlisted := f.allowlist[key]
+	percentage := f.percentage
+	f.mu.RUnlock()
+
+	if allowlisted {
 		return true
 	}
 	// percentage=0 means nobody (except allowlist); 100 means everyone.
-	if f.percentage >= 100 {
+	if percentage >= 100 {
 		return true
 	}
-	if f.percentage == 0 {
+	if percentage == 0 {
 		return false
 	}
-	return hashPercent(key) < f.percentage
+	return hashPercent(key) < percentage
 }
 
 // Enable turns the flag on globally.
@@ -132,9 +152,14 @@ func (f *Flag) Revoke(keys ...string) {
 	f.mu.Unlock()
 }
 
-// hashPercent returns a 0-99 value for the key (deterministic, uniform).
+// hashPercent returns a 0-99 value for the key (deterministic, uniform). It
+// uses FNV-1a 32-bit inlined over the key bytes, so the call allocates nothing
+// and never holds the read lock (D6 fix).
 func hashPercent(key string) uint {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(key))
-	return uint(h.Sum32() % 100)
+	h := fnv32aOffsetBasis
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= fnv32aPrime
+	}
+	return uint(h % 100)
 }

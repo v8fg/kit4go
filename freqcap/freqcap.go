@@ -18,6 +18,12 @@ import (
 	"time"
 )
 
+// DefaultMaxKeys is the key cap applied when WithMaxKeys is not used or passed
+// 0. It bounds memory in the common "no cap configured" case so an unbounded
+// influx of distinct keys cannot grow the map without limit. A deliberately
+// unbounded Counter can still be built with WithMaxKeys(-1).
+const DefaultMaxKeys = 10000
+
 // Counter tracks per-key event counts over a fixed sliding window.
 //
 // Concurrency: safe for concurrent use. All methods (Allow, Inc, Clear, and the
@@ -27,7 +33,7 @@ type Counter struct {
 	mu        sync.Mutex
 	window    time.Duration
 	maxEvents int
-	maxKeys   int // 0 = unbounded
+	maxKeys   int // 0 = DefaultMaxKeys (applied in New); <0 = unbounded
 	clock     func() time.Time
 	keys      map[string][]time.Time
 }
@@ -36,7 +42,11 @@ type Counter struct {
 type Option func(*Counter)
 
 // WithMaxKeys caps the number of tracked keys; when exceeded, idle keys (those
-// with no events in the window) are pruned first. 0 (default) = unbounded.
+// with no events in the window) are pruned first, then the oldest-start keys.
+//
+// n == 0 (or omitting the option) applies DefaultMaxKeys. Pass a negative value
+// (e.g. -1) for an unbounded map; use this only when the caller bounds the key
+// space itself, since nothing else limits memory growth.
 func WithMaxKeys(n int) Option { return func(c *Counter) { c.maxKeys = n } }
 
 // WithClock injects a clock (for tests). Defaults to time.Now.
@@ -44,6 +54,8 @@ func WithClock(f func() time.Time) Option { return func(c *Counter) { c.clock = 
 
 // New builds a Counter that allows at most maxEvents per key in any window.
 // Panics if maxEvents <= 0 or window <= 0.
+//
+// Unless WithMaxKeys overrides it, the tracked-key cap is DefaultMaxKeys.
 func New(window time.Duration, maxEvents int, opts ...Option) *Counter {
 	if maxEvents <= 0 {
 		panic("freqcap: maxEvents must be > 0")
@@ -54,11 +66,18 @@ func New(window time.Duration, maxEvents int, opts ...Option) *Counter {
 	c := &Counter{
 		window:    window,
 		maxEvents: maxEvents,
+		maxKeys:   DefaultMaxKeys,
 		clock:     time.Now,
 		keys:      make(map[string][]time.Time),
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	// Normalise the sentinel: 0 (explicit WithMaxKeys(0) or unset) means
+	// "use the default". Negative means unbounded and is left as-is so
+	// evictIdleLocked's maxKeys > 0 guard skips eviction.
+	if c.maxKeys == 0 {
+		c.maxKeys = DefaultMaxKeys
 	}
 	return c
 }

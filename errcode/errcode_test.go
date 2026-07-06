@@ -216,3 +216,63 @@ func TestIs_TypedNilTarget(t *testing.T) {
 		t.Fatal("Is(typed-nil *Error) = true, want false")
 	}
 }
+
+// TestSentinels verifies the package-level sentinel errors carry the correct
+// code, and that errors.Is matches a fresh instance with the same code even
+// when the message differs — including through a Wrap chain. This is the
+// concise guard form promised by the package doc.
+func TestSentinels(t *testing.T) {
+	sentinels := []struct {
+		name     string
+		target   *Error
+		code     Code
+		negative *Error // a different-code instance must NOT match
+	}{
+		{"ErrNotFound", ErrNotFound, NotFound, New(Internal, "")},
+		{"ErrInvalidArgument", ErrInvalidArgument, InvalidArgument, New(NotFound, "")},
+		{"ErrPermissionDenied", ErrPermissionDenied, PermissionDenied, New(Internal, "")},
+		{"ErrInternal", ErrInternal, Internal, New(NotFound, "")},
+		{"ErrUnavailable", ErrUnavailable, Unavailable, New(Internal, "")},
+		{"ErrUnauthenticated", ErrUnauthenticated, Unauthenticated, New(NotFound, "")},
+	}
+
+	for _, tt := range sentinels {
+		t.Run(tt.name, func(t *testing.T) {
+			// The sentinel itself reports the expected code and a stable form.
+			if tt.target.Code != tt.code {
+				t.Fatalf("%s.Code = %v, want %v", tt.name, tt.target.Code, tt.code)
+			}
+			if tt.target.Unwrap() != nil {
+				t.Fatalf("%s.Unwrap() = %v, want nil", tt.name, tt.target.Unwrap())
+			}
+
+			// A fresh instance with the same code, different message, matches.
+			fresh := New(tt.code, "specific failure for "+tt.name)
+			if !errors.Is(fresh, tt.target) {
+				t.Fatalf("errors.Is(fresh, %s) = false, want true (same code)", tt.name)
+			}
+			// Symmetry: the sentinel also matches a same-code instance as target.
+			if !errors.Is(tt.target, fresh) {
+				t.Fatalf("errors.Is(%s, fresh) = false, want true (same code)", tt.name)
+			}
+
+			// The guard also traverses a Wrap chain: the wrapped error's code
+			// is reachable through the sentinel target.
+			wrapped := Wrap(tt.code, sentinel, "wrapped: "+tt.name)
+			if !errors.Is(wrapped, tt.target) {
+				t.Fatalf("errors.Is(wrapped, %s) = false, want true (through chain)", tt.name)
+			}
+
+			// A different-code instance must not match.
+			if errors.Is(tt.negative, tt.target) {
+				t.Fatalf("errors.Is(differentCode, %s) = true, want false", tt.name)
+			}
+
+			// The sentinel still participates in errors.As as an *Error.
+			var asTarget *Error
+			if !errors.As(tt.target, &asTarget) {
+				t.Fatalf("errors.As(%s) = false, want true", tt.name)
+			}
+		})
+	}
+}

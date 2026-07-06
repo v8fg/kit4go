@@ -74,3 +74,71 @@ func TestDecodeRejectsOutOfRangeChar(t *testing.T) {
 	_, err = Decode("0Z9-") // '-' invalid
 	require.ErrorIs(t, err, ErrInvalid)
 }
+
+// TestDecodeMatchesCustomPath guards the precomputed default-alphabet fast
+// path: Decode must return exactly what DecodeWithAlphabet(default) returns,
+// for valid strings and for the same error sentinel on invalid ones.
+func TestDecodeMatchesCustomPath(t *testing.T) {
+	// Valid encodings across the whole uint64 range plus boundary values.
+	inputs := []string{
+		"0", "1", "z", "10", "1z", "aB3", "0Z9a",
+		Encode(0), Encode(61), Encode(62), Encode(999999), Encode(^uint64(0)),
+	}
+	for _, s := range inputs {
+		want, errW := DecodeWithAlphabet(s, Alphabet)
+		got, errG := Decode(s)
+		require.Equal(t, errW, errG, "error mismatch for %q", s)
+		require.Equal(t, want, got, "value mismatch for %q", s)
+	}
+	// Invalid inputs must yield the same sentinel from both paths.
+	for _, s := range []string{"", "abc!", "-", " ", "0Z9-"} {
+		_, errW := DecodeWithAlphabet(s, Alphabet)
+		_, errG := Decode(s)
+		require.Equal(t, errW, errG, "error mismatch for invalid %q", s)
+		require.ErrorIs(t, errG, ErrInvalid, "invalid %q", s)
+	}
+}
+
+// TestDefaultDecodeTable checks the package-init precomputed table directly.
+func TestDefaultDecodeTable(t *testing.T) {
+	// Every default-alphabet byte maps to its own index.
+	for i := 0; i < 62; i++ {
+		require.Equal(t, int8(i), defaultDecodeTable[Alphabet[i]],
+			"index of byte %q", Alphabet[i])
+	}
+	// Bytes not in the alphabet (a sample across ASCII) must be -1.
+	for _, c := range []byte{'!', '-', ' ', '#', '\x00', '\xff', 0x80} {
+		require.Equal(t, int8(-1), defaultDecodeTable[c], "non-alphabet byte %d", c)
+	}
+}
+
+// TestDecodeWithTableHelper covers the unexported walker used by both Decode
+// and DecodeWithAlphabet.
+func TestDecodeWithTableHelper(t *testing.T) {
+	idx := buildDecodeTable(Alphabet)
+	// Empty -> ErrInvalid, regardless of table.
+	_, err := decodeWithTable("", &idx)
+	require.ErrorIs(t, err, ErrInvalid)
+	// Valid -> expected value.
+	v, err := decodeWithTable("10", &idx) // 1*62 + 0
+	require.NoError(t, err)
+	require.Equal(t, uint64(62), v)
+	// A slot set to -1 in the table is rejected as invalid.
+	idx['1'] = -1
+	_, err = decodeWithTable("10", &idx)
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
+// TestBuildDecodeTableErrDuplicate covers the duplicate-byte rejection in the
+// custom-alphabet table builder (mirrors DecodeWithAlphabet validation).
+func TestBuildDecodeTableErrDuplicate(t *testing.T) {
+	// A valid alphabet yields ok=true with correct indices.
+	idx, ok := buildDecodeTableErr(Alphabet)
+	require.True(t, ok)
+	require.Equal(t, int8(0), idx[Alphabet[0]])
+	require.Equal(t, int8(61), idx[Alphabet[61]])
+	// A duplicate byte yields ok=false.
+	dup := "00123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	_, ok = buildDecodeTableErr(dup)
+	require.False(t, ok)
+}
