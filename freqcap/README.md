@@ -34,7 +34,7 @@ if cap.Allow(userID + "|" + creativeID) {
 
 | Option | Default | Effect |
 |---|---|---|
-| `WithMaxKeys(n)` | `DefaultMaxKeys` (10000) | Cap tracked keys; prunes idle, then oldest-start. `0` applies the default; pass `-1` for unbounded. |
+| `WithMaxKeys(n)` | `DefaultMaxKeys` (10000) | Cap tracked keys; prunes idle, then oldest-start. `0` (the Go zero value) means unbounded — use only when the caller bounds the key space itself. Matches `hotkey`. |
 | `WithClock(f)` | `time.Now` | Inject a clock (tests) |
 
 ## Ad-tech / push uses

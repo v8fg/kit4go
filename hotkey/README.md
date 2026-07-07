@@ -28,7 +28,7 @@ n    := d.Count("ssp:rubicon")       // current window count
 | `Count(key) int` | Hits for key in the current window |
 | `Len() int` | Active (non-idle) key count |
 | `Reset()` | Clear all |
-| `WithMaxKeys(n)` | Cap tracked keys (prune idle, then fewest-hits); `n <= 0` disables the cap. Default `DefaultMaxKeys` (10000) when omitted |
+| `WithMaxKeys(n)` | Cap tracked keys (prune idle, then fewest-hits). `0` (the Go zero value) disables the cap (unbounded); negative values are treated the same way. Default `DefaultMaxKeys` (10000) when omitted. Matches `freqcap`. |
 | `WithClock(f)` | Inject a clock (tests) |
 
 ## Ad-tech uses

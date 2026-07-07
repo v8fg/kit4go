@@ -79,9 +79,10 @@ func TestMaxKeysEviction(t *testing.T) {
 	require.True(t, c.Allow("c"))
 }
 
-// TestDefaultMaxKeysApplied guards the D5 fix: omitting WithMaxKeys (or passing
-// 0) must cap tracked keys at DefaultMaxKeys instead of leaving the map
-// unbounded.
+// TestDefaultMaxKeysApplied guards the D5 fix: omitting WithMaxKeys must cap
+// tracked keys at DefaultMaxKeys instead of leaving the map unbounded. An
+// explicit WithMaxKeys(0) is the documented opt-out (unbounded), matching
+// package hotkey's zero-value convention.
 func TestDefaultMaxKeysApplied(t *testing.T) {
 	// Sanity: the documented default is a sane, finite ceiling.
 	require.Equal(t, 10000, DefaultMaxKeys)
@@ -90,17 +91,17 @@ func TestDefaultMaxKeysApplied(t *testing.T) {
 		c := New(time.Hour, 1)
 		require.Equal(t, DefaultMaxKeys, c.maxKeys)
 	})
-	t.Run("explicit zero applies default", func(t *testing.T) {
+	t.Run("explicit zero means unbounded", func(t *testing.T) {
 		c := New(time.Hour, 1, WithMaxKeys(0))
-		require.Equal(t, DefaultMaxKeys, c.maxKeys)
+		require.Equal(t, 0, c.maxKeys, "WithMaxKeys(0) must opt out of the default cap")
 	})
 	t.Run("explicit positive cap is preserved", func(t *testing.T) {
 		c := New(time.Hour, 1, WithMaxKeys(42))
 		require.Equal(t, 42, c.maxKeys)
 	})
-	t.Run("negative means unbounded", func(t *testing.T) {
+	t.Run("negative normalised to unbounded", func(t *testing.T) {
 		c := New(time.Hour, 1, WithMaxKeys(-1))
-		require.Equal(t, -1, c.maxKeys)
+		require.Equal(t, 0, c.maxKeys, "negative values normalise to the 0 unbounded sentinel")
 	})
 }
 
@@ -125,16 +126,28 @@ func TestDefaultMaxKeysEvictsOverCeiling(t *testing.T) {
 	require.Equal(t, DefaultMaxKeys, c.Len(), "default ceiling must hold")
 }
 
-// TestUnboundedNoEviction confirms the negative-sentinel escape hatch disables
-// the key cap entirely (legacy 0=unbounded behaviour, now opt-in).
+// TestUnboundedNoEviction confirms the zero-sentinel escape hatch disables the
+// key cap entirely (WithMaxKeys(0), matching package hotkey's zero-value
+// convention). A negative value is normalised to the same unbounded behaviour.
 func TestUnboundedNoEviction(t *testing.T) {
-	clk := &fakeClock{t: time.Unix(0, 0)}
-	c := New(time.Hour, 1, WithMaxKeys(-1), WithClock(clk.now))
-	const n = 50
-	for i := 0; i < n; i++ {
-		c.Allow(stringKey(i))
-	}
-	require.Equal(t, n, c.Len(), "unbounded map must not prune over the cap")
+	t.Run("zero is unbounded", func(t *testing.T) {
+		clk := &fakeClock{t: time.Unix(0, 0)}
+		c := New(time.Hour, 1, WithMaxKeys(0), WithClock(clk.now))
+		const n = 50
+		for i := 0; i < n; i++ {
+			c.Allow(stringKey(i))
+		}
+		require.Equal(t, n, c.Len(), "unbounded map must not prune over the cap")
+	})
+	t.Run("negative normalised to unbounded", func(t *testing.T) {
+		clk := &fakeClock{t: time.Unix(0, 0)}
+		c := New(time.Hour, 1, WithMaxKeys(-1), WithClock(clk.now))
+		const n = 50
+		for i := 0; i < n; i++ {
+			c.Allow(stringKey(i))
+		}
+		require.Equal(t, n, c.Len(), "negative maxKeys is unbounded after normalisation")
+	})
 }
 
 // stringKey returns a deterministic distinct key for i.

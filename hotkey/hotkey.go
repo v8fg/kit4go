@@ -7,8 +7,9 @@
 //
 // By default a Detector tracks at most DefaultMaxKeys keys; once that ceiling is
 // reached the key with the fewest hits (ties broken by oldest last-touch) is
-// dropped. Pass WithMaxKeys(0) to disable the cap entirely (unbounded, the
-// pre-default behaviour), or WithMaxKeys(n) for a custom ceiling.
+// dropped. Pass WithMaxKeys(0) — the Go zero value — to disable the cap entirely
+// (unbounded), or WithMaxKeys(n) for a custom ceiling. Package freqcap shares
+// the same convention.
 //
 // Ad-tech uses: detect hot SSP endpoints, hot creatives, hot user segments, or
 // hot auction IDs that are skewing load — then route them to a local cache, a
@@ -23,9 +24,11 @@ import (
 )
 
 // DefaultMaxKeys is the default ceiling on the number of tracked keys applied
-// when WithMaxKeys is not used. It is large enough for typical hot-key detection
+// when WithMaxKeys is omitted. It is large enough for typical hot-key detection
 // (a few thousand active keys) while bounding memory if the key space runs away.
-// Use WithMaxKeys(0) to disable the cap, or WithMaxKeys(n) for a custom ceiling.
+// Use WithMaxKeys(0) — the Go zero value — to disable the cap (unbounded), or
+// WithMaxKeys(n) for a custom ceiling. This matches the convention in package
+// freqcap.
 const DefaultMaxKeys = 10000
 
 // HotKey is a key with its current window count.
@@ -55,10 +58,11 @@ type Option func(*Detector)
 // WithMaxKeys caps the number of tracked keys; idle keys are pruned first, then
 // the key with the fewest hits is dropped (ties broken by oldest last-touch).
 //
-// n <= 0 disables the cap (unbounded). When this option is omitted, New applies
+// WithMaxKeys(0) — the Go zero value — disables the cap (unbounded). Negative
+// values are treated the same way. When this option is omitted, New applies
 // DefaultMaxKeys as a sane ceiling so a runaway key space cannot grow the map
 // without bound. Pass WithMaxKeys(0) explicitly to restore fully unbounded
-// tracking.
+// tracking; this matches the convention in package freqcap.
 func WithMaxKeys(n int) Option { return func(d *Detector) { d.maxKeys = n } }
 
 // WithClock injects a clock for tests.
