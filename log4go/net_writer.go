@@ -127,10 +127,6 @@ func (n *NetWriter) Init() error {
 	return nil
 }
 
-// Write enqueues r for async send under the OverflowPolicy. It NEVER blocks the
-// caller under drop/spill (block policy blocks, as the name promises). The
-// record is copied because the bootstrap goroutine returns it to the record
-// pool after Write returns.
 // Name returns WriterNameNet.
 func (n *NetWriter) Name() string { return WriterNameNet }
 
@@ -143,6 +139,10 @@ func (n *NetWriter) Resume() { n.paused.Store(false) }
 // Paused reports whether the writer is currently paused.
 func (n *NetWriter) Paused() bool { return n.paused.Load() }
 
+// Write enqueues a private copy of r for async send under the OverflowPolicy.
+// It NEVER blocks the caller under drop/spill (the block policy blocks, as the
+// name promises). The record is copied because the bootstrap goroutine returns
+// it to the record pool after Write returns.
 func (n *NetWriter) Write(r *Record) error {
 	if n.paused.Load() {
 		return nil

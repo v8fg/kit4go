@@ -49,11 +49,15 @@ var colors = []brush{
 	newBrush("90"),   // Trace              dark grey
 }
 
+// ColorString renders the record as a single line fully tinted with the level
+// color (used when ConsoleWriter FullColor is set).
 func (r *colorRecord) ColorString() string {
 	inf := fmt.Sprintf("%s %s %s %s\n", r.time, LevelFlags[r.level], r.file, r.msg)
 	return colors[r.level](inf)
 }
 
+// String renders the record with the level flag colorized and the file field
+// on an inverted background (used when ConsoleWriter Color is set without FullColor).
 func (r *colorRecord) String() string {
 	inf := ""
 	switch r.level {

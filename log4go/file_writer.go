@@ -223,16 +223,6 @@ func NewFileWriterWithOptions(options FileWriterOptions) *FileWriter {
 	return fileWriter
 }
 
-// Write file write. In async mode it delivers to a bounded channel under the
-// configured overflow policy (never spawns a goroutine per record); in sync
-// mode it writes bufio directly (backward compatible).
-//
-// In async mode the incoming *Record is owned by the caller (the logger may
-// recycle it from a pool right after this returns), while the daemon consumes
-// it later. We therefore hand the daemon a private copy so it never races the
-// caller's reuse of r. Record holds only immutable value types (strings + int),
-// so a shallow copy is sufficient and correct. (In sync mode writeOne runs to
-// completion before return, so no copy is needed.)
 // Name returns WriterNameFile.
 func (w *FileWriter) Name() string { return WriterNameFile }
 
@@ -245,6 +235,17 @@ func (w *FileWriter) Resume() { w.paused.Store(false) }
 // Paused reports whether the writer is currently paused.
 func (w *FileWriter) Paused() bool { return w.paused.Load() }
 
+// Write writes r. In async mode it delivers a private copy of the record to a
+// bounded channel under the configured overflow policy (never spawns a goroutine
+// per record); in sync mode it writes through bufio directly (backward
+// compatible).
+//
+// In async mode the incoming *Record is owned by the caller (the logger may
+// recycle it from a pool right after this returns), while the daemon consumes
+// it later. We therefore hand the daemon a private copy so it never races the
+// caller's reuse of r. Record holds only immutable value types (strings + int),
+// so a shallow copy is sufficient and correct. (In sync mode writeSync runs to
+// completion before return, so no copy is needed.)
 func (w *FileWriter) Write(r *Record) error {
 	if w.paused.Load() {
 		return nil

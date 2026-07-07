@@ -7,6 +7,8 @@ import (
 	"github.com/v8fg/kit4go/datetime"
 )
 
+// ExampleDurationStrToDuration demonstrates parsing a Go duration string into a
+// time.Duration.
 func ExampleDurationStrToDuration() {
 	d, _ := datetime.DurationStrToDuration("500ms")
 	fmt.Println(d)

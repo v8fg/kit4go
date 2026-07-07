@@ -9,6 +9,8 @@ import (
 	"github.com/v8fg/kit4go/datetime"
 )
 
+// TestMain pins time.Local to UTC for the package's tests so that layout-driven
+// parses (which default to Local) are deterministic and timezone-independent.
 func TestMain(m *testing.M) {
 	// set the local to UTC, avoid the invalid parse.
 	oldLocal := time.Local
@@ -21,6 +23,7 @@ func TestMain(m *testing.M) {
 	}()
 }
 
+// TestAddDate covers AddDate for forward and backward day offsets.
 func TestAddDate(t *testing.T) {
 	type args struct {
 		years  int
@@ -52,6 +55,7 @@ func TestAddDate(t *testing.T) {
 	}
 }
 
+// TestAddDays covers AddDays for positive and negative day deltas.
 func TestAddDays(t *testing.T) {
 	type args struct {
 		days int
@@ -80,6 +84,7 @@ func TestAddDays(t *testing.T) {
 	}
 }
 
+// TestAddDuration covers AddDuration with forward and backward durations.
 func TestAddDuration(t *testing.T) {
 	type args struct {
 		d time.Duration
@@ -108,6 +113,8 @@ func TestAddDuration(t *testing.T) {
 	}
 }
 
+// TestAddDurationStr covers AddDurationStr across valid duration strings; the
+// error path is exercised separately in TestParseErrors.
 func TestAddDurationStr(t *testing.T) {
 	type args struct {
 		duration string
@@ -144,6 +151,8 @@ func TestAddDurationStr(t *testing.T) {
 	}
 }
 
+// TestDeltaDateDay covers DeltaDateDays integer-day counting, including the
+// same-day (1) and span-into-next-day (2) cases.
 func TestDeltaDateDay(t *testing.T) {
 	type args struct {
 		start time.Time
@@ -176,6 +185,7 @@ func TestDeltaDateDay(t *testing.T) {
 	}
 }
 
+// TestDeltaDays covers DeltaDays returning fractional day spans.
 func TestDeltaDays(t *testing.T) {
 	type args struct {
 		start time.Time
@@ -208,6 +218,7 @@ func TestDeltaDays(t *testing.T) {
 	}
 }
 
+// TestDeltaHours covers DeltaHours for sub-day and cross-day spans.
 func TestDeltaHours(t *testing.T) {
 	type args struct {
 		start time.Time
@@ -240,6 +251,7 @@ func TestDeltaHours(t *testing.T) {
 	}
 }
 
+// TestDeltaMinutes covers DeltaMinutes for sub-hour and cross-hour spans.
 func TestDeltaMinutes(t *testing.T) {
 	type args struct {
 		start time.Time
@@ -272,6 +284,7 @@ func TestDeltaMinutes(t *testing.T) {
 	}
 }
 
+// TestDeltaSeconds covers DeltaSeconds for sub-minute and cross-hour spans.
 func TestDeltaSeconds(t *testing.T) {
 	type args struct {
 		start time.Time
@@ -304,6 +317,7 @@ func TestDeltaSeconds(t *testing.T) {
 	}
 }
 
+// TestEndTime covers EndTime producing the 23:59:59.999999999 boundary.
 func TestEndTime(t *testing.T) {
 	type args struct {
 		t time.Time
@@ -333,6 +347,8 @@ func TestEndTime(t *testing.T) {
 	}
 }
 
+// TestEndTimeStr covers EndTimeStr, including the empty-layout fallback to
+// DefaultLayoutDateTime and the date-only layout.
 func TestEndTimeStr(t *testing.T) {
 	type args struct {
 		layout string
@@ -377,6 +393,7 @@ func TestEndTimeStr(t *testing.T) {
 	}
 }
 
+// TestFirstDateTimeOfMonth covers FirstDateTimeOfMonth returning day-1 00:00:00.
 func TestFirstDateTimeOfMonth(t *testing.T) {
 	type args struct {
 		t time.Time
@@ -402,6 +419,8 @@ func TestFirstDateTimeOfMonth(t *testing.T) {
 	}
 }
 
+// TestFirstDateTimeStrOfMonth covers FirstDateTimeStrOfMonth, including the
+// empty-layout fallback to DefaultLayoutDate.
 func TestFirstDateTimeStrOfMonth(t *testing.T) {
 	type args struct {
 		layout string
@@ -441,6 +460,10 @@ func TestFirstDateTimeStrOfMonth(t *testing.T) {
 	}
 }
 
+// TestFirstDateTimeOfWeek covers FirstDateTimeOfWeek across all three
+// locale-aligned first days: Monday (ISO/Europe/China), Sunday (US/ad-tech),
+// and Saturday (MENA), including the Sunday-stays-in-current-week case that the
+// parameterization fixed.
 func TestFirstDateTimeOfWeek(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -469,6 +492,8 @@ func TestFirstDateTimeOfWeek(t *testing.T) {
 	}
 }
 
+// TestFirstDateTimeStrOfWeek covers FirstDateTimeStrOfWeek for the default
+// (empty) layout under Monday-first and an explicit layout under Sunday-first.
 func TestFirstDateTimeStrOfWeek(t *testing.T) {
 	// 2022-02-01 (Tuesday); Monday-first week starts 2022-01-31.
 	got := datetime.FirstDateTimeStrOfWeek("", time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC), time.Monday)
@@ -482,6 +507,8 @@ func TestFirstDateTimeStrOfWeek(t *testing.T) {
 	}
 }
 
+// TestFirstDateTimeOfISOWeek covers FirstDateTimeOfISOWeek landing on the
+// Monday of the ISO week for a Saturday input that crosses a year boundary.
 func TestFirstDateTimeOfISOWeek(t *testing.T) {
 	// 2022-01-01 (Saturday) → ISO week starts Monday 2021-12-27.
 	got := datetime.FirstDateTimeOfISOWeek(time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC))
@@ -490,6 +517,8 @@ func TestFirstDateTimeOfISOWeek(t *testing.T) {
 	}
 }
 
+// TestLastDateTimeOfMonth covers LastDateTimeOfMonth across leap (29-day) and
+// non-leap (28/30-day) month ends.
 func TestLastDateTimeOfMonth(t *testing.T) {
 	type args struct {
 		t time.Time
@@ -524,6 +553,8 @@ func TestLastDateTimeOfMonth(t *testing.T) {
 	}
 }
 
+// TestLastDateTimeStrOfMonth covers LastDateTimeStrOfMonth, including the
+// empty-layout fallback and leap-year February.
 func TestLastDateTimeStrOfMonth(t *testing.T) {
 	type args struct {
 		layout string
@@ -569,6 +600,8 @@ func TestLastDateTimeStrOfMonth(t *testing.T) {
 	}
 }
 
+// TestLastDateTimeOfWeek covers LastDateTimeOfWeek under Monday-first
+// (Mon..Sun) and Sunday-first (Sun..Sat) weeks, including the same-day end.
 func TestLastDateTimeOfWeek(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -593,6 +626,8 @@ func TestLastDateTimeOfWeek(t *testing.T) {
 	}
 }
 
+// TestLastDateTimeStrOfWeek covers LastDateTimeStrOfWeek for an explicit
+// datetime layout and the empty-layout fallback to DefaultLayoutDate.
 func TestLastDateTimeStrOfWeek(t *testing.T) {
 	// 2022-02-01 (Tuesday); Monday-first week ends Sunday 2022-02-06.
 	got := datetime.LastDateTimeStrOfWeek(datetime.DefaultLayoutDateTime, time.Date(2022, 2, 1, 0, 0, 5, 0, time.UTC), time.Monday)
@@ -608,6 +643,8 @@ func TestLastDateTimeStrOfWeek(t *testing.T) {
 	}
 }
 
+// TestLastDateTimeOfISOWeek covers LastDateTimeOfISOWeek landing on the Sunday
+// ending the ISO week for a Saturday input that crosses a year boundary.
 func TestLastDateTimeOfISOWeek(t *testing.T) {
 	// 2022-01-01 (Saturday) → ISO week ends Sunday 2022-01-02.
 	got := datetime.LastDateTimeOfISOWeek(time.Date(2022, 1, 1, 0, 0, 5, 0, time.UTC))
@@ -616,6 +653,7 @@ func TestLastDateTimeOfISOWeek(t *testing.T) {
 	}
 }
 
+// TestNowTime verifies NowTime returns a non-zero wall-clock time.
 func TestNowTime(t *testing.T) {
 	now := datetime.NowTime()
 
@@ -634,6 +672,8 @@ func TestNowTime(t *testing.T) {
 	}
 }
 
+// TestNowTimeInLocation verifies NowTimeInLocation falls back to Local when the
+// location is nil.
 func TestNowTimeInLocation(t *testing.T) {
 	now := datetime.NowTimeInLocation(nil)
 
@@ -658,6 +698,7 @@ func TestNowTimeInLocation(t *testing.T) {
 	}
 }
 
+// TestNowUnix verifies NowUnix returns a current Unix-seconds value.
 func TestNowUnix(t *testing.T) {
 	nowUnix := datetime.NowUnix()
 
@@ -678,6 +719,7 @@ func TestNowUnix(t *testing.T) {
 	}
 }
 
+// TestNowUnixMilli verifies NowUnixMilli returns a current Unix-millis value.
 func TestNowUnixMilli(t *testing.T) {
 	nowUnixMilli := datetime.NowUnixMilli()
 
@@ -698,6 +740,7 @@ func TestNowUnixMilli(t *testing.T) {
 	}
 }
 
+// TestNowUnixNano verifies NowUnixNano returns a current Unix-nanos value.
 func TestNowUnixNano(t *testing.T) {
 	nowUnixNano := datetime.NowUnixNano()
 
@@ -718,6 +761,9 @@ func TestNowUnixNano(t *testing.T) {
 	}
 }
 
+// TestRangeDateStr covers RangeDateStr happy paths: empty-layout fallback,
+// single-day spans, and swapped start/end ordering. The DoS-prevention guards
+// are covered separately in TestRangeDateStrGuards.
 func TestRangeDateStr(t *testing.T) {
 	type args struct {
 		start  time.Time
@@ -786,6 +832,9 @@ func TestRangeDateStrGuards(t *testing.T) {
 	}
 }
 
+// TestRangeTime covers RangeTime inclusive stepping across minute/hour/day
+// intervals and both start<end and start>end orderings. The interval<=0 and
+// over-limit guards are covered separately in TestRangeTimeGuards.
 func TestRangeTime(t *testing.T) {
 	type args struct {
 		start    time.Time
@@ -891,6 +940,8 @@ func TestRangeTimeGuards(t *testing.T) {
 	}
 }
 
+// TestStartEndTimeStr covers StartEndTimeStr returning the day's start and end
+// strings, including the empty-layout fallback to DefaultLayoutDateTime.
 func TestStartEndTimeStr(t *testing.T) {
 	type args struct {
 		layout string
@@ -928,6 +979,7 @@ func TestStartEndTimeStr(t *testing.T) {
 	}
 }
 
+// TestStartTime covers StartTime producing the 00:00:00 boundary.
 func TestStartTime(t *testing.T) {
 	type args struct {
 		t time.Time
@@ -957,6 +1009,8 @@ func TestStartTime(t *testing.T) {
 	}
 }
 
+// TestStartTimeStr covers StartTimeStr, including the empty-layout fallback to
+// DefaultLayoutDateTime and the date-only layout.
 func TestStartTimeStr(t *testing.T) {
 	type args struct {
 		layout string
@@ -1001,6 +1055,8 @@ func TestStartTimeStr(t *testing.T) {
 	}
 }
 
+// TestTimeStr2Unix covers TimeStr2Unix happy path; the invalid-value error
+// path is exercised separately in TestParseErrors.
 func TestTimeStr2Unix(t *testing.T) {
 	loc := time.UTC
 
@@ -1029,6 +1085,8 @@ func TestTimeStr2Unix(t *testing.T) {
 	}
 }
 
+// TestTimeStr2UnixMilli covers TimeStr2UnixMilli across second, millisecond,
+// and explicit millisecond-layout inputs.
 func TestTimeStr2UnixMilli(t *testing.T) {
 	loc := time.UTC
 
@@ -1064,6 +1122,7 @@ func TestTimeStr2UnixMilli(t *testing.T) {
 	}
 }
 
+// TestUnix2TimeStr covers Unix2TimeStr for datetime and date-only layouts.
 func TestUnix2TimeStr(t *testing.T) {
 	type args struct {
 		sec    int64
@@ -1094,6 +1153,8 @@ func TestUnix2TimeStr(t *testing.T) {
 	}
 }
 
+// TestUnixMilli2TimeStr covers UnixMilli2TimeStr for datetime, date-only, and
+// millisecond layouts.
 func TestUnixMilli2TimeStr(t *testing.T) {
 	type args struct {
 		msec   int64
@@ -1130,6 +1191,7 @@ func TestUnixMilli2TimeStr(t *testing.T) {
 	}
 }
 
+// TestUnixToDuration covers UnixToDuration converting second counts to durations.
 func TestUnixToDuration(t *testing.T) {
 	type args struct {
 		sec int64
@@ -1151,6 +1213,8 @@ func TestUnixToDuration(t *testing.T) {
 	}
 }
 
+// TestUnixMilliToDuration covers UnixMilliToDuration converting millisecond
+// counts to durations.
 func TestUnixMilliToDuration(t *testing.T) {
 	type args struct {
 		msec int64
@@ -1172,6 +1236,8 @@ func TestUnixMilliToDuration(t *testing.T) {
 	}
 }
 
+// TestDurationStrToDuration covers DurationStrToDuration for valid Go duration
+// strings and the rejected "1d" form (time.ParseDuration does not support days).
 func TestDurationStrToDuration(t *testing.T) {
 	type args struct {
 		duration string
@@ -1194,6 +1260,8 @@ func TestDurationStrToDuration(t *testing.T) {
 	}
 }
 
+// TestDurationStrToUnix covers DurationStrToUnix converting valid duration
+// strings to seconds and rejecting the unsupported "1d" form.
 func TestDurationStrToUnix(t *testing.T) {
 	type args struct {
 		duration string
@@ -1216,6 +1284,8 @@ func TestDurationStrToUnix(t *testing.T) {
 	}
 }
 
+// TestDurationToUnix covers DurationToUnix returning seconds for hour and day
+// durations.
 func TestDurationToUnix(t *testing.T) {
 	type args struct {
 		d time.Duration

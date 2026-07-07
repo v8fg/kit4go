@@ -174,16 +174,41 @@ type Field struct{ f field }
 
 // String/Int/... field constructors return a Field for use with WithAttrs and
 // slog interop. They never box scalars.
-func String(k, v string) Field                 { return Field{strField(k, v)} }
-func Int(k string, v int) Field                { return Field{intField(k, v)} }
-func Int64(k string, v int64) Field            { return Field{int64Field(k, v)} }
-func Uint64(k string, v uint64) Field          { return Field{uint64Field(k, v)} }
-func Bool(k string, v bool) Field              { return Field{boolField(k, v)} }
-func Float64(k string, v float64) Field        { return Field{floatField(k, v)} }
+//
+// The typed constructors below are the allocation-free variants of With on the
+// package singleton; prefer them over With(key, interface{}) on hot paths.
+func String(k, v string) Field { return Field{strField(k, v)} }
+
+// Int constructs an int-typed field (no interface{} boxing).
+func Int(k string, v int) Field { return Field{intField(k, v)} }
+
+// Int64 constructs an int64-typed field (no interface{} boxing).
+func Int64(k string, v int64) Field { return Field{int64Field(k, v)} }
+
+// Uint64 constructs a uint64-typed field (no interface{} boxing).
+func Uint64(k string, v uint64) Field { return Field{uint64Field(k, v)} }
+
+// Bool constructs a bool-typed field (no interface{} boxing).
+func Bool(k string, v bool) Field { return Field{boolField(k, v)} }
+
+// Float64 constructs a float64-typed field (no interface{} boxing).
+func Float64(k string, v float64) Field { return Field{floatField(k, v)} }
+
+// Duration constructs a duration-typed field rendered as nanoseconds (slog convention).
 func Duration(k string, v time.Duration) Field { return Field{durField(k, v)} }
-func Time(k string, v time.Time) Field         { return Field{timeField(k, v)} }
-func Bytes(k string, v []byte) Field           { return Field{bytesField(k, v)} }
-func Complex128(k string, v complex128) Field  { return Field{strField(k, complex128ToString(v))} }
+
+// Time constructs a time-typed field rendered as an RFC3339 UTC timestamp.
+func Time(k string, v time.Time) Field { return Field{timeField(k, v)} }
+
+// Bytes constructs a bytes-typed field; the value is base64-encoded on the JSON
+// path (the JSON convention for binary data).
+func Bytes(k string, v []byte) Field { return Field{bytesField(k, v)} }
+
+// Complex128 constructs a complex128-typed field rendered as the conventional
+// "a+bi" string (JSON has no complex type). NaN/±Inf components render as "null".
+func Complex128(k string, v complex128) Field { return Field{strField(k, complex128ToString(v))} }
+
+// Complex64 constructs a complex64-typed field; see Complex128 for the format.
 func Complex64(k string, v complex64) Field {
 	return Field{strField(k, complex128ToString(complex128(v)))}
 }

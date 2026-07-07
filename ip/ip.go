@@ -10,7 +10,10 @@ import (
 // Flag IP Version flag, mark the ip version or invalid.
 type Flag int
 
-// FLag mark the ipv4, ipv6, invalid or no specified.
+// FlagVInValid marks an invalid or not-yet-classified IP. FlagVAll selects both
+// IPv4 and IPv6 (used by the local-IP enumerators). FlagV4 and FlagV6 mark a
+// valid IPv4 and IPv6 respectively. The numeric values mirror the well-known IP
+// version field (4 and 6) for readability in logs and examples.
 const (
 	FlagVInValid = 0 // invalid ip, only use to check the ip is v4, v6
 	FlagVAll     = 1
@@ -18,6 +21,8 @@ const (
 	FlagV6       = 6
 )
 
+// String returns the textual form of the Flag: "ipv4", "ipv6", "ipv4_v6" for
+// FlagVAll, "invalid" for FlagVInValid, or "" for any other value.
 func (f *Flag) String() string {
 	if *f == FlagVAll {
 		return "ipv4_v6"

@@ -12,12 +12,15 @@ import (
 // AlertLevel is the severity of an alert.
 type AlertLevel int
 
+// AlertInfo / AlertWarn / AlertError are the alert severities surfaced to an
+// AlertSink (drop is reported as error, spill as warn).
 const (
 	AlertInfo AlertLevel = iota
 	AlertWarn
 	AlertError
 )
 
+// String returns the uppercase severity name ("INFO"/"WARN"/"ERROR").
 func (l AlertLevel) String() string {
 	switch l {
 	case AlertWarn:

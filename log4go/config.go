@@ -11,6 +11,8 @@ import (
 // GlobalLevel global level
 var GlobalLevel = DEBUG
 
+// WriterName* are the stable names returned by each writer's Name(), used for
+// by-name control (Logger.PauseWriter / ResumeWriter / WriterPaused, SetWriterLevel).
 const (
 	WriterNameConsole = "console_writer"
 	WriterNameFile    = "file_writer"

@@ -32,21 +32,26 @@ func init() {
 	})
 }
 
-// TypeFlag for ip type
+// TypeFlag values are bitmask flags describing an IP's address type. They are
+// OR-combined and passed as the ignoreTypeFlag argument to GetIPAll and friends
+// to skip addresses whose type bit is set.
 const (
-	TypeFlagIsUnspecified = 1 << iota
-	TypeFlagIPIsLoopback
-	TypeFlagIsPrivate
-	TypeFlagIsMulticast
-	TypeFlagIsInterfaceLocalMulticast
-	TypeFlagIsLinkLocalMulticast
-	TypeFlagIsLinkLocalUnicast
-	TypeFlagIsGlobalUnicast
+	TypeFlagIsUnspecified             = 1 << iota // 0.0.0.0 / ::, the unspecified address
+	TypeFlagIPIsLoopback                          // loopback address (127.0.0.0/8 or ::1)
+	TypeFlagIsPrivate                             // RFC 1918 / RFC 4193 private address
+	TypeFlagIsMulticast                           // multicast address
+	TypeFlagIsInterfaceLocalMulticast             // interface-local multicast
+	TypeFlagIsLinkLocalMulticast                  // link-local multicast
+	TypeFlagIsLinkLocalUnicast                    // link-local unicast (169.254.0.0/16, fe80::/10)
+	TypeFlagIsGlobalUnicast                       // globally reachable unicast
 
+	// TypeFlagLoopbackANdLinkLocalUnicast is a convenience mask combining
+	// TypeFlagIPIsLoopback and TypeFlagIsLinkLocalUnicast.
 	TypeFlagLoopbackANdLinkLocalUnicast = TypeFlagIPIsLoopback | TypeFlagIsLinkLocalUnicast
 )
 
-// HeaderContentType header contentType
+// HeaderContentType values are the Content-Type header values recognized by
+// PublicIPByHTTPGet when parsing a public-IP lookup response.
 const (
 	HeaderContentTypeApplicationJSON = "application/json"
 	HeaderContentTypeTextPlain       = "text/plain"

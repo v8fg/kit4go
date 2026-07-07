@@ -8,6 +8,8 @@ import (
 	"github.com/v8fg/kit4go/datetime"
 )
 
+// TestParseTime covers Parse (Local-location variant) for full and
+// millisecond-trailing values as well as a short layout.
 func TestParseTime(t *testing.T) {
 	type args struct {
 		layout string
@@ -52,6 +54,8 @@ func TestParseTime(t *testing.T) {
 	}
 }
 
+// TestParseTimeMostOne covers ParseMostOne: the first matching layout wins, and
+// a value no layout accepts returns an error.
 func TestParseTimeMostOne(t *testing.T) {
 	type args struct {
 		layouts []string
@@ -100,6 +104,8 @@ func TestParseTimeMostOne(t *testing.T) {
 	}
 }
 
+// TestParseTimeMostOneWithLocation covers ParseMostOneInLocation: same
+// first-match semantics as ParseMostOne, honoring the supplied location.
 func TestParseTimeMostOneWithLocation(t *testing.T) {
 	type args struct {
 		layouts []string
@@ -149,6 +155,8 @@ func TestParseTimeMostOneWithLocation(t *testing.T) {
 	}
 }
 
+// TestParseInLocation covers ParseInLocation for full, millisecond-trailing,
+// and short-layout values.
 func TestParseInLocation(t *testing.T) {
 	type args struct {
 		layout string

@@ -19,12 +19,16 @@ import (
 // OverflowPolicy controls what Write does when the async send channel is full.
 type OverflowPolicy int
 
+// OverflowDrop / OverflowBlock / OverflowSpill are the channel-full behaviors.
+// They correspond to the OverflowPolicyDrop / OverflowPolicyBlock /
+// OverflowPolicySpill string config values (see ParseOverflowPolicy).
 const (
 	OverflowDrop OverflowPolicy = iota
 	OverflowBlock
 	OverflowSpill
 )
 
+// String returns the lowercase policy name ("drop"/"block"/"spill").
 func (p OverflowPolicy) String() string {
 	switch p {
 	case OverflowBlock:
@@ -153,7 +157,12 @@ func (s *OverflowStats) alert(kind string, n, every uint64, reason string) {
 	}
 }
 
+// Dropped returns the total number of records dropped under the drop policy
+// (thread-safe).
 func (s *OverflowStats) Dropped() uint64 { return atomic.LoadUint64(&s.dropped) }
+
+// Spilled returns the total number of records buffered to a spill store under
+// the spill policy (thread-safe).
 func (s *OverflowStats) Spilled() uint64 { return atomic.LoadUint64(&s.spilled) }
 
 // Spiller[T] is a bounded fallback store for type T. Always size-limited so it
@@ -194,6 +203,9 @@ func NewRingSpiller[T any](capacity int) *RingSpiller[T] {
 	return &RingSpiller[T]{buf: make([]T, capacity), capv: capacity}
 }
 
+// Push appends msg, overwriting the oldest entry when the ring is full. It
+// always returns true (a ring never refuses). See PushNoOverwrite for the
+// non-overwriting variant used by ChainedSpiller.
 func (r *RingSpiller[T]) Push(msg T) bool {
 	r.mu.Lock()
 	r.buf[r.head] = msg
@@ -205,6 +217,8 @@ func (r *RingSpiller[T]) Push(msg T) bool {
 	return true
 }
 
+// Drain recovers and removes all stored records in insertion order, returning
+// nil when empty. The ring is reset to empty after the call.
 func (r *RingSpiller[T]) Drain() []T {
 	r.mu.Lock()
 	if r.size == 0 {
@@ -225,6 +239,7 @@ func (r *RingSpiller[T]) Drain() []T {
 	return out
 }
 
+// Len returns the number of records currently stored (thread-safe).
 func (r *RingSpiller[T]) Len() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -246,6 +261,7 @@ func (r *RingSpiller[T]) PushNoOverwrite(msg T) bool {
 	return true
 }
 
+// Close is a no-op for the in-memory ring.
 func (r *RingSpiller[T]) Close() error { return nil }
 
 // FileSpiller[T] persists overflowed records to disk (length-prefixed framing),
@@ -290,6 +306,8 @@ func (f *FileSpiller[T]) open() error {
 	return nil
 }
 
+// Push appends msg as a length-prefixed framed record. Returns false when the
+// record would exceed MaxBytes or on a write/encode error (caller may drop).
 func (f *FileSpiller[T]) Push(msg T) bool {
 	b, err := f.codec.Encode(msg)
 	if err != nil {
@@ -314,6 +332,10 @@ func (f *FileSpiller[T]) Push(msg T) bool {
 	return true
 }
 
+// Drain recovers all persisted records: it flushes, renames the active spill
+// file aside, decodes it, and removes it. Returns nil on error or emptiness.
+// Safe to call repeatedly; each call drains whatever was appended since the
+// previous Drain.
 func (f *FileSpiller[T]) Drain() []T {
 	f.mu.Lock()
 	if f.w != nil {
@@ -366,8 +388,10 @@ func decodeSpillFile[T any](path string, codec SpillCodec[T]) []T {
 	return out
 }
 
+// Len returns the number of records currently persisted (thread-safe).
 func (f *FileSpiller[T]) Len() int { return int(atomic.LoadInt64(&f.count)) }
 
+// Close flushes the bufio writer and closes the spill file. Idempotent.
 func (f *FileSpiller[T]) Close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -398,6 +422,8 @@ func NewChainedSpiller[T any](ring *RingSpiller[T], file *FileSpiller[T]) *Chain
 	return &ChainedSpiller[T]{ring: ring, file: file}
 }
 
+// Push tries the ring (without overwriting) first, then the file. Returns
+// false only when both are at capacity.
 func (c *ChainedSpiller[T]) Push(msg T) bool {
 	if c.ring != nil && c.ring.PushNoOverwrite(msg) {
 		return true
@@ -408,6 +434,8 @@ func (c *ChainedSpiller[T]) Push(msg T) bool {
 	return false
 }
 
+// Drain recovers and removes records from both the ring and the file (ring
+// records first, then file records).
 func (c *ChainedSpiller[T]) Drain() []T {
 	var out []T
 	if c.ring != nil {
@@ -419,6 +447,7 @@ func (c *ChainedSpiller[T]) Drain() []T {
 	return out
 }
 
+// Len returns the total record count across the ring and the file.
 func (c *ChainedSpiller[T]) Len() int {
 	n := 0
 	if c.ring != nil {
@@ -430,6 +459,7 @@ func (c *ChainedSpiller[T]) Len() int {
 	return n
 }
 
+// Close closes both backends, returning the file backend's error (if any).
 func (c *ChainedSpiller[T]) Close() error {
 	if c.ring != nil {
 		_ = c.ring.Close()
@@ -455,8 +485,10 @@ type spillRecord struct {
 	Timestamp int64  `json:"ts,omitempty"`
 }
 
+// producerMsgCodec is the shared SpillCodec for kafka.Message.
 type producerMsgCodec struct{}
 
+// Encode marshals msg to the spillRecord JSON framing.
 func (producerMsgCodec) Encode(msg kafka.Message) ([]byte, error) {
 	rec := spillRecord{Topic: msg.Topic}
 	if len(msg.Key) > 0 {
@@ -471,6 +503,7 @@ func (producerMsgCodec) Encode(msg kafka.Message) ([]byte, error) {
 	return json.Marshal(rec)
 }
 
+// Decode unmarshals spillRecord JSON back into a kafka.Message.
 func (producerMsgCodec) Decode(b []byte) (kafka.Message, error) {
 	var rec spillRecord
 	if err := json.Unmarshal(b, &rec); err != nil {
@@ -493,12 +526,15 @@ type spillRecordData struct {
 	Msg   string `json:"msg"`
 }
 
+// recordCodec is the shared SpillCodec for *Record.
 type recordCodec struct{}
 
+// Encode marshals the record's level/time/file/msg to JSON.
 func (recordCodec) Encode(r *Record) ([]byte, error) {
 	return json.Marshal(spillRecordData{Level: r.level, Time: r.time, File: r.file, Msg: r.msg})
 }
 
+// Decode unmarshals the JSON back into a *Record.
 func (recordCodec) Decode(b []byte) (*Record, error) {
 	var d spillRecordData
 	if err := json.Unmarshal(b, &d); err != nil {

@@ -1083,22 +1083,52 @@ func (l *Logger) WithAttrs(attrs ...Field) *Logger {
 
 // WithString/WithInt/... are the typed, allocation-free variants of With for
 // the common scalar types. They avoid the interface{} boxing that With pays.
-func (l *Logger) WithString(key, val string) *Logger      { return l.withField(strField(key, val)) }
-func (l *Logger) WithInt(key string, val int) *Logger     { return l.withField(intField(key, val)) }
-func (l *Logger) WithInt64(key string, val int64) *Logger { return l.withField(int64Field(key, val)) }
+func (l *Logger) WithString(key, val string) *Logger { return l.withField(strField(key, val)) }
+
+// WithInt returns a child Logger carrying an int-typed structured field.
+func (l *Logger) WithInt(key string, val int) *Logger { return l.withField(intField(key, val)) }
+
+// WithInt64 returns a child Logger carrying an int64-typed structured field.
+func (l *Logger) WithInt64(key string, val int64) *Logger {
+	return l.withField(int64Field(key, val))
+}
+
+// WithUint64 returns a child Logger carrying a uint64-typed structured field.
 func (l *Logger) WithUint64(key string, val uint64) *Logger {
 	return l.withField(uint64Field(key, val))
 }
+
+// WithBool returns a child Logger carrying a bool-typed structured field.
 func (l *Logger) WithBool(key string, val bool) *Logger { return l.withField(boolField(key, val)) }
+
+// WithFloat64 returns a child Logger carrying a float64-typed structured field.
 func (l *Logger) WithFloat64(key string, val float64) *Logger {
 	return l.withField(floatField(key, val))
 }
+
+// WithDuration returns a child Logger carrying a duration-typed structured field
+// (rendered as nanoseconds, the slog convention).
 func (l *Logger) WithDuration(key string, val time.Duration) *Logger {
 	return l.withField(durField(key, val))
 }
-func (l *Logger) WithTime(key string, val time.Time) *Logger { return l.withField(timeField(key, val)) }
-func (l *Logger) WithBytes(key string, val []byte) *Logger   { return l.withField(bytesField(key, val)) }
-func (l *Logger) WithError(key string, val error) *Logger    { return l.withField(errField(key, val)) }
+
+// WithTime returns a child Logger carrying a time-typed structured field
+// (rendered as an RFC3339 UTC timestamp).
+func (l *Logger) WithTime(key string, val time.Time) *Logger {
+	return l.withField(timeField(key, val))
+}
+
+// WithBytes returns a child Logger carrying a bytes-typed structured field
+// (base64-encoded on the JSON path).
+func (l *Logger) WithBytes(key string, val []byte) *Logger {
+	return l.withField(bytesField(key, val))
+}
+
+// WithError returns a child Logger carrying an error-typed structured field
+// whose value is rendered via the error's Error() (panic-safe).
+func (l *Logger) WithError(key string, val error) *Logger {
+	return l.withField(errField(key, val))
+}
 
 // WithSampling returns a child Logger that applies sampling to prevent
 // high-frequency log storms. The first `initial` records at each level are all
@@ -1720,17 +1750,41 @@ func WithAttrs(attrs ...Field) *Logger { return defaultLogger().WithAttrs(attrs.
 
 // WithString/WithInt/... are the typed, allocation-free variants of With on the
 // package singleton (see the Logger methods of the same name).
-func WithString(key, val string) *Logger          { return defaultLogger().WithString(key, val) }
-func WithInt(key string, val int) *Logger         { return defaultLogger().WithInt(key, val) }
-func WithInt64(key string, val int64) *Logger     { return defaultLogger().WithInt64(key, val) }
-func WithBool(key string, val bool) *Logger       { return defaultLogger().WithBool(key, val) }
+func WithString(key, val string) *Logger { return defaultLogger().WithString(key, val) }
+
+// WithInt returns a child Logger of the package singleton carrying an int-typed
+// structured field (see Logger.WithInt).
+func WithInt(key string, val int) *Logger { return defaultLogger().WithInt(key, val) }
+
+// WithInt64 returns a child Logger of the package singleton carrying an int64-typed
+// structured field (see Logger.WithInt64).
+func WithInt64(key string, val int64) *Logger { return defaultLogger().WithInt64(key, val) }
+
+// WithBool returns a child Logger of the package singleton carrying a bool-typed
+// structured field (see Logger.WithBool).
+func WithBool(key string, val bool) *Logger { return defaultLogger().WithBool(key, val) }
+
+// WithFloat64 returns a child Logger of the package singleton carrying a
+// float64-typed structured field (see Logger.WithFloat64).
 func WithFloat64(key string, val float64) *Logger { return defaultLogger().WithFloat64(key, val) }
+
+// WithDuration returns a child Logger of the package singleton carrying a
+// duration-typed structured field (see Logger.WithDuration).
 func WithDuration(key string, val time.Duration) *Logger {
 	return defaultLogger().WithDuration(key, val)
 }
+
+// WithTime returns a child Logger of the package singleton carrying a time-typed
+// structured field (see Logger.WithTime).
 func WithTime(key string, val time.Time) *Logger { return defaultLogger().WithTime(key, val) }
-func WithBytes(key string, val []byte) *Logger   { return defaultLogger().WithBytes(key, val) }
-func WithError(key string, val error) *Logger    { return defaultLogger().WithError(key, val) }
+
+// WithBytes returns a child Logger of the package singleton carrying a bytes-typed
+// structured field (see Logger.WithBytes).
+func WithBytes(key string, val []byte) *Logger { return defaultLogger().WithBytes(key, val) }
+
+// WithError returns a child Logger of the package singleton carrying an
+// error-typed structured field (see Logger.WithError).
+func WithError(key string, val error) *Logger { return defaultLogger().WithError(key, val) }
 
 // WithSampling returns a child Logger of the package singleton with sampling
 // applied (see Logger.WithSampling).

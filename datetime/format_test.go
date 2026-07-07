@@ -7,6 +7,8 @@ import (
 	"github.com/v8fg/kit4go/datetime"
 )
 
+// TestFormat covers Format, including the empty-layout fallback to
+// DefaultLayoutDateTime and the date-only layout.
 func TestFormat(t *testing.T) {
 	type args struct {
 		layout string
@@ -33,6 +35,8 @@ func TestFormat(t *testing.T) {
 	}
 }
 
+// TestFormatNowDate verifies FormatNowDate returns a today string in the
+// DefaultLayoutDate layout.
 func TestFormatNowDate(t *testing.T) {
 	nowDate := datetime.FormatNowDate()
 	tests := []struct {
@@ -50,6 +54,8 @@ func TestFormatNowDate(t *testing.T) {
 	}
 }
 
+// TestFormatNowDatetime verifies FormatNowDatetime returns a now string in the
+// DefaultLayoutDateTime layout.
 func TestFormatNowDatetime(t *testing.T) {
 	nowDateTime := datetime.FormatNowDatetime()
 	tests := []struct {
@@ -67,6 +73,8 @@ func TestFormatNowDatetime(t *testing.T) {
 	}
 }
 
+// TestFormatNowTime verifies FormatNowTime returns a now string in the
+// DefaultLayoutTime layout.
 func TestFormatNowTime(t *testing.T) {
 	nowTime := datetime.FormatNowTime()
 	tests := []struct {
@@ -84,6 +92,8 @@ func TestFormatNowTime(t *testing.T) {
 	}
 }
 
+// TestFormatNowWithLayout verifies FormatNowWithLayout formats now under the
+// caller-supplied layout.
 func TestFormatNowWithLayout(t *testing.T) {
 	layout := datetime.DefaultLayoutDateTime
 	now := datetime.FormatNowWithLayout(layout)
@@ -106,6 +116,10 @@ func TestFormatNowWithLayout(t *testing.T) {
 	}
 }
 
+// TestLayoutWithFormatAndZoneOffset covers LayoutWithFormatAndZoneOffset: the
+// empty-format default, positive and negative offsets, the zone-placeholder
+// substitution into every FormatLayout* template, and the no-placeholder
+// passthrough for the fixed-zone and zone-less layouts.
 func TestLayoutWithFormatAndZoneOffset(t *testing.T) {
 	type args struct {
 		format     string

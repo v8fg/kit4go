@@ -403,8 +403,6 @@ func (k *KafKaWriter) SetKafkaCodec(c KafkaCodec) {
 	k.codecMu.Unlock()
 }
 
-// Write service for Record. It never spawns a goroutine per record; the record
-// is delivered to a bounded channel under the configured overflow policy.
 // Name returns WriterNameKafka.
 func (k *KafKaWriter) Name() string { return WriterNameKafka }
 
@@ -417,6 +415,10 @@ func (k *KafKaWriter) Resume() { k.paused.Store(false) }
 // Paused reports whether the writer is currently paused.
 func (k *KafKaWriter) Paused() bool { return k.paused.Load() }
 
+// Write writes r by building the Kafka payload (JSON or protobuf, per the
+// configured codec) and delivering it to a bounded channel under the configured
+// overflow policy. It never spawns a goroutine per record. An empty message is
+// skipped (no payload).
 func (k *KafKaWriter) Write(r *Record) error {
 	if k.paused.Load() {
 		return nil
