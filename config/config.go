@@ -180,6 +180,14 @@ func (errMissing) Error() string { return "config: key missing" }
 
 // --- Sources ---
 
+// Compile-time interface assertions: guard that the concrete Source
+// implementations stay in sync with the interface contract.
+var (
+	_ Source = EnvSource{}
+	_ Source = MapSource{}
+	_ Source = FileSource{}
+)
+
 // EnvSource reads keys from the process environment. The optional prefix is
 // applied (e.g. "app") and the key is normalized to upper snake-case:
 // "redis.addr" with prefix "app" becomes "APP_REDIS_ADDR".

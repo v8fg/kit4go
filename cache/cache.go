@@ -31,6 +31,10 @@ type Store[V any] interface {
 	Has(ctx context.Context, key string) bool
 }
 
+// Compile-time interface assertions: guard that the concrete implementations
+// stay in sync with the interface contract.
+var _ Store[any] = (*memStore[any])(nil)
+
 // memStore is the in-memory backend wrapping kit4go/lru.
 type memStore[V any] struct {
 	c          *lru.Cache[string, V]

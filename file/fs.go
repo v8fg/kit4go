@@ -30,6 +30,10 @@ type FS interface {
 	Copy(dst io.Writer, src io.Reader) (written int64, err error)
 }
 
+// Compile-time interface assertion: guard that osFS stays in sync with the FS
+// contract.
+var _ FS = osFS{}
+
 // osFS is the default FS implementation delegating to the standard library.
 type osFS struct{}
 

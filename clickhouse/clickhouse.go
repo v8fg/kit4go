@@ -36,6 +36,11 @@ type Conn interface {
 	Close() error
 }
 
+// Compile-time interface assertion: the upstream driver.Conn (returned by
+// clickhouse.Open) must satisfy our local Conn subset. Catches drift if the
+// local interface declares a method upstream removed.
+var _ Conn = (driver.Conn)(nil)
+
 // Client wraps a clickhouse-go connection. It is safe for concurrent use:
 // all methods are goroutine-safe and Close is idempotent.
 type Client struct {

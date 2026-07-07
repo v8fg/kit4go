@@ -145,7 +145,7 @@ func KeyFromHOTPOpts(opts KeyOpts) (*xtp.Key, error) {
 //	https://github.com/google/google-authenticator/wiki/Key-Uri-Format
 func KeyFromURL(url string) (*xtp.Key, error) {
 	if len(url) == 0 {
-		return nil, errors.New("empty URL")
+		return nil, errors.New("otp: empty URL")
 	}
 	return xtp.NewKeyFromURL(url)
 }

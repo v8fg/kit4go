@@ -171,6 +171,7 @@ func (c *Client) observe(start time.Time) {
 	c.opts.Latency.Observe(time.Since(start))
 }
 
+// NewClient constructs a [Client] from opts, filling zero fields with the
 // package defaults. It builds a single shared [http.Transport] sized by the
 // connection-pool options and wires the connect timeout into the dialer.
 //

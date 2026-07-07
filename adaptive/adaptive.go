@@ -45,6 +45,12 @@ type LoadMonitor interface {
 	CPU() (float64, error)
 }
 
+// Compile-time interface assertions: guard that the concrete implementations
+// stay in sync with the interface contract.
+var (
+	_ LoadMonitor = (*gopsutilMonitor)(nil)
+)
+
 // gopsutilMonitor is the default LoadMonitor. It samples cpu.Percent over the
 // given interval (blocking for that interval on each call).
 type gopsutilMonitor struct {

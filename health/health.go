@@ -33,6 +33,10 @@ type Checker interface {
 	Check() error
 }
 
+// Compile-time interface assertion: guard that CheckerFunc stays in sync with
+// the Checker contract.
+var _ Checker = CheckerFunc{}
+
 // CheckerFunc adapts a function to the Checker interface.
 type CheckerFunc struct {
 	CheckerName string

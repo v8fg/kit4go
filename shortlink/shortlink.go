@@ -227,6 +227,10 @@ func decodeBaseN(code, alphabet string) (uint64, error) {
 
 // --- MemoryStore ---
 
+// Compile-time interface assertion: guard that MemoryStore stays in sync with
+// the Store contract.
+var _ Store = (*MemoryStore)(nil)
+
 // MemoryStore is an in-memory, concurrent-safe Store.
 type MemoryStore struct {
 	mu sync.RWMutex

@@ -55,6 +55,10 @@ var (
 	ErrMissingBody      = errors.New("email: text or HTML body required")
 )
 
+// Compile-time interface assertion: guard that SMTPSender stays in sync with
+// the Sender contract.
+var _ Sender = (*SMTPSender)(nil)
+
 // SMTPSender sends via go-mail's SMTP client.
 type SMTPSender struct {
 	client      *gomail.Client

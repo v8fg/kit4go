@@ -361,7 +361,7 @@ func (w *FileWriter) SetPathPattern(pattern string) error {
 		if variable == 1 {
 			act, ok := pathVariableTable[c]
 			if !ok {
-				return errors.New("invalid rotate pattern (" + pattern + ")")
+				return errors.New("log4go: invalid rotate pattern (" + pattern + ")")
 			}
 			w.actions = append(w.actions, act)
 			variable = 0

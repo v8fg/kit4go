@@ -17,7 +17,7 @@ func ParseMostOne(layouts []string, value string) (time.Time, error) {
 			return t, nil
 		}
 	}
-	return time.Time{}, errors.New("parse time failed for all layouts")
+	return time.Time{}, errors.New("datetime: parse time failed for all layouts")
 }
 
 // ParseInLocation parse time uses the given location
@@ -35,5 +35,5 @@ func ParseMostOneInLocation(layouts []string, value string, loc *time.Location) 
 			return t, nil
 		}
 	}
-	return time.Time{}, errors.New("parse time with location failed for all layouts")
+	return time.Time{}, errors.New("datetime: parse time with location failed for all layouts")
 }

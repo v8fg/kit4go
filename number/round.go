@@ -10,17 +10,21 @@ import (
 	"sync/atomic"
 )
 
-// Int marks the integer type or underlying integer type.
+// Int is a type constraint that matches any signed integer type or any type
+// whose underlying type is a signed integer (int, int8, int16, int32, int64).
 type Int interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64
 }
 
-// Uint marks the un signed integer type or underlying un signed integer type.
+// Uint is a type constraint that matches any unsigned integer type or any type
+// whose underlying type is an unsigned integer (uint, uint8, uint16, uint32,
+// uint64).
 type Uint interface {
 	~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
 }
 
-// Float marks the float type or underlying float type.
+// Float is a type constraint that matches any floating-point type or any type
+// whose underlying type is a float (float32, float64).
 type Float interface {
 	~float32 | ~float64
 }
@@ -38,8 +42,9 @@ func init() {
 	regForNumber.Store(regForNumber6)
 }
 
-// SetRegForNumber sets which the regex string will use for parse the string number.
-// The swap is atomic and safe to call concurrently with readers.
+// SetRegForNumber selects which regular expression is used to parse string
+// numbers by [RestoreToRealNumberStr] and the truncating rounders. The swap is
+// atomic and safe to call concurrently with readers.
 //
 //	true: regForNumber7
 //	false: regForNumber6
@@ -52,33 +57,47 @@ func SetRegForNumber(useRegForNumber7 bool) {
 	}
 }
 
-// Round returns the nearest float64 with the given input and precision, type shall float32 | float64
+// Round returns f rounded to the given number of decimal places using
+// round-half-away-from-zero semantics (via math.Round), as a float64. T must be
+// float32 or float64.
 func Round[T Float](f T, precision uint) float64 {
 	n10 := math.Pow10(int(precision))
 	// return float64(int(float64(f)*n10+math.Copysign(0.5, float64(f)*n10))) / n10
 	return math.Round(float64(f)*n10) / n10
 }
 
-// RoundToEven returns the nearest float64(rounding ties to even) with the given input and precision, type shall float32 | float64
+// RoundToEven returns f rounded to the given number of decimal places using
+// round-half-to-even (banker's) semantics (via math.RoundToEven), as a float64.
+// T must be float32 or float64.
 func RoundToEven[T Float](f T, precision uint) float64 {
 	n10 := math.Pow10(int(precision))
 	// return float64(int(float64(f)*n10+math.Copysign(0.5, float64(f)*n10))) / n10
 	return math.RoundToEven(float64(f)*n10) / n10
 }
 
-// RoundFloor returns the down float64 with the given input and precision, type shall float32 | float64
+// RoundFloor returns f rounded down (towards negative infinity) to the given
+// number of decimal places (via math.Floor), as a float64. T must be float32 or
+// float64.
 func RoundFloor[T Float](f T, precision uint) float64 {
 	n10 := math.Pow10(int(precision))
 	return math.Floor(float64(f)*n10) / n10
 }
 
-// RoundCeil returns the ceil float64 with the given input and precision, type shall float32 | float64
+// RoundCeil returns f rounded up (towards positive infinity) to the given
+// number of decimal places (via math.Ceil), as a float64. T must be float32 or
+// float64.
 func RoundCeil[T Float](f T, precision uint) float64 {
 	n10 := math.Pow10(int(precision))
 	return math.Ceil(float64(f)*n10) / n10
 }
 
-// RoundTrunc returns the truncate float64 with the given input and precision,
+// RoundTrunc returns f truncated towards zero to precision decimal places,
+// preserving the same type T. A positive precision keeps that many fractional
+// digits; a negative precision truncates that many integer digits (replacing
+// them with zeros), and an over-large negative precision yields the zero value
+// of T. The conversion is string-based and therefore immune to float
+// representation drift.
+//
 // type can:
 //
 //	~int | ~int8 | ~int16 | ~int32 | ~int64
@@ -127,7 +146,10 @@ func RoundTrunc[T Int | Uint | Float](f T, precision int) T {
 	return T(ret)
 }
 
-// RoundTruncStr returns the truncate string with the given input and precision,
+// RoundTruncStr is like [RoundTrunc] but returns the truncated result as a
+// decimal string instead of converting it back to T, avoiding any loss of
+// precision from float parsing.
+//
 // type can:
 //
 //	~int | ~int8 | ~int16 | ~int32 | ~int64
@@ -184,7 +206,12 @@ func regSplitNormalNumber(s string) (sig, integer, fractional string) {
 	return
 }
 
-// RestoreToRealNumberStr converts the numeric input to the corresponding string, as the storage mechanism, some pos maybe override.
+// RestoreToRealNumberStr converts the numeric input f to its canonical decimal
+// string form, expanding any exponential notation so the result has no
+// exponent and at most one fractional part. It is the string primitive used by
+// the truncating rounders and never loses precision to float formatting
+// because it operates on the textual representation of f.
+//
 // type can:
 //
 //	~int | ~int8 | ~int16 | ~int32 | ~int64

@@ -18,6 +18,10 @@ type AddrLookup interface {
 	Interfaces() ([]net.Interface, error)
 }
 
+// Compile-time interface assertion: guard that netLookup stays in sync with the
+// AddrLookup contract.
+var _ AddrLookup = netLookup{}
+
 // netLookup is the default AddrLookup delegating to the standard library.
 type netLookup struct{}
 

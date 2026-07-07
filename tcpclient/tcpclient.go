@@ -230,6 +230,7 @@ func (c *Client) observe(start time.Time) {
 	c.opts.Latency.Observe(time.Since(start))
 }
 
+// NewClient constructs a [Client] from opts, filling zero fields with the
 // package defaults and wiring up a connection pool sized by PoolSize. The
 // returned client is safe for concurrent use and ready to serve traffic.
 func NewClient(opts ClientOptions) *Client {
