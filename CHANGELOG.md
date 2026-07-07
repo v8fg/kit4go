@@ -11,6 +11,8 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-07
+
 Build-out of the primitive library, a full-repo quality-review pass, a
 coverage / benchmark / fuzz hardening sweep, a Go-modernization refactor, and
 security/race closure. 30 commits since v0.3.0.
