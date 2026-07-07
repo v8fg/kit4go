@@ -1,0 +1,84 @@
+name: Bench
+
+# Runs `go test -bench=. -benchmem` for every package that has a bench_test.go
+# and uploads the results as an artifact. Triggers on pushes to `release` and
+# PRs targeting `release` (same branches as CI). No regression comparison yet —
+# this just records the current ns/op + allocs/op so trends are visible across
+# runs.
+on:
+  push:
+    branches:
+      - release
+  pull_request:
+    branches:
+      - release
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: bench
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # kit4go is a multi-module repo: the root module plus 13 sub-modules, each
+      # with its own go.mod. `go test ./...` does not cross module boundaries, so
+      # each module is benched separately. Three sub-modules (grpcclient, kafka,
+      # log4go) also carry a bench_test.go.
+      #
+      # Packages are discovered by a plain filesystem scan (a dir is benched iff
+      # it has a bench_test.go and, for the root pass, no go.mod of its own) so
+      # the list never goes stale as packages are added.
+      #
+      # -benchtime=1s bounds wall-clock (1s per benchmark * N); -run=^$ skips
+      #   non-bench tests; -count=1 fixes one iteration for stable numbers.
+      # Output is tee'd to per-module files and uploaded as an artifact so a
+      # human can eyeball ns/op + allocs/op without re-running locally.
+
+      - name: Bench (root module)
+        run: |
+          set -e
+          pkgs=""
+          for d in */; do
+            d="${d%/}"
+            if [ -f "$d/bench_test.go" ] && [ ! -f "$d/go.mod" ]; then
+              pkgs="$pkgs ./$d/..."
+            fi
+          done
+          echo "Root-module bench packages:$pkgs"
+          echo
+          # shellcheck disable=SC2086
+          go test -run='^$' -bench=. -benchmem -benchtime=1s -count=1 $pkgs 2>&1 \
+            | tee bench-root.txt
+
+      - name: Bench (sub-modules with benches)
+        run: |
+          set -e
+          for m in grpcclient kafka log4go; do
+            if [ -f "$m/bench_test.go" ]; then
+              echo "=== $m ==="
+              (cd "$m" && go test -run='^$' -bench=. -benchmem -benchtime=1s -count=1 ./... 2>&1) \
+                | tee "bench-$m.txt"
+            fi
+          done
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: |
+            bench-root.txt
+            bench-grpcclient.txt
+            bench-kafka.txt
+            bench-log4go.txt
+          if-no-files-found: warn
