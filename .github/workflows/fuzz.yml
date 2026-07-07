@@ -1,0 +1,132 @@
+name: Fuzz
+
+# Runs every Fuzz* target in the root module for 30s each, on a daily schedule
+# and on manual dispatch. All 14 fuzz packages live in the root module (none
+# are in the sub-modules log4go/postgres/grpcclient/...), so a single
+# `go test ./<pkg>/...` invocation per target covers everything.
+on:
+  schedule:
+    # 07:00 UTC daily — off the top of the hour to spread load off the :00 mark.
+    - cron: '3 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # One step per package, running every FuzzX target in that package for
+      # 30s. `-fuzztime=30s` bounds each target; `-fuzz=FuzzX` selects one at a
+      # time. Targets are run sequentially within a package so a corpus crash
+      # is attributable. The matrix is encoded inline (14 packages) rather than
+      # via strategy.matrix so the package list and target list stay co-located
+      # and readable.
+      - name: Fuzz base62
+        run: |
+          set -e
+          for t in FuzzEncodeDecodeRoundtrip FuzzEncodeDecodeWithAlphabetRoundtrip FuzzDecodeArbitraryInput; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./base62/...
+          done
+
+      - name: Fuzz breaker
+        run: |
+          set -e
+          for t in FuzzBreakerExecute; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./breaker/...
+          done
+
+      - name: Fuzz cache
+        run: |
+          set -e
+          for t in FuzzCacheGetSet FuzzCacheDelete; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./cache/...
+          done
+
+      - name: Fuzz decimal
+        run: |
+          set -e
+          for t in FuzzDecimalArithmetic FuzzDecimalCmp; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./decimal/...
+          done
+
+      - name: Fuzz errcode
+        run: |
+          set -e
+          for t in FuzzCodeOf FuzzIsByCode; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./errcode/...
+          done
+
+      - name: Fuzz hash
+        run: |
+          set -e
+          for t in FuzzHMACEqual FuzzMD5Consistency; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./hash/...
+          done
+
+      - name: Fuzz limiter
+        run: |
+          set -e
+          for t in FuzzTokenBucketAllow FuzzGCRA; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./limiter/...
+          done
+
+      - name: Fuzz lru
+        run: |
+          set -e
+          for t in FuzzLRUPutGet FuzzLRUEviction; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./lru/...
+          done
+
+      - name: Fuzz money
+        run: |
+          set -e
+          for t in FuzzMoneyParse FuzzMoneyAddOverflow; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./money/...
+          done
+
+      - name: Fuzz otp
+        run: |
+          set -e
+          for t in FuzzHOTPCode FuzzTOTPCode; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./otp/...
+          done
+
+      - name: Fuzz priorityqueue
+        run: |
+          set -e
+          for t in FuzzPushPopOrdering; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./priorityqueue/...
+          done
+
+      - name: Fuzz ringbuffer
+        run: |
+          set -e
+          for t in FuzzRingBufferPushPop; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./ringbuffer/...
+          done
+
+      - name: Fuzz shortlink
+        run: |
+          set -e
+          for t in FuzzGenerateUnique FuzzIDShortener; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./shortlink/...
+          done
+
+      - name: Fuzz signing
+        run: |
+          set -e
+          for t in FuzzSignRoundtrip FuzzVerifyTampered; do
+            go test -run='^$' -fuzz="^${t}$" -fuzztime=30s ./signing/...
+          done

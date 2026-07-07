@@ -62,3 +62,12 @@ func BenchmarkNewXIDWithTime(b *testing.B) {
 		_ = uuid.NewXIDWithTime(time.Now())
 	}
 }
+
+func BenchmarkNewV5(b *testing.B) {
+	ns := uuid.NewV4()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = uuid.NewV5(ns, "example.com")
+	}
+}

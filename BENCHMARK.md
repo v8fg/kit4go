@@ -117,3 +117,109 @@ Remaining baselines live in each package's `*_bench_test.go`:
 ```sh
 go test -run='^$' -bench=. -benchtime=1s ./latency/... ./shortlink/...
 ```
+
+## More primitives
+
+Same hardware/toolchain as the Batch6 baselines above (darwin/arm64, Apple M5,
+Go 1.26.2, `-cpu=1`, `-benchtime=1s`, `-benchmem`, no `-race`). Order-of-
+magnitude reference; rerun locally for your hardware.
+
+The hot-path primitives (`ringbuffer`, `reservoir`, `backpressure`, `semaphore`,
+`retry` backoff-fn, `backoff` `Next`) are sub-100 ns and 0 allocs/op. The
+finance, ID, and signing packages allocate per op by design (`big.Int`,
+`crypto/rand`, HMAC).
+
+| Benchmark | ns/op | B/op | allocs/op |
+|-----------|-------|------|-----------|
+| `ringbuffer` TryPushTryPop | 19.34 | 0 | 0 |
+| `ringbuffer` TryPushTryPop (parallel) | 19.33 | 0 | 0 |
+| `ringbuffer` Len | 8.451 | 0 | 0 |
+| `reservoir` OfferSteady | 9.712 | 0 | 0 |
+| `reservoir` OfferFill | 1400 | 1152 | 6 |
+| `reservoir` Sample | 141.0 | 1024 | 1 |
+| `reservoir` Count | 8.462 | 0 | 0 |
+| `semaphore` AcquireRelease | 65.97 | 0 | 0 |
+| `semaphore` AcquireRelease (parallel) | 65.74 | 0 | 0 |
+| `semaphore` TryAcquire | 34.96 | 0 | 0 |
+| `backpressure` TryAcquireRejected | 3.154 | 0 | 0 |
+| `backpressure` Current | 0.4530 | 0 | 0 |
+| `lru` Get | 14.10 | 0 | 0 |
+| `lru` Get (parallel) | 78.77 | 0 | 0 |
+| `lru` Peek | 14.45 | 0 | 0 |
+| `lru` Set | 15.46 | 0 | 0 |
+| `lru` SetEvict | 198.9 | 100 | 3 |
+| `cache` Get | 74.14 | 0 | 0 |
+| `cache` GetMiss | 30.66 | 0 | 0 |
+| `cache` Set | 21.79 | 0 | 0 |
+| `cache` SetWithTTL | 84.82 | 0 | 0 |
+| `cache` Has | 72.21 | 0 | 0 |
+| `fanout` Publish | 52.29 | 0 | 0 |
+| `fanout` PublishBlocking | 142.0 | 0 | 0 |
+| `fanout` Subscribers | 6.671 | 0 | 0 |
+| `batcher` Add | 137.9 | 8 | 0 |
+| `batcher` Add (parallel) | 136.7 | 8 | 0 |
+| `batcher` Flush | 532.2 | 112 | 1 |
+| `retry` DoSuccess | 28.30 | 24 | 1 |
+| `retry` DoRetryableFail | 48.34 | 24 | 1 |
+| `retry` DoPermanentFail | 33.86 | 24 | 1 |
+| `retry` ExponentialBackoff | 0.4512 | 0 | 0 |
+| `backoff` Next/None | 9.551 | 0 | 0 |
+| `backoff` Next/Full | 15.27 | 0 | 0 |
+| `backoff` Next/Equal | 15.41 | 0 | 0 |
+| `backoff` Next/Decorrelated | 15.56 | 0 | 0 |
+| `backoff` NextParallel | 15.20 | 0 | 0 |
+| `backoff` Reset | 8.668 | 0 | 0 |
+| `backoff` WaitZero | 335.0 | 248 | 3 |
+| `money` Add | 11.82 | 0 | 0 |
+| `money` Sub | 11.81 | 0 | 0 |
+| `money` Mul | 0.4522 | 0 | 0 |
+| `money` Scale | 4.732 | 0 | 0 |
+| `money` String | 230.7 | 56 | 4 |
+| `money` Parse | 95.77 | 32 | 1 |
+| `decimal` Add | 47.68 | 80 | 2 |
+| `decimal` Sub | 41.81 | 40 | 2 |
+| `decimal` MulDecimal | 30.91 | 48 | 1 |
+| `decimal` Div | 43.88 | 40 | 2 |
+| `decimal` Cmp | 5.281 | 0 | 0 |
+| `decimal` Parse | 205.8 | 112 | 5 |
+| `decimal` String | 116.9 | 32 | 4 |
+| `shortlink` Next | 9.490 | 0 | 0 |
+| `shortlink` Next (parallel) | 9.740 | 0 | 0 |
+| `shortlink` EncodeBaseN | 11.33 | 0 | 0 |
+| `shortlink` Decode | 1334 | 2344 | 3 |
+| `shortlink` Generate | 1565 | 455 | 19 |
+| `shortlink` Resolve | 11.14 | 0 | 0 |
+| `uuid` NewV4 | 340.3 | 0 | 0 |
+| `uuid` NewV5 | 151.9 | 168 | 4 |
+| `uuid` NewKSUID | 423.8 | 0 | 0 |
+| `uuid` NewKSUIDRandomWithTime | 414.3 | 0 | 0 |
+| `uuid` NewXID | 63.88 | 0 | 0 |
+| `uuid` NewXIDWithTime | 58.71 | 0 | 0 |
+| `uuid` RequestID | 385.2 | 32 | 1 |
+| `uuid` RequestIDCanonicalFormat | 385.4 | 48 | 1 |
+| `otp` TOTPCode | 842.7 | 528 | 11 |
+| `otp` TOTPCodeCustom | 808.3 | 528 | 11 |
+| `otp` HOTPCode | 806.1 | 528 | 11 |
+| `otp` VerifyTOTP | 866.8 | 528 | 11 |
+| `signing` Sign | 996.9 | 992 | 16 |
+| `signing` Verify | 1088 | 1040 | 17 |
+| `signing` Canonical | 354.9 | 224 | 5 |
+| `signing` Compute | 522.0 | 720 | 10 |
+
+Notes:
+
+- `backpressure` also has the two contention rows already listed under
+  "Rate control & resilience" (`TryAcquire_Release` ~9.1 ns,
+  `TryAcquire_Contended` ~9.8 ns); the table above adds the rejection and
+  accessor paths.
+- `shortlink` `Generate`/`Decode` allocate because they use `crypto/rand` (per-
+  byte `big.Int` draw) and a fresh result slice; the sequential `Next`/
+  `EncodeBaseN`/`Resolve` paths are 0-alloc.
+- `otp` allocates 11/op because each code recomputes an HMAC over the
+  time/counter block and base32-decodes the secret on every call (the
+  `pquerna/otp` library path); memoize the secret decode to drop that on a hot
+  path.
+- `signing` `Sign`/`Verify` allocate ~1 KB/op: canonical-string build (sorted +
+  query-escaped) plus HMAC-SHA256 + hex; `Verify` is one extra compare + the
+  same recompute.
+

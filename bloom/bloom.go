@@ -22,11 +22,12 @@ import (
 
 // Filter is a Bloom filter. Safe for concurrent use.
 type Filter struct {
-	mu   sync.RWMutex
-	bits []uint64 // packed bit array (len = ceil(m/64))
-	m    uint64   // number of bits
-	k    uint64   // number of hash functions
-	n    uint64   // number of Add calls
+	mu    sync.RWMutex
+	bits  []uint64  // packed bit array (len = ceil(m/64))
+	m     uint64    // number of bits
+	k     uint64    // number of hash functions
+	n     uint64    // number of Add calls
+	ipool sync.Pool // recycles the k-length index slice so the hot path is 0-alloc
 }
 
 // New builds a filter sized for expectedN elements at the desired false-positive
@@ -63,19 +64,35 @@ func NewFromParams(m, k uint) *Filter {
 		k = 1
 	}
 	words := (m + 63) / 64
-	return &Filter{
+	k64 := uint64(k)
+	f := &Filter{
 		bits: make([]uint64, words),
 		m:    uint64(m),
-		k:    uint64(k),
+		k:    k64,
 	}
+	// Pool the index slice so Add/Test/TestAndAdd allocate zero on the hot
+	// path. Each Filter owns its pool; k is fixed per Filter, so every Get
+	// returns a slice already sized to k and no cross-Filter reslicing is
+	// needed.
+	//
+	// The pool stores *[]uint64, not []uint64, deliberately: a slice does not
+	// fit in an interface word, so storing []uint64 would heap-allocate a
+	// 24-byte header copy on every Put. A pointer fits in a word and boxes
+	// for free, which is what makes the hot path truly 0-alloc.
+	f.ipool.New = func() any {
+		s := make([]uint64, k64)
+		return &s
+	}
+	return f
 }
 
 // Add inserts data into the filter.
 func (f *Filter) Add(data []byte) {
-	idx := f.indices(data)
+	idxp := f.indices(data)
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.addLocked(idx)
+	f.addLocked(*idxp)
+	f.mu.Unlock()
+	f.ipool.Put(idxp)
 }
 
 // AddString is a string convenience wrapper around Add.
@@ -84,15 +101,12 @@ func (f *Filter) AddString(s string) { f.Add([]byte(s)) }
 // Test reports whether data may be in the filter. A false result is certain
 // (data was never added); a true result is probable.
 func (f *Filter) Test(data []byte) bool {
-	idx := f.indices(data)
+	idxp := f.indices(data)
 	f.mu.RLock()
-	defer f.mu.RUnlock()
-	for _, i := range idx {
-		if f.bits[i>>6]&(1<<(i&63)) == 0 {
-			return false
-		}
-	}
-	return true
+	present := f.testLocked(*idxp)
+	f.mu.RUnlock()
+	f.ipool.Put(idxp)
+	return present
 }
 
 // TestString is a string convenience wrapper around Test.
@@ -101,17 +115,23 @@ func (f *Filter) TestString(s string) bool { return f.Test([]byte(s)) }
 // TestAndAdd reports the pre-add Test result, then inserts data. Useful for
 // "return whether this is a duplicate, and record it" in one call.
 func (f *Filter) TestAndAdd(data []byte) bool {
-	idx := f.indices(data)
+	idxp := f.indices(data)
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	present := true
+	present := f.testLocked(*idxp)
+	f.addLocked(*idxp)
+	f.mu.Unlock()
+	f.ipool.Put(idxp)
+	return present
+}
+
+// testLocked reports membership assuming a held lock (read or write).
+func (f *Filter) testLocked(idx []uint64) bool {
 	for _, i := range idx {
 		if f.bits[i>>6]&(1<<(i&63)) == 0 {
-			present = false
+			return false
 		}
 	}
-	f.addLocked(idx)
-	return present
+	return true
 }
 
 func (f *Filter) addLocked(idx []uint64) {
@@ -123,14 +143,23 @@ func (f *Filter) addLocked(idx []uint64) {
 
 // indices derives the k bit indices for data via double hashing.
 // g_i = (h1 + i*h2) mod m, with h2 forced non-zero so all k indices can differ.
-func (f *Filter) indices(data []byte) []uint64 {
+//
+// It returns a pointer to a slice borrowed from f.ipool. The caller MUST
+// return the pointer via f.ipool.Put once done; never alias the slice beyond
+// that point. Because k is fixed per Filter, every pooled slice is already
+// exactly len k, so no reslicing or bounds fixing is required.
+//
+// The pool stores *[]uint64 (not []uint64): a slice does not fit in an
+// interface word and would heap-allocate a 24-byte header copy on every Put,
+// whereas a pointer boxes for free — which is what keeps the hot path 0-alloc.
+func (f *Filter) indices(data []byte) *[]uint64 {
 	h1, h2 := doubleHash(data)
 	if h2 == 0 {
 		h2 = 1
 	}
-	out := make([]uint64, f.k)
+	out := f.ipool.Get().(*[]uint64)
 	for i := uint64(0); i < f.k; i++ {
-		out[i] = (h1 + i*h2) % f.m
+		(*out)[i] = (h1 + i*h2) % f.m
 	}
 	return out
 }

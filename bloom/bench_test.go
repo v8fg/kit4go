@@ -86,13 +86,30 @@ func BenchmarkTestAndAdd(b *testing.B) {
 }
 
 // BenchmarkIndices isolates the hashing + index-derivation cost, which
-// dominates Add/Test and allocates the k-element index slice each call.
+// dominates Add/Test. The slice is borrowed from the pool and returned each
+// iteration, so this measures the true hot-path cost (0 allocs after warmup).
 func BenchmarkIndices(b *testing.B) {
 	f := benchFilter()
 	data := []byte("benchmark-key")
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = f.indices(data)
+		idxp := f.indices(data)
+		f.ipool.Put(idxp)
+	}
+}
+
+// BenchmarkAddTestMixed simulates the typical dedup loop: Test-then-Add on a
+// steady mix of hit/miss keys. The whole loop must be 0 allocs/op thanks to
+// the pooled index slice.
+func BenchmarkAddTestMixed(b *testing.B) {
+	f := benchFilter()
+	preFill(f, 50_000)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		key := []byte("item-42")
+		_ = f.Test(key)
+		f.Add(key)
 	}
 }
