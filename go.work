@@ -9,6 +9,7 @@ use (
 	./grpcserver
 	./kafka
 	./log4go
+	./minio
 	./metrics
 	./postgres
 	./rate
