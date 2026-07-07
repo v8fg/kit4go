@@ -26,10 +26,10 @@ import (
 // pure-push saturation (full), pure-pop drain, wrap-around, and mixed churn.
 func FuzzRingBufferPushPop(f *testing.F) {
 	// Seeds: each blob is a stream of ops. Even byte => push that byte; odd => pop.
-	f.Add([]byte{})                          // empty op stream
-	f.Add([]byte{0x00, 0x02, 0x04, 0x06})    // push only -> saturates capacity 4
-	f.Add([]byte{0x01, 0x03, 0x05})          // pop only on empty buffer -> all no-ops
-	f.Add([]byte{0x00, 0x01, 0x02, 0x03})    // push, pop, push, pop -> churn, no wrap
+	f.Add([]byte{})                                                           // empty op stream
+	f.Add([]byte{0x00, 0x02, 0x04, 0x06})                                     // push only -> saturates capacity 4
+	f.Add([]byte{0x01, 0x03, 0x05})                                           // pop only on empty buffer -> all no-ops
+	f.Add([]byte{0x00, 0x01, 0x02, 0x03})                                     // push, pop, push, pop -> churn, no wrap
 	f.Add([]byte{0x00, 0x02, 0x04, 0x06, 0x08, 0x0a, 0x01, 0x03, 0x05, 0x07}) // saturate, then drain (wrap-around)
 	f.Add([]byte{0x10, 0x12, 0x14, 0x01, 0x16, 0x03, 0x18, 0x05})             // interleaved push/pop past capacity
 

@@ -16,19 +16,19 @@ func FuzzMoneyParse(f *testing.F) {
 		{"USD", "12.34"},
 		{"USD", "-0.05"},
 		{"USD", "+1.00"},
-		{"USD", "1.5"},    // short fraction
-		{"USD", "1.234"},  // too many decimals
-		{"JPY", "1500"},   // 0-decimal
-		{"KWD", "1.234"},  // 3-decimal
-		{"usd", "12.34"},  // case-insensitive code
-		{"USD", ""},       // empty
-		{"USD", "   "},    // whitespace only
-		{"USD", "."},      // bare dot
-		{"USD", "-"},      // sign only
+		{"USD", "1.5"},   // short fraction
+		{"USD", "1.234"}, // too many decimals
+		{"JPY", "1500"},  // 0-decimal
+		{"KWD", "1.234"}, // 3-decimal
+		{"usd", "12.34"}, // case-insensitive code
+		{"USD", ""},      // empty
+		{"USD", "   "},   // whitespace only
+		{"USD", "."},     // bare dot
+		{"USD", "-"},     // sign only
 		{"USD", "0.00"},
 		{"USD", "-0.00"},
-		{"XXX", "1.00"},   // unknown currency
-		{"", "1.00"},      // empty currency
+		{"XXX", "1.00"},                  // unknown currency
+		{"", "1.00"},                     // empty currency
 		{"USD", "9223372036854775807"},   // int64 max whole
 		{"USD", "-9223372036854775808"},  // int64 min whole
 		{"USD", "999999999999999999999"}, // overflow whole
@@ -63,17 +63,17 @@ func FuzzMoneyAddOverflow(f *testing.F) {
 	}
 
 	corpora := []struct {
-		a, b       int64
-		codeA      string
-		codeBIdx   int
+		a, b     int64
+		codeA    string
+		codeBIdx int
 	}{
-		{100, 250, "USD", 0},                       // simple same-currency add
-		{1 << 62, 1 << 62, "USD", 0},               // add overflow
-		{1 << 62, -1, "USD", 0},                    // sub overflow (big - (-1))
+		{100, 250, "USD", 0},         // simple same-currency add
+		{1 << 62, 1 << 62, "USD", 0}, // add overflow
+		{1 << 62, -1, "USD", 0},      // sub overflow (big - (-1))
 		{0, 0, "USD", 0},
-		{-1 << 63, -1, "USD", 0},                    // min amount
-		{1<<63 - 1, 1, "USD", 0},                    // max amount
-		{100, 100, "USD", 1 % len(codes)},           // currency-mismatch path
+		{-1 << 63, -1, "USD", 0},          // min amount
+		{1<<63 - 1, 1, "USD", 0},          // max amount
+		{100, 100, "USD", 1 % len(codes)}, // currency-mismatch path
 	}
 	for _, c := range corpora {
 		f.Add(c.a, c.b, c.codeA, c.codeBIdx)

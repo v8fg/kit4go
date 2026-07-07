@@ -13,10 +13,10 @@ import (
 // positive ttl in the past, Get must return ErrMiss after expiry.
 func FuzzCacheGetSet(f *testing.F) {
 	// Seed corpus.
-	f.Add("k", "v", int64(0))           // no expiry -> round-trips
-	f.Add("user:1", "alice", int64(0))  // realistic key
-	f.Add("", "", int64(0))             // empty key/value
-	f.Add("k", "v", int64(-1))          // negative ttl -> treated as no expiry
+	f.Add("k", "v", int64(0))          // no expiry -> round-trips
+	f.Add("user:1", "alice", int64(0)) // realistic key
+	f.Add("", "", int64(0))            // empty key/value
+	f.Add("k", "v", int64(-1))         // negative ttl -> treated as no expiry
 
 	f.Fuzz(func(t *testing.T, key, val string, ttlNanos int64) {
 		ctx := context.Background()

@@ -46,8 +46,8 @@ func FuzzTokenBucketAllow(f *testing.F) {
 	f.Add(math.Float64bits(100), uint8(5), []byte{0x01, 0x01, 0x80 | 10, 0x01})
 	f.Add(math.Float64bits(1), uint8(1), []byte{0x01, 0x80 | 100, 0x01})
 	f.Add(math.Float64bits(1_000_000), uint8(255), []byte{0x01, 0x01})
-	f.Add(math.Float64bits(1e9), uint8(1<<7 - 1), []byte{0x80 | 1, 0x01})
-	f.Add(math.Float64bits(0), uint8(0), []byte{0x01})     // zero rate/burst: constructor clamps
+	f.Add(math.Float64bits(1e9), uint8(1<<7-1), []byte{0x80 | 1, 0x01})
+	f.Add(math.Float64bits(0), uint8(0), []byte{0x01})                // zero rate/burst: constructor clamps
 	f.Add(math.Float64bits(math.NaN()), uint8(3), []byte{0x01, 0x01}) // NaN rate: must not panic
 
 	f.Fuzz(func(t *testing.T, rateBits uint64, burst uint8, steps []byte) {

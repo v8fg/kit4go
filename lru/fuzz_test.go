@@ -59,8 +59,8 @@ func FuzzLRUEviction(f *testing.F) {
 	// distinct integer keys. Small capacities (2-4) keep the eviction logic
 	// observable rather than statistical.
 	f.Add([]byte{0, 1, 2, 3, 4})
-	f.Add([]byte{1, 1, 1})   // duplicate key -> no eviction
-	f.Add([]byte{9, 8, 7})   // all distinct, capacity 2 -> one eviction
+	f.Add([]byte{1, 1, 1})    // duplicate key -> no eviction
+	f.Add([]byte{9, 8, 7})    // all distinct, capacity 2 -> one eviction
 	f.Add([]byte{5, 6, 5, 7}) // touch 5 to promote it, then evict 6
 	f.Add([]byte{})
 
@@ -114,4 +114,3 @@ func FuzzLRUEviction(f *testing.F) {
 		}
 	})
 }
-

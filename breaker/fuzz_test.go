@@ -10,7 +10,7 @@
 //     current state, or concurrent state transitions it triggers itself.
 //  2. After each call the breaker is in a valid state (Closed/Open/HalfOpen)
 //     and the lifetime metrics stay self-consistent:
-//       Total == Success + Failures + rejected
+//     Total == Success + Failures + rejected
 //     where rejected is the number of calls that returned ErrCircuitOpen
 //     without fn running (those bump Total but neither Success nor Failures).
 //
