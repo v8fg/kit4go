@@ -90,7 +90,7 @@ func New[T any](workers int, opts ...Option[T]) *Pool[T] {
 }
 
 func (p *Pool[T]) start() {
-	for i := 0; i < p.workers; i++ {
+	for range p.workers {
 		p.wg.Add(1)
 		go p.worker()
 	}

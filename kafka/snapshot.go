@@ -90,7 +90,7 @@ func (h *snapshotHistory) snapshot() []ProducerSnapshot {
 	}
 	out := make([]ProducerSnapshot, h.size)
 	start := (h.head - h.size + h.capv) % h.capv
-	for i := 0; i < h.size; i++ {
+	for i := range h.size {
 		out[i] = h.buf[(start+i)%h.capv]
 	}
 	return out

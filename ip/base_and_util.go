@@ -9,7 +9,7 @@ const hexDigit = "0123456789abcdef"
 // bytesToUint32 with BigEndian
 func bytesToUint32(b []byte) (result uint32) {
 	n := len(b)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		result = result << 8
 		result += uint32(b[i])
 	}
@@ -22,7 +22,7 @@ func copyByteFromRight(src []byte, size int) (dst []byte) {
 	if sl >= size {
 		dst = src[sl-size:]
 	} else {
-		for i := 0; i < sl; i++ {
+		for i := range sl {
 			dst[i+size-sl] = src[i]
 		}
 	}

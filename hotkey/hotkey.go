@@ -18,7 +18,8 @@
 package hotkey
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"sync"
 	"time"
 )
@@ -131,7 +132,7 @@ func (d *Detector) Top() []HotKey {
 		results = append(results, HotKey{Key: k, Count: len(trimmed)})
 	}
 	// Sort by count desc, take top-K.
-	sort.Slice(results, func(i, j int) bool { return results[i].Count > results[j].Count })
+	slices.SortFunc(results, func(a, b HotKey) int { return cmp.Compare(b.Count, a.Count) })
 	if len(results) > d.topK {
 		results = results[:d.topK]
 	}

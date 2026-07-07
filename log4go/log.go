@@ -1448,7 +1448,7 @@ func (l *Logger) deliverRecordToWriter(level int, f string, args ...any) {
 	if l.hasCaller.Load() {
 		var pcs [8]uintptr
 		n := runtime.Callers(2, pcs[:]) // depth 1 = this func; scan from depth 2
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if callerIsInternal(pcs[i]) {
 				continue
 			}

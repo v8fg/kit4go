@@ -121,7 +121,7 @@ func RandStringWithKind(n int, kind int) []byte {
 	}
 
 	var ik int
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ik = MustRandIn(posIndex) // posIndex is non-empty here.
 		count, base := characters[ik][0], characters[ik][1]
 		result[i] = uint8(base + rand.IntN(count))
@@ -165,14 +165,14 @@ func RandNIn[T any](n int, slice []T) []T {
 	}
 
 	m := make([]int, size)
-	for i := 0; i < size; i++ {
+	for i := range size {
 		j := rand.IntN(i + 1)
 		m[i] = m[j]
 		m[j] = i
 	}
 
 	ret := make([]T, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ret[i] = slice[m[i]]
 	}
 	return ret
@@ -236,14 +236,14 @@ func RandUniCodeByUIDWithSalt(uid uint64, n int, slat uint64) string {
 	dfIdx := make([]byte, n)
 
 	// Diffusion
-	for i := 0; i < n; i++ {
+	for i := range n {
 		dfIdx[i] = byte(uid % LenLetterDigitBytes)
 		dfIdx[i] = (dfIdx[i] + byte(i)*dfIdx[0]) % LenLetterDigitBytes
 		uid = uid / LenLetterDigitBytes
 	}
 
 	// Confusion
-	for i := 0; i < n; i++ {
+	for i := range n {
 		idx := (byte(i) * prime) % byte(n)
 		code[i] = letterDigitBytes[dfIdx[idx]]
 	}

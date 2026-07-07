@@ -11,8 +11,9 @@
 package topk
 
 import (
+	"cmp"
 	"container/heap"
-	"sort"
+	"slices"
 	"sync"
 )
 
@@ -139,7 +140,7 @@ func (t *Tracker) Top() []Entry {
 	for _, it := range *t.minHeap {
 		entries = append(entries, Entry{Key: it.key, Count: it.count})
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Count > entries[j].Count })
+	slices.SortFunc(entries, func(a, b Entry) int { return cmp.Compare(b.Count, a.Count) })
 	return entries
 }
 

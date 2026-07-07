@@ -10,7 +10,7 @@ import (
 // convention used by Loki/Promtail). Empty values are quoted ("").
 func appendLogfmtValue(buf []byte, s string) []byte {
 	needsQuote := s == ""
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if c <= ' ' || c == '=' || c == '"' || c == '\\' || c > 0x7e {
 			needsQuote = true
@@ -21,7 +21,7 @@ func appendLogfmtValue(buf []byte, s string) []byte {
 		return append(buf, s...)
 	}
 	buf = append(buf, '"')
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		switch c {
 		case '"', '\\':

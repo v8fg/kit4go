@@ -50,7 +50,7 @@ func New(capacity int) *Semaphore {
 		ch:     make(chan struct{}, capacity),
 		closed: make(chan struct{}),
 	}
-	for i := 0; i < capacity; i++ {
+	for range capacity {
 		s.ch <- struct{}{}
 	}
 	return s
@@ -119,7 +119,7 @@ func (s *Semaphore) Acquire(ctx context.Context, n int) error {
 
 // takeLocked removes n tokens from the channel. Caller holds wmu.
 func (s *Semaphore) takeLocked(n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		<-s.ch
 	}
 }
@@ -171,7 +171,7 @@ func (s *Semaphore) Release(n int) {
 	default:
 	}
 
-	for i := 0; i < n; i++ {
+	for range n {
 		select {
 		case s.ch <- struct{}{}:
 		default:

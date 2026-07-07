@@ -211,11 +211,11 @@ func encodeBaseN(id uint64, alphabet string) string {
 func decodeBaseN(code, alphabet string) (uint64, error) {
 	n := uint64(len(alphabet))
 	index := make(map[byte]uint64, n)
-	for i := 0; i < len(alphabet); i++ {
+	for i := range len(alphabet) {
 		index[alphabet[i]] = uint64(i)
 	}
 	var result uint64
-	for i := 0; i < len(code); i++ {
+	for i := range len(code) {
 		val, ok := index[code[i]]
 		if !ok {
 			return 0, errors.New("shortlink: invalid character in code")

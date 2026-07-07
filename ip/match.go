@@ -175,7 +175,7 @@ func FastInRangeMixedIPsOrCIDRs(mixedIPsOrCIDRs [][]byte, ip net.IP) (int, bool)
 			// }
 
 			ok := true
-			for i := 0; i < ipLen; i++ {
+			for i := range ipLen {
 				if nn[i]&m[i] != ip[i]&m[i] {
 					ok = false
 					break
@@ -243,7 +243,7 @@ func CIDRContains(ones int, ipNet, ip net.IP, formatIPToV4 bool) bool {
 		return false
 	}
 
-	for i := 0; i < ipLen; i++ {
+	for i := range ipLen {
 		if nn[i]&m[i] != ip[i]&m[i] {
 			return false
 		}

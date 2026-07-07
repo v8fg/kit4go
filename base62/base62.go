@@ -83,7 +83,7 @@ func buildDecodeTable(alphabet string) [256]int8 {
 	for i := range idx {
 		idx[i] = -1
 	}
-	for i := 0; i < 62; i++ {
+	for i := range 62 {
 		idx[alphabet[i]] = int8(i)
 	}
 	return idx
@@ -96,7 +96,7 @@ func buildDecodeTableErr(alphabet string) ([256]int8, bool) {
 	for i := range idx {
 		idx[i] = -1
 	}
-	for i := 0; i < 62; i++ {
+	for i := range 62 {
 		c := alphabet[i]
 		if idx[c] != -1 {
 			return idx, false // duplicate byte in alphabet
@@ -113,7 +113,7 @@ func decodeWithTable(s string, idx *[256]int8) (uint64, error) {
 		return 0, ErrInvalid
 	}
 	var val uint64
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		d := idx[s[i]]
 		if d < 0 {
 			return 0, ErrInvalid

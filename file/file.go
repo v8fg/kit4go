@@ -1,12 +1,13 @@
 package file
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -176,8 +177,6 @@ func ListFiles(dir string, fileType Type) (files []string, err error) {
 	}
 
 	err = filepath.WalkDir(dir, fn)
-	sort.Slice(files, func(i, j int) bool {
-		return files[i] < files[j]
-	})
+	slices.SortFunc(files, func(a, b string) int { return cmp.Compare(a, b) })
 	return files, err
 }

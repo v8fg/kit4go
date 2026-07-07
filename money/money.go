@@ -114,7 +114,7 @@ func FromMajor(whole, frac int, code string) (Money, error) {
 		return Money{}, fmt.Errorf("%w: %w", ErrInvalidAmount, err)
 	}
 	minor := int64(whole)
-	for i := 0; i < c.Decimals; i++ {
+	for range c.Decimals {
 		minor, err = mulChecked(minor, 10)
 		if err != nil {
 			return Money{}, err
@@ -165,7 +165,7 @@ func Parse(code, amount string) (Money, error) {
 		}
 	}
 	minor := whole
-	for i := 0; i < c.Decimals; i++ {
+	for range c.Decimals {
 		minor, err = mulChecked(minor, 10)
 		if err != nil {
 			return Money{}, err
@@ -206,7 +206,7 @@ func (m Money) String() string {
 		return fmt.Sprintf("%s%d %s", sign, abs, m.cur.Code)
 	}
 	div := int64(1)
-	for i := 0; i < m.cur.Decimals; i++ {
+	for range m.cur.Decimals {
 		div *= 10
 	}
 	whole := abs / div

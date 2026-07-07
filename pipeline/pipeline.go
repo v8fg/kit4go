@@ -78,7 +78,7 @@ func New[I, O any](workers int, stage Stage[I, O], opts ...Option[I, O]) *Pipeli
 	for _, opt := range opts {
 		opt(p)
 	}
-	for i := 0; i < workers; i++ {
+	for range workers {
 		p.wg.Add(1)
 		go p.worker()
 	}

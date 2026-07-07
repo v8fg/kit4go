@@ -247,7 +247,7 @@ const floatExpMask uint64 = 0x7FF0000000000000
 // control chars pays a single append instead of len(s) of them.
 func appendJSONStringContent(buf []byte, s string) []byte {
 	start := 0
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if c >= 0x20 && c != '"' && c != '\\' {
 			continue // extend the clean run

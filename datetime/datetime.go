@@ -310,7 +310,7 @@ func RangeTime(start, end time.Time, interval time.Duration) []time.Time {
 	}
 
 	ret := make([]time.Time, delta)
-	for i := 0; i < delta; i++ {
+	for i := range delta {
 		ret[i] = start.Add(interval * time.Duration(i))
 	}
 	return ret
@@ -334,7 +334,7 @@ func RangeDateStr(start, end time.Time, layout string) []string {
 	}
 
 	ret := make([]string, delta)
-	for i := 0; i < delta; i++ {
+	for i := range delta {
 		ret[i] = start.AddDate(0, 0, i).Format(layout)
 	}
 	return ret

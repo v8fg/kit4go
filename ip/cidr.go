@@ -81,7 +81,7 @@ func MaskIPToCIDR(ipMask string) string {
 	var ones uint8
 	decodeS, _ := hex.DecodeString(im[1])
 
-	for i := 0; i < len(decodeS); i++ {
+	for i := range len(decodeS) {
 		ones += hammingWeight(decodeS[i])
 	}
 

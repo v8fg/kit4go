@@ -273,7 +273,7 @@ func (p *Pool[Job]) hasBacklog() bool {
 
 // grow launches n new workers. Caller validates bounds.
 func (p *Pool[Job]) grow(n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		if int(p.workers.Load()) >= p.maxWorkers {
 			return
 		}

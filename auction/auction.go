@@ -86,7 +86,7 @@ func ResolveMultiSlot(bids []Bid, floor int64, slots int) ([]Result, error) {
 	})
 
 	results := make([]Result, 0, slots)
-	for i := 0; i < slots && i < len(valid); i++ {
+	for i := range min(slots, len(valid)) {
 		clearing := floor
 		if i+1 < len(valid) && valid[i+1].Price > floor {
 			clearing = valid[i+1].Price

@@ -157,7 +157,7 @@ func (f *Flag) Revoke(keys ...string) {
 // and never holds the read lock (D6 fix).
 func hashPercent(key string) uint {
 	h := fnv32aOffsetBasis
-	for i := 0; i < len(key); i++ {
+	for i := range len(key) {
 		h ^= uint32(key[i])
 		h *= fnv32aPrime
 	}

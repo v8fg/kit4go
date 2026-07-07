@@ -57,7 +57,7 @@ func Camel(s string, capitalizeFirstLetter bool, delimiters ...rune) string {
 	delimiterSet := make(map[rune]struct{}, len(delimiters)+1)
 	delimiterSet[defaultDelimiterSpace] = struct{}{} // default delimiter, used to remove space
 
-	for i := 0; i < len(delimiters); i++ {
+	for i := range len(delimiters) {
 		delimiterSet[delimiters[i]] = struct{}{}
 	}
 

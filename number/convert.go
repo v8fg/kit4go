@@ -107,7 +107,7 @@ func BytesToDataLittleEndian[T BinaryType](data []byte, kindAnyData T) (T, error
 // by the width of uint on the host platform.
 func BytesToUint(b []byte) (result uint) {
 	n := len(b)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		result = result << 8
 		result += uint(b[i])
 	}

@@ -141,7 +141,7 @@ func (rb *RingBuffer[T]) Drain() []T {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
 	out := make([]T, rb.count)
-	for i := 0; i < rb.count; i++ {
+	for i := range rb.count {
 		out[i] = rb.buf[rb.tail]
 		rb.buf[rb.tail] = *new(T)
 		rb.tail = (rb.tail + 1) % rb.cap

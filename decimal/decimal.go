@@ -37,7 +37,7 @@ var (
 var precisionTable [20]*big.Int
 
 func init() {
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		precisionTable[i] = new(big.Int).Exp(ten, big.NewInt(int64(i)), nil)
 	}
 }

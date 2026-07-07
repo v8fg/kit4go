@@ -69,7 +69,7 @@ func PermBetween(min, max int) []int {
 		return []int{}
 	}
 	m := make([]int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		j := rand.IntN(i + 1)
 		m[i] = m[j]
 		m[j] = i + min

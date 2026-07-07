@@ -228,7 +228,7 @@ func (r *RingSpiller[T]) Drain() []T {
 	out := make([]T, 0, r.size)
 	start := (r.head - r.size + r.capv) % r.capv
 	var zero T
-	for i := 0; i < r.size; i++ {
+	for i := range r.size {
 		idx := (start + i) % r.capv
 		out = append(out, r.buf[idx])
 		r.buf[idx] = zero

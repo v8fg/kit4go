@@ -153,7 +153,7 @@ func (m *Map[T]) GetN(key string, n int) []T {
 		n = len(scores)
 	}
 	// Simple selection: full sort is fine for modest N.
-	for i := 0; i < n; i++ {
+	for i := range n {
 		max := i
 		for j := i + 1; j < len(scores); j++ {
 			if scores[j].score > scores[max].score {
@@ -163,7 +163,7 @@ func (m *Map[T]) GetN(key string, n int) []T {
 		scores[i], scores[max] = scores[max], scores[i]
 	}
 	out := make([]T, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out[i] = scores[i].node
 	}
 	return out
