@@ -8,7 +8,7 @@ import (
 )
 
 func TestKafkaCodec_JSON_Default(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	r := &Record{level: INFO, msg: "hello", file: "svc.go:42", unixNano: 1782563343536622000, seq: 42}
 	payload := w.buildPayload(r)
 	if len(payload) == 0 {
@@ -20,7 +20,7 @@ func TestKafkaCodec_JSON_Default(t *testing.T) {
 }
 
 func TestKafkaCodec_Proto_SmallerThanJSON(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	r := &Record{level: INFO, msg: "hello world ad request served", file: "svc.go:42", unixNano: 1782563343536622000, seq: 42}
 	jsonPayload := w.buildPayload(r)
 	w.SetKafkaCodec(KafkaCodecProto{})
@@ -32,7 +32,7 @@ func TestKafkaCodec_Proto_SmallerThanJSON(t *testing.T) {
 }
 
 func TestKafkaCodec_Switch(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	r := &Record{level: INFO, msg: "x", unixNano: 1, seq: 1}
 	j := w.buildPayload(r)
 	w.SetKafkaCodec(KafkaCodecProto{})
@@ -60,11 +60,11 @@ func TestKafkaCodec_ContentTypes(t *testing.T) {
 
 // TestSetKafkaCodec_PackageLevel_AppliesToRegisteredWriters verifies the
 // package-level SetKafkaCodec iterates the singleton's writers, applies the
-// codec to each KafKaWriter (proto → JSON via nil), and skips non-Kafka writers
+// codec to each KafkaWriter (proto → JSON via nil), and skips non-Kafka writers
 // without panic. Uses a sarama mock producer so Register→Start needs no broker.
 func TestSetKafkaCodec_PackageLevel_AppliesToRegisteredWriters(t *testing.T) {
 
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	w.producerFactory = func() (kafka.Producer, error) {
 		return newMockKafkaProducer(), nil
 	}
@@ -85,7 +85,7 @@ func TestSetKafkaCodec_PackageLevel_AppliesToRegisteredWriters(t *testing.T) {
 		t.Fatalf("default codec should be JSON, got %v", b)
 	}
 
-	// package-level switch to protobuf applies to the registered KafKaWriter.
+	// package-level switch to protobuf applies to the registered KafkaWriter.
 	SetKafkaCodec(KafkaCodecProto{})
 	b := w.buildPayload(r)
 	if len(b) == 0 || b[0] == '{' {
@@ -105,7 +105,7 @@ func TestSetKafkaCodec_PackageLevel_AppliesToRegisteredWriters(t *testing.T) {
 // value is rendered exactly as scalarToJSON produces it (strings inline,
 // scalars JSON-encoded into the value sub-field).
 func TestKafkaCodec_Proto_UserFields(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	w.SetKafkaCodec(KafkaCodecProto{})
 	r := &Record{
 		level: INFO, msg: "bid served", file: "bidder.go:7",
@@ -149,9 +149,9 @@ func TestKafkaCodec_Proto_UserFields(t *testing.T) {
 // branches of KafkaCodecProto.Encode (legacy routing fields sourced from
 // options.MSG). Both must appear in the proto bytes when set.
 func TestKafkaCodec_Proto_RoutingFields(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{
+	w := NewKafkaWriter(KafkaWriterOptions{
 		ProducerTopic: "t", BufferSize: 16,
-		MSG: KafKaMSGFields{ServerIP: "10.0.0.1", ESIndex: "adx-logs-2026.06"},
+		MSG: KafkaMSGFields{ServerIP: "10.0.0.1", ESIndex: "adx-logs-2026.06"},
 	})
 	w.SetKafkaCodec(KafkaCodecProto{})
 	r := &Record{level: INFO, msg: "x", unixNano: 1782563343536622000, seq: 1}
@@ -165,8 +165,8 @@ func TestKafkaCodec_Proto_RoutingFields(t *testing.T) {
 	}
 }
 
-func Benchmark_KafKaCodec_JSON(b *testing.B) {
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
+func Benchmark_KafkaCodec_JSON(b *testing.B) {
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	r := &Record{level: INFO, msg: "bid served ad_id=123 price=0.5", file: "bidder.go:42", unixNano: 1782563343536622000, seq: 42}
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -175,8 +175,8 @@ func Benchmark_KafKaCodec_JSON(b *testing.B) {
 	}
 }
 
-func Benchmark_KafKaCodec_Proto(b *testing.B) {
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
+func Benchmark_KafkaCodec_Proto(b *testing.B) {
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	w.SetKafkaCodec(KafkaCodecProto{})
 	r := &Record{level: INFO, msg: "bid served ad_id=123 price=0.5", file: "bidder.go:42", unixNano: 1782563343536622000, seq: 42}
 	b.ReportAllocs()

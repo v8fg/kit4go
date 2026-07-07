@@ -7,10 +7,10 @@ import (
 	"github.com/v8fg/kit4go/kafka"
 )
 
-// newBatchWriter builds a KafKaWriter in batch mode backed by mp (no broker).
-func newBatchWriter(t *testing.T, mp *mockKafkaProducer, batchSize int, flush time.Duration) *KafKaWriter {
+// newBatchWriter builds a KafkaWriter in batch mode backed by mp (no broker).
+func newBatchWriter(t *testing.T, mp *mockKafkaProducer, batchSize int, flush time.Duration) *KafkaWriter {
 	t.Helper()
-	w := NewKafKaWriter(KafKaWriterOptions{
+	w := NewKafkaWriter(KafkaWriterOptions{
 		ProducerTopic:      "t",
 		BufferSize:         1024,
 		BatchMode:          true,
@@ -24,7 +24,7 @@ func newBatchWriter(t *testing.T, mp *mockKafkaProducer, batchSize int, flush ti
 	return w
 }
 
-func writeN(t *testing.T, w *KafKaWriter, n int) {
+func writeN(t *testing.T, w *KafkaWriter, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
 		if err := w.Write(&Record{level: INFO, msg: "x"}); err != nil {
@@ -34,7 +34,7 @@ func writeN(t *testing.T, w *KafKaWriter, n int) {
 }
 
 // waitSent polls until Metrics().Sent >= want or the deadline elapses.
-func waitSent(t *testing.T, w *KafKaWriter, want uint64, why string) {
+func waitSent(t *testing.T, w *KafkaWriter, want uint64, why string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -48,7 +48,7 @@ func waitSent(t *testing.T, w *KafKaWriter, want uint64, why string) {
 
 // Batch mode end-to-end: 500 records / batchSize 100 → 5 count-triggered flushes
 // via SendBatch (Send never called); all delivered; metrics tracked.
-func Test_KafKaWriter_BatchMode_EndToEnd(t *testing.T) {
+func Test_KafkaWriter_BatchMode_EndToEnd(t *testing.T) {
 	mp := newMockKafkaProducer()
 	w := newBatchWriter(t, mp, 100, time.Second) // flush interval high → only count fires
 	const n = 500
@@ -75,7 +75,7 @@ func Test_KafKaWriter_BatchMode_EndToEnd(t *testing.T) {
 }
 
 // Partial batch is flushed by the timer when BatchSize is not reached.
-func Test_KafKaWriter_BatchMode_FlushOnTimer(t *testing.T) {
+func Test_KafkaWriter_BatchMode_FlushOnTimer(t *testing.T) {
 	mp := newMockKafkaProducer()
 	w := newBatchWriter(t, mp, 10000, 20*time.Millisecond) // high size, short interval
 	const n = 5
@@ -95,7 +95,7 @@ func Test_KafKaWriter_BatchMode_FlushOnTimer(t *testing.T) {
 }
 
 // A partial batch still buffered on shutdown is flushed by Stop() (no loss).
-func Test_KafKaWriter_BatchMode_ShutdownFlush(t *testing.T) {
+func Test_KafkaWriter_BatchMode_ShutdownFlush(t *testing.T) {
 	mp := newMockKafkaProducer()
 	w := newBatchWriter(t, mp, 10000, 10*time.Second) // neither count nor timer fires
 	const n = 7
@@ -114,9 +114,9 @@ func Test_KafKaWriter_BatchMode_ShutdownFlush(t *testing.T) {
 }
 
 // Regression: default (non-batch) mode still uses per-record Send; Batches=0.
-func Test_KafKaWriter_PerRecordMode_NoBatch(t *testing.T) {
+func Test_KafkaWriter_PerRecordMode_NoBatch(t *testing.T) {
 	mp := newMockKafkaProducer()
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 1024}) // BatchMode default false
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 1024}) // BatchMode default false
 	w.producerFactory = func() (kafka.Producer, error) { return mp, nil }
 	if err := w.Start(); err != nil {
 		t.Fatal(err)
@@ -134,14 +134,14 @@ func Test_KafKaWriter_PerRecordMode_NoBatch(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_BatchFasterWhenSendCostly proves the batch MECHANISM pays off
+// Test_KafkaWriter_BatchFasterWhenSendCostly proves the batch MECHANISM pays off
 // when the producer call has per-call cost — the regime where "batch should be
 // faster" holds. The slow mock charges a per-CALL latency ONCE per Send/
 // SendBatch; per-record pays it N times, batch pays it N/BatchSize times.
 // (The real async producer's Send is a ~free enqueue, so its throughput is ≈
-// parity — see TestIntegration_KafKaWriter_Throughput; batch helps when Send is
+// parity — see TestIntegration_KafkaWriter_Throughput; batch helps when Send is
 // expensive: sync producer, overloaded broker backing up, heavy per-call work.)
-func Test_KafKaWriter_BatchFasterWhenSendCostly(t *testing.T) {
+func Test_KafkaWriter_BatchFasterWhenSendCostly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing-sensitive: compares batch vs per-record throughput; unreliable on slow/noisy CI runners")
 	}
@@ -152,13 +152,13 @@ func Test_KafKaWriter_BatchFasterWhenSendCostly(t *testing.T) {
 	measure := func(batch bool) (uint64, time.Duration) {
 		mp := newMockKafkaProducer()
 		mp.callDelay = delay
-		opts := KafKaWriterOptions{ProducerTopic: "t", BufferSize: 1 << 14, OverflowPolicy: "block"}
+		opts := KafkaWriterOptions{ProducerTopic: "t", BufferSize: 1 << 14, OverflowPolicy: "block"}
 		if batch {
 			opts.BatchMode = true
 			opts.BatchSize = batchSize
 			opts.BatchFlushInterval = time.Second // only count-triggered flushes
 		}
-		w := NewKafKaWriter(opts)
+		w := NewKafkaWriter(opts)
 		w.producerFactory = func() (kafka.Producer, error) { return mp, nil }
 		if err := w.Start(); err != nil {
 			t.Fatal(err)
@@ -189,7 +189,7 @@ func Test_KafKaWriter_BatchFasterWhenSendCostly(t *testing.T) {
 // ProducerLinger wiring: 0 → not forwarded (kafka default 10ms applies); >0 →
 // forwarded; kafka.LingerOff → forwarded (+ MaxBufferedRecords=1 deadlock guard).
 // Verified by applying the built options to a fresh kafka.Options (no broker).
-func Test_KafKaWriter_ProducerLingerOption(t *testing.T) {
+func Test_KafkaWriter_ProducerLingerOption(t *testing.T) {
 	apply := func(opts []kafka.Option) kafka.Options {
 		var o kafka.Options
 		for _, opt := range opts {
@@ -197,15 +197,15 @@ func Test_KafKaWriter_ProducerLingerOption(t *testing.T) {
 		}
 		return o
 	}
-	w0 := NewKafKaWriter(KafKaWriterOptions{Brokers: []string{"x"}, ProducerTopic: "t"})
+	w0 := NewKafkaWriter(KafkaWriterOptions{Brokers: []string{"x"}, ProducerTopic: "t"})
 	if o := apply(w0.kafkaProducerOpts()); o.ProducerLinger != 0 {
 		t.Errorf("default ProducerLinger=%v want 0 (kafka default applies later)", o.ProducerLinger)
 	}
-	w5 := NewKafKaWriter(KafKaWriterOptions{Brokers: []string{"x"}, ProducerTopic: "t", ProducerLinger: 5 * time.Millisecond})
+	w5 := NewKafkaWriter(KafkaWriterOptions{Brokers: []string{"x"}, ProducerTopic: "t", ProducerLinger: 5 * time.Millisecond})
 	if o := apply(w5.kafkaProducerOpts()); o.ProducerLinger != 5*time.Millisecond {
 		t.Errorf("ProducerLinger=%v want 5ms", o.ProducerLinger)
 	}
-	woff := NewKafKaWriter(KafKaWriterOptions{Brokers: []string{"x"}, ProducerTopic: "t", ProducerLinger: kafka.LingerOff})
+	woff := NewKafkaWriter(KafkaWriterOptions{Brokers: []string{"x"}, ProducerTopic: "t", ProducerLinger: kafka.LingerOff})
 	o := apply(woff.kafkaProducerOpts())
 	if o.ProducerLinger != kafka.LingerOff {
 		t.Errorf("ProducerLinger=%v want LingerOff(%v)", o.ProducerLinger, kafka.LingerOff)
@@ -220,9 +220,9 @@ func Test_KafKaWriter_ProducerLingerOption(t *testing.T) {
 // real-time buffer depth (InFlight/BufferedBytes) + Backend; ProducerSnapshot()
 // gives full depth (Timestamp/Linger/etc). Verifies the producer's counters
 // flow through to both surfaces.
-func Test_KafKaWriter_ProducerMetricsBridge(t *testing.T) {
+func Test_KafkaWriter_ProducerMetricsBridge(t *testing.T) {
 	mp := newMockKafkaProducer()
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 1024})
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 1024})
 	w.producerFactory = func() (kafka.Producer, error) { return mp, nil }
 	if err := w.Start(); err != nil {
 		t.Fatal(err)

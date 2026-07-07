@@ -12,7 +12,7 @@ import (
 	"github.com/v8fg/kit4go/kafka"
 )
 
-// KafKaMSGFields holds the legacy Kafka→ES message fields.
+// KafkaMSGFields holds the legacy Kafka→ES message fields.
 //
 // Field management is unified with the Logger's structured-fields layer:
 // SetBaseField/RemoveBaseField (global static), With/WithField/WithFields
@@ -25,7 +25,7 @@ import (
 //	log4go.SetBaseField("es_index", "adx-logs-2026.06")
 //
 // so the same field is carried by every writer on the logger, not just Kafka.
-type KafKaMSGFields struct {
+type KafkaMSGFields struct {
 	// ESIndex and ServerIP are routing/static fields. Deprecated as struct
 	// members — prefer SetBaseField("es_index",…)/SetBaseField("server_ip",…).
 	// They are emitted only when the r.fields layer did not already supply the
@@ -44,14 +44,14 @@ type KafKaMSGFields struct {
 	ExtraFields map[string]any `json:"extra_fields" mapstructure:"extra_fields"`
 }
 
-// KafKaWriterOptions kafka writer options.
+// KafkaWriterOptions kafka writer options.
 //
 // Performance notes: BufferSize bounds the async send channel; OverflowPolicy
 // ("drop"|"block"|"spill") decides what happens when it is full and is the
 // primary OOM guard. Under "spill", SpillType selects the bounded recovery
 // store ("ring" in-memory ring, or "file" disk-backed) whose drained records
 // are re-sent once the channel recovers.
-type KafKaWriterOptions struct {
+type KafkaWriterOptions struct {
 	Enable                  bool `json:"enable" mapstructure:"enable"`
 	Debug                   bool `json:"debug" mapstructure:"debug"`                     // if true, will output the send msg
 	SpecifyVersion          bool `json:"specify_version" mapstructure:"specify_version"` // if use the input version, default false
@@ -141,16 +141,16 @@ type KafKaWriterOptions struct {
 	// Access via ProducerSnapshot() + type-assert for kafka.SnapshotHistory.
 	ProducerSnapshotHistory int `json:"producer_snapshot_history" mapstructure:"producer_snapshot_history"`
 
-	MSG KafKaMSGFields `json:"msg"`
+	MSG KafkaMSGFields `json:"msg"`
 }
 
-// KafKaWriter kafka writer (async, bounded, overflow-safe).
-type KafKaWriter struct {
+// KafkaWriter kafka writer (async, bounded, overflow-safe).
+type KafkaWriter struct {
 	level    int
 	paused   atomic.Bool
 	producer kafka.Producer
 	messages chan kafka.Message
-	options  KafKaWriterOptions
+	options  KafkaWriterOptions
 
 	policy     OverflowPolicy
 	spiller    Spiller[kafka.Message]
@@ -165,7 +165,7 @@ type KafKaWriter struct {
 	onEvent         atomic.Pointer[func(name string, delta int64)]
 	producerFactory func() (kafka.Producer, error)
 	drainInterval   time.Duration
-	// batch-mode tuning (resolved from KafKaWriterOptions in NewKafKaWriter).
+	// batch-mode tuning (resolved from KafkaWriterOptions in NewKafkaWriter).
 	// batchMode=false (default) → per-record Send; true → accumulate + SendBatch.
 	batchMode          bool
 	batchSize          int
@@ -180,20 +180,20 @@ type KafKaWriter struct {
 	quit chan struct{}
 }
 
-// DefaultKafkaBatchSize is the SendBatch size applied when KafKaWriterOptions.
+// DefaultKafkaBatchSize is the SendBatch size applied when KafkaWriterOptions.
 // BatchSize is <= 0. 1024 is the stress-matrix best default (kafka/STRESS_MATRIX.md):
 // near-peak QPS for franz-go (which needs batch ≥1024), flat for sarama, and no
 // extra memory (in-flight buffer is bounded by the backend's MaxBufferedRecords,
 // not the SendBatch size).
 const DefaultKafkaBatchSize = 1024
 
-// NewKafKaWriter new kafka writer
-func NewKafKaWriter(options KafKaWriterOptions) *KafKaWriter {
+// NewKafkaWriter new kafka writer
+func NewKafkaWriter(options KafkaWriterOptions) *KafkaWriter {
 	defaultLevel := DEBUG
 	if len(options.Level) > 0 {
 		defaultLevel = getLevelDefault(options.Level, defaultLevel, "")
 	}
-	w := &KafKaWriter{
+	w := &KafkaWriter{
 		options:            options,
 		quit:               make(chan struct{}),
 		level:              defaultLevel,
@@ -219,7 +219,7 @@ func NewKafKaWriter(options KafKaWriterOptions) *KafKaWriter {
 }
 
 // Init service for Record
-func (k *KafKaWriter) Init() error {
+func (k *KafkaWriter) Init() error {
 	return k.Start()
 }
 
@@ -231,7 +231,7 @@ func (k *KafKaWriter) Init() error {
 // consumer sorts on (seq primary, unix_nano tie-break) to reconstruct exact log
 // order across partitions/cores. Routing fields (es_index/server_ip) and all
 // business fields are taken from Fields (= the Record's Base+With+Context
-// fields) first, falling back to the legacy KafKaMSGFields struct members only
+// fields) first, falling back to the legacy KafkaMSGFields struct members only
 // when Fields did not already supply them — so SetBaseField is the single source
 // of truth and always wins.
 type kafkaPayload struct {
@@ -331,7 +331,7 @@ func appendRoutingField(buf []byte, key string, fields []field, fallback string)
 // (in deliverRecordToWriter), so the Kafka timestamp never drifts from the
 // record's own time, and the payload carries the strict-ordering keys
 // (unix_nano/seq) the ES consumer sorts on.
-func (k *KafKaWriter) buildPayload(r *Record) []byte {
+func (k *KafkaWriter) buildPayload(r *Record) []byte {
 	p := kafkaPayload{
 		UnixNano: r.unixNano,
 		Seq:      r.seq,
@@ -394,7 +394,7 @@ func (k *KafKaWriter) buildPayload(r *Record) []byte {
 // SetKafkaCodec swaps the serialization codec (JSON default ↔ Protobuf).
 // RWMutex-protected — safe under concurrent logging, takes effect on the next
 // record. Codec swaps are rare (config change, not per-record).
-func (k *KafKaWriter) SetKafkaCodec(c KafkaCodec) {
+func (k *KafkaWriter) SetKafkaCodec(c KafkaCodec) {
 	if c == nil {
 		c = KafkaCodecJSON{}
 	}
@@ -404,22 +404,22 @@ func (k *KafKaWriter) SetKafkaCodec(c KafkaCodec) {
 }
 
 // Name returns WriterNameKafka.
-func (k *KafKaWriter) Name() string { return WriterNameKafka }
+func (k *KafkaWriter) Name() string { return WriterNameKafka }
 
 // Pause drops incoming records without removing the writer or closing the producer.
-func (k *KafKaWriter) Pause() { k.paused.Store(true) }
+func (k *KafkaWriter) Pause() { k.paused.Store(true) }
 
 // Resume restores delivery after Pause.
-func (k *KafKaWriter) Resume() { k.paused.Store(false) }
+func (k *KafkaWriter) Resume() { k.paused.Store(false) }
 
 // Paused reports whether the writer is currently paused.
-func (k *KafKaWriter) Paused() bool { return k.paused.Load() }
+func (k *KafkaWriter) Paused() bool { return k.paused.Load() }
 
 // Write writes r by building the Kafka payload (JSON or protobuf, per the
 // configured codec) and delivering it to a bounded channel under the configured
 // overflow policy. It never spawns a goroutine per record. An empty message is
 // skipped (no payload).
-func (k *KafKaWriter) Write(r *Record) error {
+func (k *KafkaWriter) Write(r *Record) error {
 	if k.paused.Load() {
 		return nil
 	}
@@ -446,7 +446,7 @@ func (k *KafKaWriter) Write(r *Record) error {
 }
 
 // send delivers msg under the overflow policy (drop / block / spill).
-func (k *KafKaWriter) send(msg kafka.Message) {
+func (k *KafkaWriter) send(msg kafka.Message) {
 	switch k.policy {
 	case OverflowBlock:
 		k.messages <- msg
@@ -473,7 +473,7 @@ func (k *KafKaWriter) send(msg kafka.Message) {
 // and a spill store exists (OverflowSpill), the record is diverted to spill
 // instead of a futile Send that would async-fail and be lost. A sync client-side
 // Send error is also failover'd to spill under Spill policy (at-least-once).
-func (k *KafKaWriter) sendOne(msg kafka.Message) {
+func (k *KafkaWriter) sendOne(msg kafka.Message) {
 	if k.breaker != nil && k.breaker.isOpen() && k.spiller != nil {
 		k.failover(msg)
 		return
@@ -506,7 +506,7 @@ func (k *KafKaWriter) sendOne(msg kafka.Message) {
 // unavailable (breaker open) or a sync send errored. The record is recovered via
 // drainSpill once the breaker closes. With no spill store it degrades to a
 // counted drop — Drop/Block policies keep their existing behavior.
-func (k *KafKaWriter) failover(msg kafka.Message) {
+func (k *KafkaWriter) failover(msg kafka.Message) {
 	atomic.AddUint64(&k.failovered, 1)
 	if k.spiller != nil && k.spiller.Push(msg) {
 		k.stats.IncSpilled()
@@ -517,7 +517,7 @@ func (k *KafKaWriter) failover(msg kafka.Message) {
 }
 
 // drainSpill re-injects recovered records into the channel (non-blocking).
-func (k *KafKaWriter) drainSpill() {
+func (k *KafkaWriter) drainSpill() {
 	if k.spiller == nil || k.spiller.Len() == 0 {
 		return
 	}
@@ -535,7 +535,7 @@ func (k *KafKaWriter) drainSpill() {
 // producerNotNil reports whether the producer is set to a non-nil value,
 // guarding against the typed-nil-interface gotcha (a non-nil interface holding
 // a nil pointer).
-func (k *KafKaWriter) producerNotNil() bool {
+func (k *KafkaWriter) producerNotNil() bool {
 	return k.producer != nil && !reflect.ValueOf(k.producer).IsNil()
 }
 
@@ -543,11 +543,11 @@ func (k *KafKaWriter) producerNotNil() bool {
 // spiller so recovered records get re-sent. Success/error accounting is via the
 // kafka.Producer OnEvent hook (installed at daemon start, below).
 //
-// In batch mode (KafKaWriterOptions.BatchMode) it accumulates records into a
+// In batch mode (KafkaWriterOptions.BatchMode) it accumulates records into a
 // reusable slice and flushes via producer.SendBatch on BatchSize /
 // BatchFlushInterval / shutdown — cutting daemon-side per-call overhead at high
 // QPS. Per-record mode (default) Sends each immediately (lowest latency).
-func (k *KafKaWriter) daemon() {
+func (k *KafkaWriter) daemon() {
 	defer func() {
 		if r := recover(); r != nil {
 			recordDaemonPanic("kafka", r)
@@ -661,7 +661,7 @@ func (k *KafKaWriter) daemon() {
 }
 
 // drainSpillToProducer sends recovered records straight to the producer on shutdown.
-func (k *KafKaWriter) drainSpillToProducer() {
+func (k *KafkaWriter) drainSpillToProducer() {
 	if k.spiller == nil {
 		return
 	}
@@ -671,12 +671,12 @@ func (k *KafKaWriter) drainSpillToProducer() {
 }
 
 // kafkaProducerOpts builds the kafka.Option list for the underlying producer from
-// KafKaWriterOptions. Extracted from Start so the option wiring (notably
+// KafkaWriterOptions. Extracted from Start so the option wiring (notably
 // ProducerLinger) is unit-testable without a broker. ProducerLinger is forwarded
 // only when the caller set it (!=0); a bare 0 is left to the kafka package
 // default (10ms), and a negative value (kafka.LingerOff) disables backend
 // batching.
-func (k *KafKaWriter) kafkaProducerOpts() []kafka.Option {
+func (k *KafkaWriter) kafkaProducerOpts() []kafka.Option {
 	opts := []kafka.Option{
 		kafka.WithBrokers(k.options.Brokers...),
 		kafka.WithTopic(k.options.ProducerTopic),
@@ -701,7 +701,7 @@ func (k *KafKaWriter) kafkaProducerOpts() []kafka.Option {
 }
 
 // Start start the kafka writer
-func (k *KafKaWriter) Start() (err error) {
+func (k *KafkaWriter) Start() (err error) {
 	log.Printf("[log4go] kafka writer starting (policy=%s)", k.policy)
 
 	// create the producer via the kafka package (sarama default, franz-go via
@@ -786,7 +786,7 @@ func (k *KafKaWriter) Start() (err error) {
 }
 
 // Stop stop the kafka writer gracefully (flushes spiller to producer first).
-func (k *KafKaWriter) Stop() {
+func (k *KafkaWriter) Stop() {
 	if !k.run.CompareAndSwap(true, false) {
 		return // already stopped, or another Stop in flight — atomic claim avoids a double close
 	}
@@ -803,11 +803,11 @@ func (k *KafKaWriter) Stop() {
 }
 
 // Stats returns a snapshot of overflow counters.
-func (k *KafKaWriter) Stats() (dropped, spilled uint64) {
+func (k *KafkaWriter) Stats() (dropped, spilled uint64) {
 	return k.stats.Dropped(), k.stats.Spilled()
 }
 
-// WriterMetrics is a point-in-time snapshot of KafKaWriter operational counters,
+// WriterMetrics is a point-in-time snapshot of KafkaWriter operational counters,
 // suitable for scraping by a monitoring system (Prometheus, etc.).
 type WriterMetrics struct {
 	Sent     uint64 // records handed to the producer
@@ -831,7 +831,7 @@ type WriterMetrics struct {
 }
 
 // Metrics returns a snapshot of operational counters for monitoring.
-func (k *KafKaWriter) Metrics() WriterMetrics {
+func (k *KafkaWriter) Metrics() WriterMetrics {
 	queued := 0
 	if k.messages != nil {
 		queued = len(k.messages)
@@ -863,7 +863,7 @@ func (k *KafKaWriter) Metrics() WriterMetrics {
 
 // breakerStateCode returns the breaker's int state for Metrics, or closed when
 // the breaker is disabled (nil).
-func (k *KafKaWriter) breakerStateCode() int32 {
+func (k *KafkaWriter) breakerStateCode() int32 {
 	if k.breaker == nil {
 		return breakerClosed
 	}
@@ -877,7 +877,7 @@ func (k *KafKaWriter) breakerStateCode() int32 {
 // monitoring / point-in-time inspection beyond the scrape-level WriterMetrics.
 // Returns the zero value if the producer is nil (e.g. a test that bypassed
 // Start). For trend samples, type-assert the producer against kafka.SnapshotHistory.
-func (k *KafKaWriter) ProducerSnapshot() kafka.ProducerSnapshot {
+func (k *KafkaWriter) ProducerSnapshot() kafka.ProducerSnapshot {
 	if !k.producerNotNil() {
 		return kafka.ProducerSnapshot{}
 	}
@@ -887,7 +887,7 @@ func (k *KafKaWriter) ProducerSnapshot() kafka.ProducerSnapshot {
 // SetOnEvent installs a real-time metric hook (reserved for monitoring
 // integration). The callback receives an event name ("sent"/"error") and a
 // delta. It must be set before Start and must be non-blocking.
-func (k *KafKaWriter) SetOnEvent(fn func(name string, delta int64)) {
+func (k *KafkaWriter) SetOnEvent(fn func(name string, delta int64)) {
 	if fn == nil {
 		k.onEvent.Store(nil)
 		return
@@ -897,7 +897,7 @@ func (k *KafKaWriter) SetOnEvent(fn func(name string, delta int64)) {
 
 // fireEvent invokes the onEvent hook if installed (atomic load; zero-overhead
 // when nil). Called from the daemon goroutine.
-func (k *KafKaWriter) fireEvent(name string, delta int64) {
+func (k *KafkaWriter) fireEvent(name string, delta int64) {
 	if p := k.onEvent.Load(); p != nil {
 		(*p)(name, delta)
 	}
@@ -905,4 +905,23 @@ func (k *KafKaWriter) fireEvent(name string, delta int64) {
 
 // SetAlertSink installs an alert sink (e.g. WebhookAlertSink for lark/dingtalk/
 // feishu) for overflow push notifications. Set before Start.
-func (k *KafKaWriter) SetAlertSink(sink AlertSink) { k.stats.SetAlertSink(sink) }
+func (k *KafkaWriter) SetAlertSink(sink AlertSink) { k.stats.SetAlertSink(sink) }
+
+// --- Deprecated aliases (backward compatibility for the old KafKa spelling) ---
+//
+// The canonical names use "Kafka" (first-letter capital, matching Go's
+// proper-noun convention and the package's existing KafkaCodec/SetKafkaCodec).
+// These aliases keep the old "KafKa" spelling compiling for external callers
+// and will not be removed within the v0.x line.
+
+// Deprecated: use KafkaWriter. The KafKa spelling is retained only for backward compatibility.
+type KafKaWriter = KafkaWriter
+
+// Deprecated: use KafkaWriterOptions. The KafKa spelling is retained only for backward compatibility.
+type KafKaWriterOptions = KafkaWriterOptions
+
+// Deprecated: use KafkaMSGFields. The KafKa spelling is retained only for backward compatibility.
+type KafKaMSGFields = KafkaMSGFields
+
+// Deprecated: use NewKafkaWriter. The KafKa spelling is retained only for backward compatibility.
+func NewKafKaWriter(options KafKaWriterOptions) *KafKaWriter { return NewKafkaWriter(options) }

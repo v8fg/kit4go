@@ -11,8 +11,9 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
-Build-out of the primitive library, a full-repo quality-review pass, and a
-coverage / benchmark / fuzz hardening sweep. 22 commits since v0.3.0.
+Build-out of the primitive library, a full-repo quality-review pass, a
+coverage / benchmark / fuzz hardening sweep, a Go-modernization refactor, and
+security/race closure. 30 commits since v0.3.0.
 
 ### Added
 
@@ -34,10 +35,34 @@ coverage / benchmark / fuzz hardening sweep. 22 commits since v0.3.0.
 These seven packages round out the P1–P3 primitive tiers (errcode/objpool/
 priorityqueue/signalbus as P1, hotreload/signing/adaptive as P2/P3).
 
+#### CI
+
+- **fuzz workflow** (`.github/workflows/fuzz.yml`) running the Go-native fuzz
+  tests on a daily schedule across all packages.
+- **bench workflow** (`.github/workflows/bench.yml`) with dynamic bench-package
+  discovery (21 root + 3 sub-modules) and results artifact upload.
+
 ### Changed
 
+- **datetime** (BREAKING in a v0.x sense): week first-day is now parameterized
+  across the week/ISO-week helpers, and parse errors are surfaced instead of
+  swallowed. Callers passing implicit locale defaults may need to supply the
+  first-day argument explicitly.
 - **uuid**: migrated from the deprecated satori/uuid to **gofrs/uuid**.
 - **semaphore**: rewritten on channels for cleaner, race-free acquire/release.
+- **limiter**: `NewLimiter` contract corrected — previously an unrecognized
+  non-empty `Algorithm` silently fell back to token bucket (dead switch-default
+  masking typos like `tokn_bucket`); now only an *empty* `Algorithm` defaults to
+  token bucket and a non-empty unknown value returns `nil`. Godoc states the
+  true contract.
+- **modernization (Go 1.18+/1.22+)**: `interface{}` → `any` (174 sites / 37
+  files); `for i := 0; i < N; i++` → `for i := range N` (40 sites); `sort.Slice`
+  → `slices.SortFunc` with `cmp.Compare` in `file`, `topk`, `hotkey`.
+- **godoc**: `revive` `exported` across all 14 modules — 22 genuine violations
+  fixed (decimal/file/health/money/otp/random/topk/clickhouse/email/log4go);
+  missing-godoc violations now **0**, including the 66 undocumented `log4go`
+  exported symbols (`FileWriter` / `KafKaWriter` / `NetWriter` `.Write` recovered
+  from a comment-block shadow).
 
 ### Fixed
 
@@ -45,7 +70,9 @@ Full-repo quality-review closure across the new packages and the wider
 codebase, applied in two backlog batches plus targeted P0–P1 fixes:
 
 - **P0 quality-review findings**: bounds/edge correctness in `file`, `number`,
-  `topk`, `ip`, `otp`.
+  `topk`, `ip`, `otp` — incl. `topk` unbounded `counts` growth (now true O(K)),
+  and `otp` CSPRNG-failure swallowed (`GenerateURLHOTP`/`GenerateURLTOTP` now
+  return `error`, API-breaking v0.x, P0 on a secret).
 - **P1 fixes**: `otp` error propagation, `str` unsafe-path migration, `health`
   docs; panic/bound fixes for `datetime.RangeTime`, `bit.Swap`, and a
   `hotreload` regression.
@@ -56,6 +83,46 @@ codebase, applied in two backlog batches plus targeted P0–P1 fixes:
   `errcode`, `ip`.
 - **batch2 breaking backlog** (v0.x, behavior-changing): `maxprocs`, `bit`,
   `random`, `str`.
+- **batch15**: `pkg:reason` error-prefix alignment (datetime/otp/log4go);
+  compile-time interface assertions added to 9 packages
+  (adaptive/cache/clickhouse/config/email/file/health/ip/shortlink).
+- **batch19 R8**: `tcpclient.isClosedErr` now relies solely on
+  `errors.Is(err, net.ErrClosed)` instead of `err.Error()` string-compare
+  (not API-stable).
+
+#### Security
+
+- **signing**: parameter-injection — the canonical string joined values raw, so
+  `{a:"1&b=2"}` collided with `{a:"1",b:"2"}`. Keys and values are now
+  `url.QueryEscape`'d so `&`/`=` are unambiguous. Regression test
+  `TestSign_NoParameterInjection`.
+- **postgres**: DSN built via raw `fmt.Sprintf` misparsed passwords containing
+  URL-special chars (`@:/#% ` space, common in RDS/Azure) to the wrong host.
+  Now `url.PathEscape`'d on user + password; round-trip tests added.
+
+#### Race conditions
+
+- **number**: package-global `regForNumber` written by `SetRegForNumber`
+  without sync while `Round*` read it — now `atomic.Pointer`; `-race` test.
+- **ip**: `cacheLocalIP` fields read/written with no sync — torn read after TTL
+  expiry; copy-on-write via `atomic.Pointer`; `-race` tests.
+- **signalbus**: `invoke()` read the panic hook outside the lock while
+  `SetPanicHook` wrote it; the hook is now snapshotted under the lock alongside
+  the handlers. `-race` test `TestSetPanicHook_NoRaceWithPanickingHandler`.
+- **log4go**: writer `onEvent` hook atomicized with `atomic.Pointer` so
+  `SetOnEvent` is race-free against the daemon reader.
+- **errcode**: `Is()` nil-deref panic on a typed-nil `*Error` target guarded;
+  `errors.Is(err, (*Error)(nil))` returns false instead of panicking.
+
+### Performance
+
+- **bloom**: `sync.Pool` hot path → **0 allocs** on Add/Test.
+- **consistenthash**: HRW `Get` allocated a per-node scratch `[]byte` — **500
+  allocs/op at 500 nodes** on the per-request shard-routing primitive; stack/pool
+  buffer → **4 allocs/op** (`GetN` 500 → 6). Identical hash output.
+- **topk / hotkey**: `sort.Slice` → `slices.SortFunc` removes reflection from
+  result sort (small hot-path win).
+- **tcpclient**: dropped string-compare fast path for closed-conn detection.
 
 ### Tests / Quality
 
@@ -74,6 +141,20 @@ codebase, applied in two backlog batches plus targeted P0–P1 fixes:
   unreachable paths in `tcpclient`/`freqcap`/`budget`.
 - **batch9 sentinel align** — consistent test sentinel values across packages,
   refreshed `BENCHMARK.md`, new `CONTRIBUTING.md`, and fuzz expansion.
+- **batch10/11 fuzz expansion** to 17 packages
+  (`hotreload`/`adaptive`/`featureflag`/`fsm`/`auction`/`backoff`/`budget`/
+  `freqcap`/`hotkey`/`loadbalance`/`lru`/`breaker`/`cache`/`money`/`limiter`/
+  `ringbuffer`/`decimal`); additional `bench_test.go` for `lru`/`money`/`otp`/
+  `reservoir`/`retry`/`ringbuffer`/`shortlink`/`signing`/`uuid`.
+- **batch13 examples** for `trie`/`freqcap`/`budget`/`shutdown`/`fanout`/
+  `batcher`/`metrics`; `BENCHMARK.md` corrected and CVE-clean deps confirmed
+  (gofrs/uuid; satori purged).
+- **flake hardening**: 3 tests that went red under `-race`/CI load fixed in
+  production-correct code (`grpcserver` shutdown-timeout signals ready on
+  genuine in-flight RPC; `batcher` pre-seeds an item so `flushedN>0` is
+  guaranteed; `log4go` net/webhook poll instead of fixed deadlines).
+- **cross-platform**: all 14 modules verified to compile on `linux/amd64` and
+  `linux/arm64`.
 - **CI**: added `clickhouse` to the module loop; fixed gofmt gate on
   `fuzz_test.go` files.
 

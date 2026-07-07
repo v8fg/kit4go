@@ -52,7 +52,7 @@ func ParseOverflowPolicy(s string) OverflowPolicy {
 	}
 }
 
-// String constants for KafKaWriterOptions.OverflowPolicy (the struct field is a
+// String constants for KafkaWriterOptions.OverflowPolicy (the struct field is a
 // string, parsed by ParseOverflowPolicy at construction). Use these instead of
 // magic strings for type safety and IDE autocomplete.
 const (
@@ -73,7 +73,7 @@ const (
 	OverflowPolicySpill = "spill"
 )
 
-// String constants for KafKaWriterOptions.SpillType.
+// String constants for KafkaWriterOptions.SpillType.
 const (
 	// SpillTypeRing: in-memory circular buffer. Fast (mutex + slice append). Lost
 	// on process crash. Overwrites oldest when full. Default.
@@ -88,8 +88,8 @@ const (
 	SpillTypeChain = "chain"
 )
 
-// String constants for KafKaWriterOptions.DeliveryMode (partition consumer only;
-// for KafKaWriter this field is unused — the writer always uses callback mode
+// String constants for KafkaWriterOptions.DeliveryMode (partition consumer only;
+// for KafkaWriter this field is unused — the writer always uses callback mode
 // internally).
 const (
 	DeliveryModeCallback = "callback"

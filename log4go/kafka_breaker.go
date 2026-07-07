@@ -35,7 +35,7 @@ func breakerStateName(s int32) string {
 
 // default breaker tuning. Conservative: it trips only on a sustained high error
 // rate over a real sample window, not on transient blips, and probes recovery
-// every cooldown. All overridable via KafKaWriterOptions.
+// every cooldown. All overridable via KafkaWriterOptions.
 const (
 	defaultBreakerFailRate   = 0.5
 	defaultBreakerMinSamples = 20
@@ -109,10 +109,10 @@ func (b *kafkaBreaker) recordSendN(n uint64) {
 }
 func (b *kafkaBreaker) recordError() { b.winErr.Add(1) }
 
-// newKafkaBreakerFromOptions resolves the breaker config from KafKaWriterOptions
+// newKafkaBreakerFromOptions resolves the breaker config from KafkaWriterOptions
 // (applying conservative defaults for zero values) and returns a breaker, or nil
 // if the breaker is disabled. now seeds the first window start.
-func newKafkaBreakerFromOptions(o KafKaWriterOptions, now time.Time) *kafkaBreaker {
+func newKafkaBreakerFromOptions(o KafkaWriterOptions, now time.Time) *kafkaBreaker {
 	if o.BreakerDisabled {
 		return nil
 	}

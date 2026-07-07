@@ -2,7 +2,7 @@ package log4go
 
 // KafkaCodec serializes a kafkaPayload to bytes for the Kafka message value.
 // Implementations must be zero-alloc on the steady-state hot path (append-based,
-// pooled buffer) and CPU-cheap — this runs on the KafKaWriter.Write path at
+// pooled buffer) and CPU-cheap — this runs on the KafkaWriter.Write path at
 // 100k–1M+ records/sec.
 //
 // Two built-in implementations:

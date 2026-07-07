@@ -30,9 +30,9 @@ func ExampleNewLogger() {
 	lg.Info("server started on :%d", 8080)
 }
 
-// ExampleNewKafKaWriter shows the Kafka writer constructor with overflow config.
-func ExampleNewKafKaWriter() {
-	kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+// ExampleNewKafkaWriter shows the Kafka writer constructor with overflow config.
+func ExampleNewKafkaWriter() {
+	kw := log4go.NewKafkaWriter(log4go.KafkaWriterOptions{
 		Enable:         true,
 		Level:          log4go.LevelFlagInfo,
 		Brokers:        []string{"kafka-1:9092"},

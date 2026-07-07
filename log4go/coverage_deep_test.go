@@ -417,11 +417,11 @@ func Test_AppendJSONStringContent_MultiByteUTF8(t *testing.T) {
 // Section 2 — Kafka / File / Net writer spill paths
 // ---------------------------------------------------------------------------
 
-// Test_KafKaWriter_drainSpill_ReinjectAndBackpressure drives the re-inject and
+// Test_KafkaWriter_drainSpill_ReinjectAndBackpressure drives the re-inject and
 // "channel full again" branches of drainSpill: with the channel full, a drained
 // record is pushed back into the spiller rather than re-injected.
-func Test_KafKaWriter_drainSpill_ReinjectAndBackpressure(t *testing.T) {
-	w := &KafKaWriter{
+func Test_KafkaWriter_drainSpill_ReinjectAndBackpressure(t *testing.T) {
+	w := &KafkaWriter{
 		policy:   OverflowSpill,
 		spiller:  NewRingSpiller[kafka.Message](4),
 		messages: make(chan kafka.Message, 1),
@@ -446,14 +446,14 @@ func Test_KafKaWriter_drainSpill_ReinjectAndBackpressure(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_drainSpill_EmptyAndNil covers the two early-return guards.
-func Test_KafKaWriter_drainSpill_EmptyAndNil(t *testing.T) {
+// Test_KafkaWriter_drainSpill_EmptyAndNil covers the two early-return guards.
+func Test_KafkaWriter_drainSpill_EmptyAndNil(t *testing.T) {
 	// nil spiller -> no-op.
-	w := &KafKaWriter{messages: make(chan kafka.Message, 1)}
+	w := &KafkaWriter{messages: make(chan kafka.Message, 1)}
 	w.drainSpill() // must not panic
 
 	// non-nil but empty spiller -> no-op.
-	w2 := &KafKaWriter{
+	w2 := &KafkaWriter{
 		spiller:  NewRingSpiller[kafka.Message](2),
 		messages: make(chan kafka.Message, 1),
 	}
@@ -463,14 +463,14 @@ func Test_KafKaWriter_drainSpill_EmptyAndNil(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_Write_EmptyAndLevelFiltered covers Write's two early returns:
+// Test_KafkaWriter_Write_EmptyAndLevelFiltered covers Write's two early returns:
 // empty msg (nil) and level above the writer's threshold (nil).
-func Test_KafKaWriter_Write_EmptyAndLevelFiltered(t *testing.T) {
-	w := &KafKaWriter{
+func Test_KafkaWriter_Write_EmptyAndLevelFiltered(t *testing.T) {
+	w := &KafkaWriter{
 		level:    INFO,
 		policy:   OverflowDrop,
 		messages: make(chan kafka.Message, 4),
-		options:  KafKaWriterOptions{ProducerTopic: "t"},
+		options:  KafkaWriterOptions{ProducerTopic: "t"},
 	}
 	// Empty message -> nil, nothing enqueued.
 	if err := w.Write(&Record{level: INFO, msg: ""}); err != nil {
@@ -489,12 +489,12 @@ func Test_KafKaWriter_Write_EmptyAndLevelFiltered(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_drainSpillToProducer pushes spilled records straight to the
+// Test_KafkaWriter_drainSpillToProducer pushes spilled records straight to the
 // producer on shutdown via the no-op producer.
-func Test_KafKaWriter_drainSpillToProducer(t *testing.T) {
+func Test_KafkaWriter_drainSpillToProducer(t *testing.T) {
 	p := newMockKafkaProducer()
 	defer p.Close()
-	w := &KafKaWriter{
+	w := &KafkaWriter{
 		policy:   OverflowSpill,
 		spiller:  NewRingSpiller[kafka.Message](4),
 		messages: make(chan kafka.Message, 1),
@@ -754,12 +754,12 @@ func Test_SlogSource_ZeroPC(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_buildPayload_BothSources covers the r.fields + ExtraFields
+// Test_KafkaWriter_buildPayload_BothSources covers the r.fields + ExtraFields
 // dedup path (both non-empty) in buildPayload.
-func Test_KafKaWriter_buildPayload_BothSources(t *testing.T) {
-	w := &KafKaWriter{options: KafKaWriterOptions{
+func Test_KafkaWriter_buildPayload_BothSources(t *testing.T) {
+	w := &KafkaWriter{options: KafkaWriterOptions{
 		ProducerTopic: "t",
-		MSG: KafKaMSGFields{
+		MSG: KafkaMSGFields{
 			ExtraFields: map[string]any{
 				"shared":   "from-extra", // overridden by r.fields
 				"only-ext": 1,
@@ -789,11 +789,11 @@ func Test_KafKaWriter_buildPayload_BothSources(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_buildPayload_ExtraOnly covers the ExtraFields-only branch.
-func Test_KafKaWriter_buildPayload_ExtraOnly(t *testing.T) {
-	w := &KafKaWriter{options: KafKaWriterOptions{
+// Test_KafkaWriter_buildPayload_ExtraOnly covers the ExtraFields-only branch.
+func Test_KafkaWriter_buildPayload_ExtraOnly(t *testing.T) {
+	w := &KafkaWriter{options: KafkaWriterOptions{
 		ProducerTopic: "t",
-		MSG:           KafKaMSGFields{ExtraFields: map[string]any{"k": "v"}},
+		MSG:           KafkaMSGFields{ExtraFields: map[string]any{"k": "v"}},
 	}}
 	b := w.buildPayload(&Record{level: INFO, msg: "m"})
 	s := string(b)
@@ -1005,9 +1005,9 @@ func Test_Logger_Close_FlusherAndCloserErrors(t *testing.T) {
 // no-op producer factory, covering the remaining Start branches.
 // ---------------------------------------------------------------------------
 
-// Test_KafKaWriter_Start_SpillRingAndChain covers the Start spill-policy wiring
+// Test_KafkaWriter_Start_SpillRingAndChain covers the Start spill-policy wiring
 // (ring vs default chain) without a real broker, using the no-op producer.
-func Test_KafKaWriter_Start_SpillRingAndChain(t *testing.T) {
+func Test_KafkaWriter_Start_SpillRingAndChain(t *testing.T) {
 	cases := []struct {
 		name     string
 		spill    string
@@ -1019,7 +1019,7 @@ func Test_KafKaWriter_Start_SpillRingAndChain(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
-			w := NewKafKaWriter(KafKaWriterOptions{
+			w := NewKafkaWriter(KafkaWriterOptions{
 				Enable: true, Level: LevelFlagInfo, Brokers: []string{"localhost:9092"},
 				ProducerTopic: "cov", BufferSize: 16,
 				OverflowPolicy: "spill", SpillType: c.spill, SpillSize: 4, SpillDir: dir,
@@ -1038,10 +1038,10 @@ func Test_KafKaWriter_Start_SpillRingAndChain(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_Start_VersionOverride covers the SpecifyVersion+VersionStr
+// Test_KafkaWriter_Start_VersionOverride covers the SpecifyVersion+VersionStr
 // success branch (parses a valid kafka version).
-func Test_KafKaWriter_Start_VersionOverride(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{
+func Test_KafkaWriter_Start_VersionOverride(t *testing.T) {
+	w := NewKafkaWriter(KafkaWriterOptions{
 		Enable: true, Level: LevelFlagInfo, Brokers: []string{"localhost:9092"},
 		ProducerTopic: "cov", BufferSize: 16,
 		SpecifyVersion: true, VersionStr: "2.5.0.0",
@@ -1055,7 +1055,7 @@ func Test_KafKaWriter_Start_VersionOverride(t *testing.T) {
 	w.Stop()
 
 	// An invalid version string is logged but does NOT fail Start (falls back).
-	w2 := NewKafKaWriter(KafKaWriterOptions{
+	w2 := NewKafkaWriter(KafkaWriterOptions{
 		Enable: true, Level: LevelFlagInfo, Brokers: []string{"localhost:9092"},
 		ProducerTopic: "cov", BufferSize: 16,
 		SpecifyVersion: true, VersionStr: "not-a-version",
@@ -1069,10 +1069,10 @@ func Test_KafKaWriter_Start_VersionOverride(t *testing.T) {
 	w2.Stop()
 }
 
-// Test_KafKaWriter_Start_ProducerError covers the factory-error branch of Start
+// Test_KafkaWriter_Start_ProducerError covers the factory-error branch of Start
 // (returns the error without launching the daemon).
-func Test_KafKaWriter_Start_ProducerError(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{
+func Test_KafkaWriter_Start_ProducerError(t *testing.T) {
+	w := NewKafkaWriter(KafkaWriterOptions{
 		Enable: true, Level: LevelFlagInfo, Brokers: []string{"localhost:9092"},
 		ProducerTopic: "cov", BufferSize: 16,
 	})
@@ -1085,15 +1085,15 @@ func Test_KafKaWriter_Start_ProducerError(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_Start_SpillFileError covers the file-spiller creation error
+// Test_KafkaWriter_Start_SpillFileError covers the file-spiller creation error
 // branch (invalid SpillDir under a regular file).
-func Test_KafKaWriter_Start_SpillFileError(t *testing.T) {
+func Test_KafkaWriter_Start_SpillFileError(t *testing.T) {
 	dir := t.TempDir()
 	blocker := dir + "/blocker"
 	if err := writeFile(blocker, "x"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	w := NewKafKaWriter(KafKaWriterOptions{
+	w := NewKafkaWriter(KafkaWriterOptions{
 		Enable: true, Level: LevelFlagInfo, Brokers: []string{"localhost:9092"},
 		ProducerTopic: "cov", BufferSize: 16,
 		OverflowPolicy: "spill", SpillType: "file", SpillDir: blocker + "/sub",
@@ -1107,10 +1107,10 @@ func Test_KafKaWriter_Start_SpillFileError(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_Start_SpillResumeOnStartup covers the "resume persisted
+// Test_KafkaWriter_Start_SpillResumeOnStartup covers the "resume persisted
 // spill" branch: a pre-populated spiller is drained into the channel on Start.
-func Test_KafKaWriter_Start_SpillResumeOnStartup(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{
+func Test_KafkaWriter_Start_SpillResumeOnStartup(t *testing.T) {
+	w := NewKafkaWriter(KafkaWriterOptions{
 		Enable: true, Level: LevelFlagInfo, Brokers: []string{"localhost:9092"},
 		ProducerTopic: "cov", BufferSize: 16,
 		OverflowPolicy: "spill", SpillType: "ring", SpillSize: 4,

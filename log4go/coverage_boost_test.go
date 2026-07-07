@@ -391,8 +391,8 @@ func Test_PackageLevel_WithContext(t *testing.T) {
 
 // ===================== KafkaWriter Init with mock =====================
 
-func Test_KafKaWriter_Init(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{
+func Test_KafkaWriter_Init(t *testing.T) {
+	w := NewKafkaWriter(KafkaWriterOptions{
 		Enable:         true,
 		Level:          LevelFlagInfo,
 		ProducerTopic:  "t",

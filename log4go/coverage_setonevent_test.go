@@ -8,7 +8,7 @@ import (
 
 // Cover the nil-guard branch in each SetOnEvent: passing nil must clear the
 // stored hook (Store(nil)+return) rather than take the store-the-func path.
-// These three branches (FileWriter / WebhookWriter / KafKaWriter) each drop
+// These three branches (FileWriter / WebhookWriter / KafkaWriter) each drop
 // coverage to 50% when only the non-nil path is exercised.
 
 func Test_FileWriter_SetOnEvent_NilClearsHook(t *testing.T) {
@@ -36,8 +36,8 @@ func Test_WebhookWriter_SetOnEvent_NilClearsHook(t *testing.T) {
 	}
 }
 
-func Test_KafKaWriter_SetOnEvent_NilClearsHook(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 8})
+func Test_KafkaWriter_SetOnEvent_NilClearsHook(t *testing.T) {
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 8})
 	w.SetOnEvent(func(name string, delta int64) {})
 	if p := w.onEvent.Load(); p == nil {
 		t.Fatal("non-nil SetOnEvent should store the hook")
@@ -51,8 +51,8 @@ func Test_KafKaWriter_SetOnEvent_NilClearsHook(t *testing.T) {
 // ProducerSnapshot returns the zero value when the producer is nil. Covers the
 // `if !k.producerNotNil() { return kafka.ProducerSnapshot{} }` short-circuit
 // for a writer that bypassed Start (nil producer).
-func Test_KafKaWriter_ProducerSnapshot_NilProducer(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 8})
+func Test_KafkaWriter_ProducerSnapshot_NilProducer(t *testing.T) {
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 8})
 	if w.producerNotNil() {
 		t.Fatal("precondition: producer should be nil before Start")
 	}

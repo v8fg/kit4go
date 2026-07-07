@@ -8,10 +8,10 @@ import (
 	"github.com/v8fg/kit4go/kafka"
 )
 
-// Test_KafKaWriter_EndToEndMockProducer drives the full Write -> channel ->
+// Test_KafkaWriter_EndToEndMockProducer drives the full Write -> channel ->
 // daemon -> producer.Input() path against a sarama mock AsyncProducer (no real
 // broker). It also asserts the sent counter and the real-time onEvent hook.
-func Test_KafKaWriter_EndToEndMockProducer(t *testing.T) {
+func Test_KafkaWriter_EndToEndMockProducer(t *testing.T) {
 	mp := newMockKafkaProducer()
 
 	const n = 200
@@ -19,7 +19,7 @@ func Test_KafKaWriter_EndToEndMockProducer(t *testing.T) {
 	}
 
 	var sentEvents int64
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 1024})
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 1024})
 	w.SetOnEvent(func(name string, delta int64) {
 		if name == "sent" {
 			atomic.AddInt64(&sentEvents, delta)
@@ -61,14 +61,14 @@ func Test_KafKaWriter_EndToEndMockProducer(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_MockProducerErrors verifies error accounting via the mock.
-func Test_KafKaWriter_MockProducerErrors(t *testing.T) {
+// Test_KafkaWriter_MockProducerErrors verifies error accounting via the mock.
+func Test_KafkaWriter_MockProducerErrors(t *testing.T) {
 	mp := newMockKafkaProducer()
 	mp.fail = true // every Send fires an error event
 
 	const n = 50
 
-	w := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 1024})
+	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 1024})
 	w.producerFactory = func() (kafka.Producer, error) {
 		return mp, nil
 	}

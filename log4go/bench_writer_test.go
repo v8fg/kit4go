@@ -204,17 +204,17 @@ func Benchmark_FileWriter_AsyncSpill(b *testing.B) {
 }
 
 // ---------------------------------------------------------------------------
-// KafKaWriter (mock producer, no real broker)
+// KafkaWriter (mock producer, no real broker)
 // ---------------------------------------------------------------------------
 
-// Benchmark_KafKaWriter_WriteMock measures end-to-end KafKaWriter throughput
+// Benchmark_KafkaWriter_WriteMock measures end-to-end KafkaWriter throughput
 // against a no-op sarama AsyncProducer (no real broker, no mock expectation
 // matching — b.N is unknown until the loop starts). Write builds the JSON
 // payload, enqueues it on the bounded channel, and returns; the daemon forwards
 // to the no-op producer. This is the production hot path minus broker latency.
-func Benchmark_KafKaWriter_WriteMock(b *testing.B) {
+func Benchmark_KafkaWriter_WriteMock(b *testing.B) {
 	defer silenceStdLogger(b)()
-	w := NewKafKaWriter(KafKaWriterOptions{
+	w := NewKafkaWriter(KafkaWriterOptions{
 		ProducerTopic: "bench", BufferSize: 1 << 14, Level: LevelFlagInfo,
 	})
 	w.producerFactory = func() (kafka.Producer, error) {
@@ -236,14 +236,14 @@ func Benchmark_KafKaWriter_WriteMock(b *testing.B) {
 	b.StopTimer()
 }
 
-// benchmarkKafKaPipeline measures the FULL pipeline throughput: Write enqueues
+// benchmarkKafkaPipeline measures the FULL pipeline throughput: Write enqueues
 // b.N records, then we wait for the daemon to deliver them all (Metrics().Sent).
 // OverflowPolicy is "block" so Write self-paces to the daemon's drain rate (no
 // drops) — this is the true sustained throughput, where the batch-mode benefit
 // (fewer producer calls → less daemon overhead) shows up.
-func benchmarkKafKaPipeline(b *testing.B, batch bool) {
+func benchmarkKafkaPipeline(b *testing.B, batch bool) {
 	defer silenceStdLogger(b)()
-	opts := KafKaWriterOptions{
+	opts := KafkaWriterOptions{
 		ProducerTopic: "bench", BufferSize: 1 << 14, Level: LevelFlagInfo,
 		OverflowPolicy: "block",
 	}
@@ -252,7 +252,7 @@ func benchmarkKafKaPipeline(b *testing.B, batch bool) {
 		opts.BatchSize = 200
 		opts.BatchFlushInterval = 10 * time.Millisecond
 	}
-	w := NewKafKaWriter(opts)
+	w := NewKafkaWriter(opts)
 	w.producerFactory = func() (kafka.Producer, error) { return newMockKafkaProducer(), nil }
 	if err := w.Start(); err != nil {
 		b.Fatal(err)
@@ -281,8 +281,8 @@ func benchmarkKafKaPipeline(b *testing.B, batch bool) {
 	}
 }
 
-func Benchmark_KafKaWriter_Pipeline_PerRecord(b *testing.B) { benchmarkKafKaPipeline(b, false) }
-func Benchmark_KafKaWriter_Pipeline_Batch(b *testing.B)     { benchmarkKafKaPipeline(b, true) }
+func Benchmark_KafkaWriter_Pipeline_PerRecord(b *testing.B) { benchmarkKafkaPipeline(b, false) }
+func Benchmark_KafkaWriter_Pipeline_Batch(b *testing.B)     { benchmarkKafkaPipeline(b, true) }
 
 // ---------------------------------------------------------------------------
 // NetWriter (in-process net.Pipe TCP)
@@ -521,7 +521,7 @@ func memSinkFor(tb testing.TB, kind string) (Writer, func()) {
 		_ = fw.Init()
 		return fw, func() { fw.Stop() }
 	case "kafka-mock":
-		kw := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "mem", BufferSize: 1 << 14, Level: LevelFlagInfo})
+		kw := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "mem", BufferSize: 1 << 14, Level: LevelFlagInfo})
 		kw.producerFactory = func() (kafka.Producer, error) {
 			return newMockKafkaProducer(), nil
 		}
@@ -635,10 +635,10 @@ func Test_MemPerWriter(k *testing.T) {
 	}
 }
 
-// Benchmark_KafKaWriter_BufferBatchCombos sweeps BufferSize × BatchSize ×
+// Benchmark_KafkaWriter_BufferBatchCombos sweeps BufferSize × BatchSize ×
 // BatchMode combos to show how each affects pipeline throughput + memory.
 // Uses a slow mock (50µs/call) so the buffer/batch effect is visible.
-func Benchmark_KafKaWriter_BufferBatchCombos(b *testing.B) {
+func Benchmark_KafkaWriter_BufferBatchCombos(b *testing.B) {
 	defer silenceStdLogger(b)()
 	type combo struct {
 		name      string
@@ -658,7 +658,7 @@ func Benchmark_KafKaWriter_BufferBatchCombos(b *testing.B) {
 		b.Run(c.name, func(b *testing.B) {
 			mp := newMockKafkaProducer()
 			mp.callDelay = 50 * time.Microsecond // simulate real producer cost
-			opts := KafKaWriterOptions{
+			opts := KafkaWriterOptions{
 				ProducerTopic: "bench", BufferSize: c.bufSize,
 				Level: LevelFlagInfo, OverflowPolicy: "block",
 			}
@@ -667,7 +667,7 @@ func Benchmark_KafKaWriter_BufferBatchCombos(b *testing.B) {
 				opts.BatchSize = c.batchSize
 				opts.BatchFlushInterval = 10 * time.Millisecond
 			}
-			w := NewKafKaWriter(opts)
+			w := NewKafkaWriter(opts)
 			w.producerFactory = func() (kafka.Producer, error) { return mp, nil }
 			if err := w.Start(); err != nil {
 				b.Fatal(err)

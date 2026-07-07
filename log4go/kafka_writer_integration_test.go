@@ -13,13 +13,13 @@ import (
 	"github.com/v8fg/kit4go/kafka"
 )
 
-// measureKafKaThroughput writes n records (OverflowBlock → Write self-paces to
+// measureKafkaThroughput writes n records (OverflowBlock → Write self-paces to
 // the daemon+broker ingest rate) against a real broker and returns (sent, wall-
 // clock for Write loop + Stop). No producerFactory → a real sarama producer is
-// created in Start. Used by TestIntegration_KafKaWriter_Throughput.
-func measureKafKaThroughput(t *testing.T, brokers, topic string, batch bool, n int) (uint64, time.Duration) {
+// created in Start. Used by TestIntegration_KafkaWriter_Throughput.
+func measureKafkaThroughput(t *testing.T, brokers, topic string, batch bool, n int) (uint64, time.Duration) {
 	t.Helper()
-	opts := KafKaWriterOptions{
+	opts := KafkaWriterOptions{
 		Brokers:        []string{brokers},
 		ProducerTopic:  topic,
 		BufferSize:     1 << 14,
@@ -31,7 +31,7 @@ func measureKafKaThroughput(t *testing.T, brokers, topic string, batch bool, n i
 		opts.BatchSize = 200
 		opts.BatchFlushInterval = 10 * time.Millisecond
 	}
-	w := NewKafKaWriter(opts)
+	w := NewKafkaWriter(opts)
 	if err := w.Start(); err != nil {
 		t.Fatalf("Start (batch=%v): %v", batch, err)
 	}
@@ -45,12 +45,12 @@ func measureKafKaThroughput(t *testing.T, brokers, topic string, batch bool, n i
 	return w.Metrics().Sent, time.Since(start)
 }
 
-// TestIntegration_KafKaWriter_Throughput measures sustained throughput (rec/s)
+// TestIntegration_KafkaWriter_Throughput measures sustained throughput (rec/s)
 // of per-record vs batch mode against a real broker, with the kafka backend's
 // default 10ms linger. Honest result: ≈ parity (the backend coalesces BOTH
 // modes at the broker level, so log4go Send vs SendBatch is invisible there).
 // Gated by KAFKA_BROKERS.
-func TestIntegration_KafKaWriter_Throughput(t *testing.T) {
+func TestIntegration_KafkaWriter_Throughput(t *testing.T) {
 	brokers := os.Getenv("KAFKA_BROKERS")
 	if brokers == "" {
 		t.Skip("KAFKA_BROKERS unset; skipping integration test")
@@ -59,8 +59,8 @@ func TestIntegration_KafKaWriter_Throughput(t *testing.T) {
 	const n = 10000
 	base := time.Now().UnixNano()
 
-	prSent, prDur := measureKafKaThroughput(t, brokers, fmt.Sprintf("kit4go-l4g-tp-pr-%d", base), false, n)
-	bSent, bDur := measureKafKaThroughput(t, brokers, fmt.Sprintf("kit4go-l4g-tp-b-%d", base), true, n)
+	prSent, prDur := measureKafkaThroughput(t, brokers, fmt.Sprintf("kit4go-l4g-tp-pr-%d", base), false, n)
+	bSent, bDur := measureKafkaThroughput(t, brokers, fmt.Sprintf("kit4go-l4g-tp-b-%d", base), true, n)
 
 	t.Logf("per-record: %d rec / %v = %.0f rec/s", prSent, prDur, float64(prSent)/prDur.Seconds())
 	t.Logf("batch(200): %d rec / %v = %.0f rec/s", bSent, bDur, float64(bSent)/bDur.Seconds())
@@ -70,17 +70,17 @@ func TestIntegration_KafKaWriter_Throughput(t *testing.T) {
 	}
 }
 
-// TestIntegration_KafKaWriter_BatchDelivery is the end-to-end proof that batch
+// TestIntegration_KafkaWriter_BatchDelivery is the end-to-end proof that batch
 // mode delivers EVERY record to a real broker (no loss across batch flushes +
 // the shutdown flush). Gated by KAFKA_BROKERS (comma-separated host:port), so it
 // is SKIPPED unless a broker is present:
 //
 //	docker run -d -p 9092:9092 ... (a Kafka broker with auto-topic-create)
-//	KAFKA_BROKERS=localhost:9092 go test -tags integration -run Integration_KafKaWriter -v ./...
+//	KAFKA_BROKERS=localhost:9092 go test -tags integration -run Integration_KafkaWriter -v ./...
 //
 // It writes N records in batch mode, stops (flushing the final partial batch),
 // then consumes the topic from the start and asserts all N arrived.
-func TestIntegration_KafKaWriter_BatchDelivery(t *testing.T) {
+func TestIntegration_KafkaWriter_BatchDelivery(t *testing.T) {
 	brokers := os.Getenv("KAFKA_BROKERS")
 	if brokers == "" {
 		t.Skip("KAFKA_BROKERS unset; skipping integration test")
@@ -91,7 +91,7 @@ func TestIntegration_KafKaWriter_BatchDelivery(t *testing.T) {
 
 	// Produce N records in batch mode (BatchSize 50 → 4 count-flushes + a
 	// shutdown flush of the remainder).
-	w := NewKafKaWriter(KafKaWriterOptions{
+	w := NewKafkaWriter(KafkaWriterOptions{
 		Brokers:            []string{brokers},
 		ProducerTopic:      topic,
 		BatchMode:          true,

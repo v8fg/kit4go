@@ -10,8 +10,8 @@ import (
 // disabled-breaker, and closed-breaker normal send. No broker required — sendOne
 // is exercised in-process with a ring spiller.
 
-func newSpillTestWriter() *KafKaWriter {
-	w := NewKafKaWriter(KafKaWriterOptions{
+func newSpillTestWriter() *KafkaWriter {
+	w := NewKafkaWriter(KafkaWriterOptions{
 		OverflowPolicy: OverflowPolicySpill,
 		SpillType:      SpillTypeRing,
 		SpillSize:      100,
@@ -54,7 +54,7 @@ func TestKafkaWriter_BreakerOpenDivertsToSpill(t *testing.T) {
 // With BreakerDisabled, the writer carries no breaker; Metrics.CircuitState
 // reports closed (the no-op state).
 func TestKafkaWriter_BreakerDisabled(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{BreakerDisabled: true})
+	w := NewKafkaWriter(KafkaWriterOptions{BreakerDisabled: true})
 	if w.breaker != nil {
 		t.Fatal("breaker should be nil when disabled")
 	}
@@ -71,7 +71,7 @@ func TestKafkaWriter_BreakerDisabled(t *testing.T) {
 // counted and nothing is failover'd).
 func TestKafkaWriter_BreakerClosedSendsNormally(t *testing.T) {
 	w := newSpillTestWriter()
-	// breaker is the default (closed) from NewKafKaWriter.
+	// breaker is the default (closed) from NewKafkaWriter.
 	w.sendOne(kafka.Message{Value: []byte("rec-1")})
 
 	if w.sent != 1 {
@@ -90,7 +90,7 @@ func TestKafkaWriter_BreakerClosedSendsNormally(t *testing.T) {
 // an open breaker with no spiller still attempts the send path (no silent drop
 // beyond the existing policy).
 func TestKafkaWriter_NoDivertWithoutSpiller(t *testing.T) {
-	w := NewKafKaWriter(KafKaWriterOptions{}) // Drop policy, no spiller
+	w := NewKafkaWriter(KafkaWriterOptions{}) // Drop policy, no spiller
 	w.policy = OverflowDrop
 	w.messages = make(chan kafka.Message, 8)
 	// Force the breaker open; with no spiller, sendOne must NOT divert.

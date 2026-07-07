@@ -587,7 +587,7 @@ func TestMetricSnapshot(t *testing.T) {
 		wantNil bool
 	}{
 		{"file", &FileWriter{}, false},
-		{"kafka", &KafKaWriter{}, false},
+		{"kafka", &KafkaWriter{}, false},
 		{"net", &NetWriter{}, false},
 		{"webhook", &WebhookWriter{}, false},
 		{"console", &ConsoleWriter{}, true}, // no Metrics()

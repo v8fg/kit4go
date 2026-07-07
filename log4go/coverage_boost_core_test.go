@@ -693,7 +693,7 @@ func TestCore_RateAlerter_Allow_Fires(t *testing.T) {
 
 // ===================== config.go: SetupLog FullPath + format text path =====================
 
-// We cannot cover the KafKaWriter.Enable blocks in SetupLog without a real
+// We cannot cover the KafkaWriter.Enable blocks in SetupLog without a real
 // broker (Register calls Init which dials Kafka). Those two blocks
 // (lines 69-74 level-compute, 98-103 register) are structurally unreachable
 // in unit tests. The shared arithmetic is exercised via getLevelDefault /

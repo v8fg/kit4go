@@ -147,12 +147,12 @@ func Test_LoggerWith_DeliversFieldsToRecord(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_BuildPayload_RecordFields verifies the kafka JSON payload
+// Test_KafkaWriter_BuildPayload_RecordFields verifies the kafka JSON payload
 // hoists record-level With fields to the top level, behind built-in fields.
-func Test_KafKaWriter_BuildPayload_RecordFields(t *testing.T) {
-	w := &KafKaWriter{options: KafKaWriterOptions{
+func Test_KafkaWriter_BuildPayload_RecordFields(t *testing.T) {
+	w := &KafkaWriter{options: KafkaWriterOptions{
 		ProducerTopic: "t",
-		MSG: KafKaMSGFields{
+		MSG: KafkaMSGFields{
 			ServerIP: "1.2.3.4",
 			ExtraFields: map[string]any{
 				"global_tag": "prod",

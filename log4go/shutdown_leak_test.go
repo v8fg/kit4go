@@ -18,12 +18,12 @@ import (
 // goroutine STARTED during the test is still alive at exit — i.e. a real leak
 // attributable to the writer under test.
 
-// newStartedMockKafka builds a KafKaWriter whose Start() succeeds with no broker
+// newStartedMockKafka builds a KafkaWriter whose Start() succeeds with no broker
 // (a no-op mock producer is injected), so its daemon + success/error drainer
 // goroutines are live — the realistic "writer running" state.
-func newStartedMockKafka(t *testing.T) *KafKaWriter {
+func newStartedMockKafka(t *testing.T) *KafkaWriter {
 	t.Helper()
-	kw := NewKafKaWriter(KafKaWriterOptions{ProducerTopic: "t", BufferSize: 16})
+	kw := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	kw.producerFactory = func() (kafka.Producer, error) {
 		return func() *mockKafkaProducer { m := newMockKafkaProducer(); m.fail = true; return m }(), nil
 	}
@@ -67,7 +67,7 @@ func waitNetRunning(t *testing.T, n *NetWriter) {
 }
 
 // TestShutdown_Stop_NoGoroutineLeak verifies each writer's Stop() fully reclaims
-// its goroutines, channels, and resources. This exercises the KafKaWriter
+// its goroutines, channels, and resources. This exercises the KafkaWriter
 // shutdown path after the dead `case <-k.stop` arm was removed: shutdown now
 // flows solely through close(messages) -> daemon sees ok=false -> quit signal ->
 // producer.Close() (which closes Successes/Errors, ending the two drainers).

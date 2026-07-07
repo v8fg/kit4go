@@ -248,10 +248,10 @@ func Test_SpillerAccessors(t *testing.T) {
 	_ = fs.Close()
 }
 
-// Test_KafKaWriter_Setters covers the no-broker setters/accessors on
-// KafKaWriter: SetAlertSink, SetOnEvent, Stats, Metrics (before Start).
-func Test_KafKaWriter_Setters(t *testing.T) {
-	kw := NewKafKaWriter(KafKaWriterOptions{
+// Test_KafkaWriter_Setters covers the no-broker setters/accessors on
+// KafkaWriter: SetAlertSink, SetOnEvent, Stats, Metrics (before Start).
+func Test_KafkaWriter_Setters(t *testing.T) {
+	kw := NewKafkaWriter(KafkaWriterOptions{
 		Enable: true, Level: LevelFlagInfo, Brokers: []string{"localhost:9092"},
 		ProducerTopic: "cov", BufferSize: 16, OverflowPolicy: "drop",
 	})

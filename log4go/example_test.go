@@ -114,7 +114,7 @@ func Example_metrics() {
 
 // Example_structuredFields shows With/WithField/WithFields building a
 // request-scoped child logger. Fields render as a trailing JSON object on the
-// text format (and as top-level keys in FormatJSON / KafKaWriter).
+// text format (and as top-level keys in FormatJSON / KafkaWriter).
 func Example_structuredFields() {
 	_ = log4go.SetupLog(log4go.LogConfig{
 		Level:         log4go.LevelFlagInfo,
@@ -211,12 +211,12 @@ func Example_netWriter() {
 }
 
 // Example_kafkaWriter ships logs to Kafka via the async, bounded, overflow-safe
-// KafKaWriter. BufferSize bounds the in-flight channel; under sustained pressure
+// KafkaWriter. BufferSize bounds the in-flight channel; under sustained pressure
 // OverflowPolicy="spill" with SpillType="ring" absorbs bursts in an in-memory
 // ring (re-sent once Kafka recovers) instead of dropping records or blocking the
 // application. This is the foundation for Example_kafkaToES.
 func Example_kafkaWriter() {
-	kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+	kw := log4go.NewKafkaWriter(log4go.KafkaWriterOptions{
 		Enable:         true,
 		Level:          log4go.LevelFlagInfo,
 		Brokers:        []string{"kafka-1:9092", "kafka-2:9092"},
@@ -234,7 +234,7 @@ func Example_kafkaWriter() {
 
 // Example_kafkaToES shows the end-to-end Kafka→Elasticsearch pipeline:
 //
-//	app (log4go) ──KafKaWriter──▶ Kafka ──Filebeat/Logstash──▶ Elasticsearch
+//	app (log4go) ──KafkaWriter──▶ Kafka ──Filebeat/Logstash──▶ Elasticsearch
 //
 // Field management is unified with Base Fields: SetBaseField registers the
 // global static fields (hostname/server_ip/app/env) every record carries, and
@@ -243,7 +243,7 @@ func Example_kafkaWriter() {
 // carries the strict-ordering keys (unix_nano + seq), so ES sorts by seq then
 // unix_nano to reconstruct exact emit order across partitions/cores.
 //
-// The legacy KafKaMSGFields (MSG.ServerIP / MSG.ESIndex / MSG.ExtraFields) is
+// The legacy KafkaMSGFields (MSG.ServerIP / MSG.ESIndex / MSG.ExtraFields) is
 // kept only as a fallback: a Base Field of the same key always wins, so prefer
 // SetBaseField(s) for new code.
 func Example_kafkaToES() {
@@ -259,7 +259,7 @@ func Example_kafkaToES() {
 	log4go.SetBaseField("es_index", "adx-logs-2026.06")
 
 	// 2) Kafka writer — async, bounded, spill-to-ring on backpressure.
-	kw := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+	kw := log4go.NewKafkaWriter(log4go.KafkaWriterOptions{
 		Enable:         true,
 		Level:          log4go.LevelFlagInfo,
 		Brokers:        []string{"kafka-1:9092"},
@@ -313,7 +313,7 @@ func Example_kafkaToES() {
 // io.Closer, also stops the webhook sink daemon.
 func Example_multiWriterAlerts() {
 	// 1) Kafka — INFO+, full volume, burst-safe (spill-to-ring on backpressure).
-	kafka := log4go.NewKafKaWriter(log4go.KafKaWriterOptions{
+	kafka := log4go.NewKafkaWriter(log4go.KafkaWriterOptions{
 		Enable:         true,
 		Level:          log4go.LevelFlagInfo,
 		Brokers:        []string{"kafka-1:9092"},

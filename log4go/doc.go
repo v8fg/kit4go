@@ -11,7 +11,7 @@
 //
 // # Async-writer lifecycle (formerly "sharp-edges", now hardened)
 //
-// The async FileWriter and KafKaWriter spawn a daemon goroutine in Init, which
+// The async FileWriter and KafkaWriter spawn a daemon goroutine in Init, which
 // Logger.Register calls. Three failure modes that used to bite high-QPS
 // configurations have been fixed; the notes below describe the fix for each so
 // callers know what is now safe.
@@ -52,7 +52,7 @@
 //   - Structured fields: Logger.With(key, val) / WithField / WithFields(map)
 //     return a child Logger carrying key/value pairs. Fields render in
 //     Record.String (trailing JSON object) and are hoisted to top-level JSON
-//     keys by KafKaWriter. No-With hot path is zero-cost.
+//     keys by KafkaWriter. No-With hot path is zero-cost.
 //
 //   - JSON format: SetFormat(FormatJSON) emits one JSON object per record
 //     ({"time","level","msg","file","fields"}). The format is decided once per
@@ -125,7 +125,7 @@
 //   - ConsoleWriter (buffered):    ~118 ns/op, ~8.5M QPS — container stdout collection.
 //   - ConsoleWriter (unbuffered):  ~1620 ns/op, ~617K QPS — dev/debug only (per-record syscall).
 //   - ConsoleWriter (color):       ~2961 ns/op, ~338K QPS — dev/debug + ANSI color.
-//   - KafKaWriter (mock producer): ~578 ns/op, ~1.7M QPS — typed buildPayload (was 2582ns pre-typed).
+//   - KafkaWriter (mock producer): ~578 ns/op, ~1.7M QPS — typed buildPayload (was 2582ns pre-typed).
 //   - NetWriter (TCP loopback):    ~112 ns/op, ~8.9M QPS caller-side; real network is RTT-bound
 //     (~50K-200K same-DC, ~5K-50K cross-DC).
 //   - IOWriter (io.Discard):       ~204 ns/op,  ~4.9M QPS — thinnest adapter, test/custom.
@@ -140,7 +140,7 @@
 //   - Local dev:          ConsoleWriter (unbuffered), default config.
 //   - Production disk:    FileWriter{Async:true, OverflowPolicy:"drop"} (~4.6M QPS);
 //     add SpillType:"ring" to survive bursts without hot-data loss.
-//   - Production Kafka:   KafKaWriter{BufferSize, OverflowPolicy:"spill", SpillType:"ring"}; the
+//   - Production Kafka:   KafkaWriter{BufferSize, OverflowPolicy:"spill", SpillType:"ring"}; the
 //     inline breaker (default on) diverts records to the spill store during a broker outage and
 //     replays them on recovery, so a kafka failure doesn't lose records or stall the caller. See
 //     RESILIENCE.md.

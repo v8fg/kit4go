@@ -8,10 +8,10 @@ import (
 	"github.com/v8fg/kit4go/kafka"
 )
 
-// Test_KafKaWriter_SendDrop verifies that drop policy discards when full and
+// Test_KafkaWriter_SendDrop verifies that drop policy discards when full and
 // counts the drop (never blocks the caller, never spawns a goroutine).
-func Test_KafKaWriter_SendDrop(t *testing.T) {
-	w := &KafKaWriter{policy: OverflowDrop, messages: make(chan kafka.Message, 1)}
+func Test_KafkaWriter_SendDrop(t *testing.T) {
+	w := &KafkaWriter{policy: OverflowDrop, messages: make(chan kafka.Message, 1)}
 	w.messages <- spillerMsg("t", "1") // fill the single-slot channel
 
 	w.send(spillerMsg("t", "2")) // must drop, not block
@@ -20,10 +20,10 @@ func Test_KafKaWriter_SendDrop(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_SendSpillRing verifies spill policy routes overflow to the
+// Test_KafkaWriter_SendSpillRing verifies spill policy routes overflow to the
 // ring store and Drain recovers it.
-func Test_KafKaWriter_SendSpillRing(t *testing.T) {
-	w := &KafKaWriter{
+func Test_KafkaWriter_SendSpillRing(t *testing.T) {
+	w := &KafkaWriter{
 		policy:   OverflowSpill,
 		spiller:  NewRingSpiller[kafka.Message](8),
 		messages: make(chan kafka.Message, 1),
@@ -43,11 +43,11 @@ func Test_KafKaWriter_SendSpillRing(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_SendBlock verifies block policy blocks (backs up) instead of
+// Test_KafkaWriter_SendBlock verifies block policy blocks (backs up) instead of
 // dropping/spilling. We assert it by filling the channel and confirming the
 // next value is still pending (no drop counter increment).
-func Test_KafKaWriter_SendBlock(t *testing.T) {
-	w := &KafKaWriter{policy: OverflowBlock, messages: make(chan kafka.Message, 1)}
+func Test_KafkaWriter_SendBlock(t *testing.T) {
+	w := &KafkaWriter{policy: OverflowBlock, messages: make(chan kafka.Message, 1)}
 	w.messages <- spillerMsg("t", "1") // full
 
 	done := make(chan struct{})
@@ -66,14 +66,14 @@ func Test_KafKaWriter_SendBlock(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_WriteNoGoroutineBurst is the core OOM-prevention check: a
+// Test_KafkaWriter_WriteNoGoroutineBurst is the core OOM-prevention check: a
 // burst of Write calls must NOT spawn per-record goroutines (the old impl did).
-func Test_KafKaWriter_WriteNoGoroutineBurst(t *testing.T) {
-	w := &KafKaWriter{
+func Test_KafkaWriter_WriteNoGoroutineBurst(t *testing.T) {
+	w := &KafkaWriter{
 		level:    INFO,
 		policy:   OverflowDrop,
 		messages: make(chan kafka.Message, 1000),
-		options:  KafKaWriterOptions{ProducerTopic: "t"},
+		options:  KafkaWriterOptions{ProducerTopic: "t"},
 	}
 	before := runtime.NumGoroutine()
 	for i := 0; i < 10000; i++ {
@@ -88,11 +88,11 @@ func Test_KafKaWriter_WriteNoGoroutineBurst(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_BuildPayload verifies single-pass JSON and ExtraFields hoist.
-func Test_KafKaWriter_BuildPayload(t *testing.T) {
-	w := &KafKaWriter{options: KafKaWriterOptions{
+// Test_KafkaWriter_BuildPayload verifies single-pass JSON and ExtraFields hoist.
+func Test_KafkaWriter_BuildPayload(t *testing.T) {
+	w := &KafkaWriter{options: KafkaWriterOptions{
 		ProducerTopic: "t",
-		MSG: KafKaMSGFields{
+		MSG: KafkaMSGFields{
 			ServerIP: "1.2.3.4",
 			ExtraFields: map[string]any{
 				"request_id": "abc",
@@ -112,11 +112,11 @@ func Test_KafKaWriter_BuildPayload(t *testing.T) {
 	}
 }
 
-// Benchmark_KafKaWriter_buildPayload measures the per-record JSON cost (hot path).
-func Benchmark_KafKaWriter_buildPayload(b *testing.B) {
-	w := &KafKaWriter{options: KafKaWriterOptions{
+// Benchmark_KafkaWriter_buildPayload measures the per-record JSON cost (hot path).
+func Benchmark_KafkaWriter_buildPayload(b *testing.B) {
+	w := &KafkaWriter{options: KafkaWriterOptions{
 		ProducerTopic: "t",
-		MSG:           KafKaMSGFields{ServerIP: "1.2.3.4", ExtraFields: map[string]any{"rid": "x"}},
+		MSG:           KafkaMSGFields{ServerIP: "1.2.3.4", ExtraFields: map[string]any{"rid": "x"}},
 	}}
 	r := &Record{level: INFO, msg: "benchmark message payload", file: "f.go:1"}
 	b.ReportAllocs()
@@ -126,15 +126,15 @@ func Benchmark_KafKaWriter_buildPayload(b *testing.B) {
 	}
 }
 
-// Benchmark_KafKaWriter_buildPayload_baseFields measures the realistic Kafka→ES
+// Benchmark_KafkaWriter_buildPayload_baseFields measures the realistic Kafka→ES
 // path: a record carrying Base Fields (hostname/server_ip/app/es_index — set once
 // via SetBaseField) plus a per-request trace field, all flowing through r.fields.
 // This is the common integrated configuration and exercises the manual-append
 // slow path (no map marshal).
-func Benchmark_KafKaWriter_buildPayload_baseFields(b *testing.B) {
-	w := &KafKaWriter{options: KafKaWriterOptions{
+func Benchmark_KafkaWriter_buildPayload_baseFields(b *testing.B) {
+	w := &KafkaWriter{options: KafkaWriterOptions{
 		ProducerTopic: "t",
-		MSG:           KafKaMSGFields{}, // legacy struct empty — Base Fields are the source of truth
+		MSG:           KafkaMSGFields{}, // legacy struct empty — Base Fields are the source of truth
 	}}
 	r := &Record{
 		level:    INFO,

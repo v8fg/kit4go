@@ -36,15 +36,15 @@ func numField(t *testing.T, m map[string]any, k string) int64 {
 	return v
 }
 
-// Test_KafKaWriter_Payload_BaseFieldPriority is the core Kafka→ES integration
+// Test_KafkaWriter_Payload_BaseFieldPriority is the core Kafka→ES integration
 // invariant: fields carried on the Record (Base Fields via SetBaseField, plus
-// With/Context) take priority over the legacy KafKaMSGFields struct members.
+// With/Context) take priority over the legacy KafkaMSGFields struct members.
 // A Base Field "server_ip" must override MSG.ServerIP; where no Base Field is
 // supplied ("es_index" here), the MSG struct member still works as a fallback.
-func Test_KafKaWriter_Payload_BaseFieldPriority(t *testing.T) {
-	w := &KafKaWriter{options: KafKaWriterOptions{
+func Test_KafkaWriter_Payload_BaseFieldPriority(t *testing.T) {
+	w := &KafkaWriter{options: KafkaWriterOptions{
 		ProducerTopic: "t",
-		MSG: KafKaMSGFields{
+		MSG: KafkaMSGFields{
 			ServerIP: "from-msg",     // overridden by the base field below
 			ESIndex:  "from-msg-idx", // no base field for es_index -> fallback
 		},
@@ -88,12 +88,12 @@ func Test_KafKaWriter_Payload_BaseFieldPriority(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_Payload_TimestampFromRecordTime guards the "one clock read per
+// Test_KafkaWriter_Payload_TimestampFromRecordTime guards the "one clock read per
 // record" invariant: the payload timestamp is derived from r.unixNano (captured
 // once in deliverRecordToWriter), not a second time.Now(). It must be the ISO
 // layout (RFC3339-ish, timezone-aware) so ES auto-maps it to its date type.
-func Test_KafKaWriter_Payload_TimestampFromRecordTime(t *testing.T) {
-	w := &KafKaWriter{options: KafKaWriterOptions{ProducerTopic: "t"}}
+func Test_KafkaWriter_Payload_TimestampFromRecordTime(t *testing.T) {
+	w := &KafkaWriter{options: KafkaWriterOptions{ProducerTopic: "t"}}
 	const fixed int64 = 1782392990_123456789
 	r := &Record{level: INFO, msg: "x", unixNano: fixed, seq: 7}
 
@@ -113,12 +113,12 @@ func Test_KafKaWriter_Payload_TimestampFromRecordTime(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_Payload_FastPathOmitsEmptyRouting confirms the no-fields fast
+// Test_KafkaWriter_Payload_FastPathOmitsEmptyRouting confirms the no-fields fast
 // path omits empty routing fields (es_index/server_ip/file) so ES documents are
 // not polluted with empty strings, while always emitting the framework +
 // ordering fields.
-func Test_KafKaWriter_Payload_FastPathOmitsEmptyRouting(t *testing.T) {
-	w := &KafKaWriter{options: KafKaWriterOptions{ProducerTopic: "t"}} // no MSG, no fields
+func Test_KafkaWriter_Payload_FastPathOmitsEmptyRouting(t *testing.T) {
+	w := &KafkaWriter{options: KafkaWriterOptions{ProducerTopic: "t"}} // no MSG, no fields
 	r := &Record{level: INFO, msg: "x", unixNano: 1, seq: 1}
 	b := w.buildPayload(r)
 	var m map[string]any
@@ -137,13 +137,13 @@ func Test_KafKaWriter_Payload_FastPathOmitsEmptyRouting(t *testing.T) {
 	}
 }
 
-// Test_KafKaWriter_Payload_MSGFallback confirms the legacy MSG struct routing
+// Test_KafkaWriter_Payload_MSGFallback confirms the legacy MSG struct routing
 // members still emit (as fallback) when the Record carries no matching field —
-// backward compatibility for callers that configure KafKaMSGFields directly.
-func Test_KafKaWriter_Payload_MSGFallback(t *testing.T) {
-	w := &KafKaWriter{options: KafKaWriterOptions{
+// backward compatibility for callers that configure KafkaMSGFields directly.
+func Test_KafkaWriter_Payload_MSGFallback(t *testing.T) {
+	w := &KafkaWriter{options: KafkaWriterOptions{
 		ProducerTopic: "t",
-		MSG:           KafKaMSGFields{ServerIP: "10.0.0.1", ESIndex: "logs-2026.06"},
+		MSG:           KafkaMSGFields{ServerIP: "10.0.0.1", ESIndex: "logs-2026.06"},
 	}}
 	r := &Record{level: WARNING, msg: "m", unixNano: 2, seq: 2}
 	b := w.buildPayload(r)

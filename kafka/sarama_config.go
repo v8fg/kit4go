@@ -10,7 +10,7 @@ import (
 const backendName = "sarama"
 
 // defaultKafkaVersion is the sarama version assumed when Options.Version is
-// empty. Pinned to V2_5_0_0 (broad compatibility; matches log4go's KafKaWriter).
+// empty. Pinned to V2_5_0_0 (broad compatibility; matches log4go's KafkaWriter).
 var defaultKafkaVersion = sarama.V2_5_0_0
 
 // buildSaramaConfig assembles a *sarama.Config from Options. It is the single

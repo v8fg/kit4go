@@ -22,7 +22,7 @@ func TestWriter_PauseResume_Name(t *testing.T) {
 	}{
 		{"console", &ConsoleWriter{level: DEBUG}, WriterNameConsole},
 		{"file", &FileWriter{level: DEBUG}, WriterNameFile},
-		{"kafka", &KafKaWriter{level: DEBUG}, WriterNameKafka},
+		{"kafka", &KafkaWriter{level: DEBUG}, WriterNameKafka},
 		{"net", &NetWriter{level: DEBUG}, WriterNameNet},
 		{"io", &IOWriter{w: io.Discard, level: DEBUG}, WriterNameIO},
 	}

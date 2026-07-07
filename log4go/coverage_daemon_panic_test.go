@@ -16,7 +16,7 @@ import (
 //   alert.go:161   (WebhookAlertSink.daemon)
 //   file_writer.go:635  (FileWriter.daemon)
 //   net_writer.go:230   (NetWriter.daemon)
-//   kafka_writer.go:550 (KafKaWriter.daemon)
+//   kafka_writer.go:550 (KafkaWriter.daemon)
 //
 // Each daemon wraps its loop in `defer func() { if r := recover(); r != nil {
 // recordDaemonPanic(...) } }()`. These branches exist precisely so a bug inside
@@ -54,15 +54,15 @@ func (*panicKafkaProducer) SetOnEvent(func(kafka.ProducerEvent)) {}
 func (*panicKafkaProducer) Name() string                         { return "panic" }
 func (*panicKafkaProducer) Backend() string                      { return "panic" }
 
-// Test_KafKaWriter_daemon_RecoversPanic covers kafka_writer.go:550. A panicking
+// Test_KafkaWriter_daemon_RecoversPanic covers kafka_writer.go:550. A panicking
 // producer Send makes sendOne panic inside the daemon loop; the recover records
 // it. After recovery the daemon returns (the recover is the outermost defer, so
 // it does NOT signal quit) — we assert solely on the daemonPanics counter.
-func Test_KafKaWriter_daemon_RecoversPanic(t *testing.T) {
+func Test_KafkaWriter_daemon_RecoversPanic(t *testing.T) {
 	before, restore := snapshotDaemonPanics(t)
 	defer restore()
 
-	w := &KafKaWriter{
+	w := &KafkaWriter{
 		level:         INFO,
 		policy:        OverflowDrop,
 		messages:      make(chan kafka.Message, 4),

@@ -108,7 +108,7 @@ func newDefaultLoggerInstance() *Logger {
 //
 // The format is decided once per record in deliverRecordToWriter and cached on
 // r.formattedBytes, so every registered writer (Console/File/Net/IO) outputs the
-// pre-serialized bytes without re-serializing. KafKaWriter already emits its
+// pre-serialized bytes without re-serializing. KafkaWriter already emits its
 // own JSON payload and is unaffected.
 type LogFormat int32
 
@@ -187,7 +187,7 @@ type Record struct {
 	seq uint64
 	// fields carries Logger-attached structured fields. nil for the common
 	// no-With path (zero alloc overhead on the hot path). Record.String appends
-	// them as a trailing JSON object; KafKaWriter.buildPayload hoists them into
+	// them as a trailing JSON object; KafkaWriter.buildPayload hoists them into
 	// the top-level JSON map.
 	fields []field
 	// formattedBytes is the pre-serialized JSON form of the record, populated once by
@@ -310,7 +310,7 @@ func callerIsInternal(pc uintptr) bool {
 // FieldsJSON returns the record's structured fields marshaled to a JSON object
 // (e.g. `{"trace_id":"abc","user":42}`). Returns "" when there are no fields,
 // so callers can cheaply skip the append. Used by Record.String and
-// KafKaWriter.buildPayload.
+// KafkaWriter.buildPayload.
 func (r *Record) FieldsJSON() string {
 	if len(r.fields) == 0 {
 		return ""
@@ -713,7 +713,7 @@ func metricSnapshot(w Writer) any {
 	switch v := w.(type) {
 	case interface{ Metrics() FileWriterMetrics }:
 		return v.Metrics()
-	case interface{ Metrics() WriterMetrics }: // KafKaWriter
+	case interface{ Metrics() WriterMetrics }: // KafkaWriter
 		return v.Metrics()
 	case interface{ Metrics() NetWriterMetrics }:
 		return v.Metrics()
@@ -1026,7 +1026,7 @@ func (l *Logger) clone() *Logger {
 // concurrent loggers don't race).
 //
 // Fields surface in Record.String() (as a trailing JSON object) and in
-// KafKaWriter.buildPayload (hoisted into the top-level JSON map). Loggers
+// KafkaWriter.buildPayload (hoisted into the top-level JSON map). Loggers
 // without With pay no fields cost: Record.String short-circuits on empty fields.
 func (l *Logger) With(key string, val any) *Logger {
 	return l.withField(fieldOf(key, val))
@@ -1691,14 +1691,14 @@ func ResumeWriter(name string) bool { return defaultLogger().ResumeWriter(name) 
 // WriterPaused reports whether the named writer on the package singleton is paused.
 func WriterPaused(name string) bool { return defaultLogger().WriterPaused(name) }
 
-// SetKafkaCodec applies c to every registered KafKaWriter on the package
+// SetKafkaCodec applies c to every registered KafkaWriter on the package
 // singleton (nil ⇒ JSON, the default). Use at startup to choose the on-the-wire
 // Kafka payload format (KafkaCodecProto for ~46% smaller payloads at 1M+ QPS),
 // or for a rare runtime format switch. Non-Kafka writers are ignored. Each
 // writer's codec swap is RWMutex-protected, so this is safe under load.
 func SetKafkaCodec(c KafkaCodec) {
 	for _, w := range Writers() {
-		if kw, ok := w.(*KafKaWriter); ok {
+		if kw, ok := w.(*KafkaWriter); ok {
 			kw.SetKafkaCodec(c)
 		}
 	}

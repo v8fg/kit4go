@@ -61,8 +61,8 @@ func TestConfig(t *testing.T) {
 	time.Sleep(1 * time.Second)
 }
 
-// TestSetupLog_KafkaWriterEnable covers the KafKaWriter.Enable branches in
-// SetupLog (level aggregation + NewKafKaWriter/registerOrFail). Brokers are
+// TestSetupLog_KafkaWriterEnable covers the KafkaWriter.Enable branches in
+// SetupLog (level aggregation + NewKafkaWriter/registerOrFail). Brokers are
 // intentionally unset so Start fails fast (sarama rejects a broker-less client
 // synchronously); SetupLog surfaces that as an error instead of panicking. The
 // default logger's writers are snapshotted/restored so the failed registration
@@ -74,7 +74,7 @@ func TestSetupLog_KafkaWriterEnable(t *testing.T) {
 
 	lc := LogConfig{
 		Level: "info",
-		KafKaWriter: KafKaWriterOptions{
+		KafkaWriter: KafkaWriterOptions{
 			Enable:        true,
 			Level:         "ERROR",
 			ProducerTopic: "log4go-cov",

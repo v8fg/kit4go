@@ -11,7 +11,7 @@ import (
 
 var errMockKafka = errors.New("mock kafka fail")
 
-// mockKafkaProducer is a test double for kafka.Producer, used by KafKaWriter
+// mockKafkaProducer is a test double for kafka.Producer, used by KafkaWriter
 // tests to verify the daemon / overflow / spill logic without a real broker.
 // Send records every message; if fail is set it fires the "error" OnEvent so
 // the daemon's error accounting is exercised.

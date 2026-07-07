@@ -147,7 +147,7 @@ func (s *ShardLogger) Register(w Writer) {
 
 // RegisterFunc registers a fresh, independent Writer to every shard by invoking
 // make once per shard. Use this for any stateful writer (async FileWriter,
-// KafKaWriter, custom writers with their own daemon/buffer) so each shard owns
+// KafkaWriter, custom writers with their own daemon/buffer) so each shard owns
 // a private instance — no bufio/file/channel is shared across shards, which is
 // the only correct way to fan disk/kafka writes across cores. Stateless writers
 // (ConsoleWriter) may use Register directly.

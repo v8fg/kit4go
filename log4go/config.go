@@ -32,7 +32,7 @@ type LogConfig struct {
 	Format        string               `json:"format" mapstructure:"format"`
 	ConsoleWriter ConsoleWriterOptions `json:"console_writer" mapstructure:"console_writer"`
 	FileWriter    FileWriterOptions    `json:"file_writer" mapstructure:"file_writer"`
-	KafKaWriter   KafKaWriterOptions   `json:"kafka_writer" mapstructure:"kafka_writer"`
+	KafkaWriter   KafkaWriterOptions   `json:"kafka_writer" mapstructure:"kafka_writer"`
 }
 
 // applyConfig configures l (level, format, full-path, writers) from lc. It is the
@@ -72,8 +72,8 @@ func (l *Logger) applyConfig(lc LogConfig) error {
 		}
 	}
 
-	if lc.KafKaWriter.Enable {
-		kafkaWriterLevelDefault = getLevelDefault(lc.KafKaWriter.Level, newGlobal, WriterNameKafka)
+	if lc.KafkaWriter.Enable {
+		kafkaWriterLevelDefault = getLevelDefault(lc.KafkaWriter.Level, newGlobal, WriterNameKafka)
 		validGlobalMinLevel = maxInt(kafkaWriterLevelDefault, validGlobalMinLevel)
 		if validGlobalMinLevel == kafkaWriterLevelDefault {
 			validGlobalMinLevelBy = WriterNameKafka
@@ -104,8 +104,8 @@ func (l *Logger) applyConfig(lc LogConfig) error {
 		}
 	}
 
-	if lc.KafKaWriter.Enable {
-		w := NewKafKaWriter(lc.KafKaWriter)
+	if lc.KafkaWriter.Enable {
+		w := NewKafkaWriter(lc.KafkaWriter)
 		w.level = kafkaWriterLevelDefault
 		log.Print("[log4go] enable   " + WriterNameKafka + " with level " + LevelFlags[kafkaWriterLevelDefault])
 		if err := l.registerOrFail(w); err != nil {
