@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/big"
 	"net"
+	"net/http"
 
 	"github.com/v8fg/kit4go/ip"
 )
@@ -1624,4 +1625,44 @@ func ExampleVersionFlagByContains() {
 	// [VersionFlagByContains] ip:           2048:db8::, ipVFlag:    ipv6
 	// [VersionFlagByContains] ip:       2048:db8::ffff, ipVFlag:    ipv6
 
+}
+
+// ExampleClientIP shows extracting the client IP from an HTTP request.
+// It honors X-Forwarded-For, then X-Real-Ip, then falls back to RemoteAddr.
+func ExampleClientIP() {
+	// X-Forwarded-For wins: first entry is the originating client.
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
+	fmt.Println(ip.ClientIP(req))
+
+	// Without proxy headers, RemoteAddr (host:port) is parsed.
+	req2, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	req2.RemoteAddr = "192.0.2.5:56789"
+	fmt.Println(ip.ClientIP(req2))
+
+	// A syntactically invalid header is skipped, falling through to RemoteAddr.
+	req3, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+	req3.Header.Set("X-Forwarded-For", "not-an-ip")
+	req3.RemoteAddr = "198.51.100.4:50000"
+	fmt.Println(ip.ClientIP(req3))
+
+	// Output:
+	// 203.0.113.7
+	// 192.0.2.5
+	// 198.51.100.4
+}
+
+// ExampleGetIPSet enumerates this host's non-loopback, non-link-local IPs.
+// Output is host-dependent (depends on local network interfaces), so it is
+// not asserted with // Output:.
+func ExampleGetIPSet() {
+	ips := ip.GetIPSet()
+	for _, addr := range ips {
+		fmt.Println(addr)
+	}
+
+	// GetIPv4Set / GetIPv6Set filter the same list by address family.
+	for _, addr := range ip.GetIPv4Set() {
+		fmt.Println("v4:", addr)
+	}
 }
