@@ -39,14 +39,14 @@ func Test_JSONCodec_AllProduceValidJSON(t *testing.T) {
 	for _, codec := range []JSONCodec{JSONCodecGoccy, JSONCodecStd, JSONCodecSonic} {
 		SetJSONCodec(codec)
 		b := r.JSON()
-		var m map[string]interface{}
+		var m map[string]any
 		if err := json.Unmarshal(b, &m); err != nil {
 			t.Errorf("codec %d: JSON() not parseable: %v\n%s", codec, err, b)
 		}
 		if m["msg"] != `msg with "quotes"` {
 			t.Errorf("codec %d: msg quote escaping wrong: %v", codec, m["msg"])
 		}
-		fields, _ := m["fields"].(map[string]interface{})
+		fields, _ := m["fields"].(map[string]any)
 		if fields["trace_id"] != "abc" {
 			t.Errorf("codec %d: fields.trace_id=%v", codec, fields["trace_id"])
 		}

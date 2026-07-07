@@ -41,7 +41,7 @@ type KafKaMSGFields struct {
 	// ExtraFields are merged into the top-level JSON on send, below r.fields in
 	// priority (a Base/With/Context field of the same key wins). Prefer
 	// SetBaseField for static fields.
-	ExtraFields map[string]interface{} `json:"extra_fields" mapstructure:"extra_fields"`
+	ExtraFields map[string]any `json:"extra_fields" mapstructure:"extra_fields"`
 }
 
 // KafKaWriterOptions kafka writer options.

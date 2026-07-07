@@ -169,19 +169,19 @@ func (s *ShardLogger) pick() *Logger {
 }
 
 // Debug logs at DEBUG on a shard (round-robin).
-func (s *ShardLogger) Debug(format string, args ...interface{}) { s.pick().Debug(format, args...) }
+func (s *ShardLogger) Debug(format string, args ...any) { s.pick().Debug(format, args...) }
 
 // Trace logs at TRACE on a shard (round-robin).
-func (s *ShardLogger) Trace(format string, args ...interface{}) { s.pick().Trace(format, args...) }
+func (s *ShardLogger) Trace(format string, args ...any) { s.pick().Trace(format, args...) }
 
 // Info logs at INFO on a shard (round-robin).
-func (s *ShardLogger) Info(format string, args ...interface{}) { s.pick().Info(format, args...) }
+func (s *ShardLogger) Info(format string, args ...any) { s.pick().Info(format, args...) }
 
 // Warn logs at WARNING on a shard (round-robin).
-func (s *ShardLogger) Warn(format string, args ...interface{}) { s.pick().Warn(format, args...) }
+func (s *ShardLogger) Warn(format string, args ...any) { s.pick().Warn(format, args...) }
 
 // Error logs at ERROR on a shard (round-robin).
-func (s *ShardLogger) Error(format string, args ...interface{}) { s.pick().Error(format, args...) }
+func (s *ShardLogger) Error(format string, args ...any) { s.pick().Error(format, args...) }
 
 // Close closes all shards in parallel.
 func (s *ShardLogger) Close() {

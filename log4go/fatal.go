@@ -15,7 +15,7 @@ func (l *Logger) Sync() { l.Close() }
 // Panic logs the message at CRITICAL, flushes the pipeline, then panics with the
 // formatted message — so the record is captured before the stack unwinds. Pair
 // with Recover (or a top-level recover) to surface the panic after logging.
-func (l *Logger) Panic(format string, args ...interface{}) {
+func (l *Logger) Panic(format string, args ...any) {
 	l.deliverRecordToWriter(CRITICAL, format, args...)
 	l.Sync()
 	panic(fmt.Sprintf(format, args...))
@@ -24,7 +24,7 @@ func (l *Logger) Panic(format string, args ...interface{}) {
 // Fatal logs the message at CRITICAL, flushes the pipeline, then exits the
 // process with status 1. The flush guarantees the record reaches every
 // registered writer before exit.
-func (l *Logger) Fatal(format string, args ...interface{}) {
+func (l *Logger) Fatal(format string, args ...any) {
 	l.deliverRecordToWriter(CRITICAL, format, args...)
 	l.Sync()
 	os.Exit(1)
@@ -54,8 +54,9 @@ func Recover(getLogger func() *Logger) {
 	panic(r)
 }
 
-// Panic/Fatal on the package singleton.
-func Panic(format string, args ...interface{}) { defaultLogger().Panic(format, args...) }
+// Panic logs at CRITICAL then panics on the package singleton. Fatal logs at
+// CRITICAL then calls os.Exit(1).
+func Panic(format string, args ...any) { defaultLogger().Panic(format, args...) }
 
 // Fatal on the package singleton.
-func Fatal(format string, args ...interface{}) { defaultLogger().Fatal(format, args...) }
+func Fatal(format string, args ...any) { defaultLogger().Fatal(format, args...) }

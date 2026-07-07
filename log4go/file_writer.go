@@ -60,7 +60,7 @@ type FileWriter struct {
 
 	pathFmt   string // Rotate when, use actions
 	actions   []func(*time.Time) int
-	variables []interface{}
+	variables []any
 
 	// // Rotate at file lines
 	// maxLines         int // Rotate at line
@@ -354,7 +354,7 @@ func (w *FileWriter) SetPathPattern(pattern string) error {
 	}
 
 	w.actions = make([]func(*time.Time) int, 0, n)
-	w.variables = make([]interface{}, n, n)
+	w.variables = make([]any, n, n)
 	tmp := []byte(pattern)
 
 	variable := 0

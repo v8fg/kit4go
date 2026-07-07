@@ -94,18 +94,18 @@ func Test_AddContextExtractor_Merge(t *testing.T) {
 	resetExtractorStack()
 	defer resetExtractorStack()
 
-	AddContextExtractor(func(ctx context.Context) map[string]interface{} {
-		return map[string]interface{}{"a": 1, "shared": "first"}
+	AddContextExtractor(func(ctx context.Context) map[string]any {
+		return map[string]any{"a": 1, "shared": "first"}
 	})
-	AddContextExtractor(func(ctx context.Context) map[string]interface{} {
-		return map[string]interface{}{"b": 2, "shared": "second"} // overrides shared
+	AddContextExtractor(func(ctx context.Context) map[string]any {
+		return map[string]any{"b": 2, "shared": "second"} // overrides shared
 	})
 
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
 	child := root.WithContext(context.Background())
 
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range child.fields {
 		got[f.key] = f.value()
 	}
@@ -124,8 +124,8 @@ func Test_AddContextExtractor_DefaultStillRuns(t *testing.T) {
 	resetExtractorStack()
 	defer resetExtractorStack()
 
-	AddContextExtractor(func(ctx context.Context) map[string]interface{} {
-		return map[string]interface{}{"custom": "yes"}
+	AddContextExtractor(func(ctx context.Context) map[string]any {
+		return map[string]any{"custom": "yes"}
 	})
 
 	ctx := context.WithValue(context.Background(), "trace_id", "t-9")
@@ -133,7 +133,7 @@ func Test_AddContextExtractor_DefaultStillRuns(t *testing.T) {
 	defer root.Close()
 	child := root.WithContext(ctx)
 
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range child.fields {
 		got[f.key] = f.value()
 	}
@@ -161,8 +161,8 @@ func Test_AddContextExtractor_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			AddContextExtractor(func(ctx context.Context) map[string]interface{} {
-				return map[string]interface{}{string(rune('A' + n)): n}
+			AddContextExtractor(func(ctx context.Context) map[string]any {
+				return map[string]any{string(rune('A' + n)): n}
 			})
 		}(i)
 	}
@@ -186,18 +186,18 @@ func Test_SetContextExtractor_OverridesStack(t *testing.T) {
 	resetExtractorStack()
 	defer resetExtractorStack()
 
-	AddContextExtractor(func(ctx context.Context) map[string]interface{} {
-		return map[string]interface{}{"stack": "should-not-appear"}
+	AddContextExtractor(func(ctx context.Context) map[string]any {
+		return map[string]any{"stack": "should-not-appear"}
 	})
 
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
-	root.SetContextExtractor(func(ctx context.Context) map[string]interface{} {
-		return map[string]interface{}{"only": "me"}
+	root.SetContextExtractor(func(ctx context.Context) map[string]any {
+		return map[string]any{"only": "me"}
 	})
 
 	child := root.WithContext(context.Background())
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range child.fields {
 		got[f.key] = f.value()
 	}
@@ -215,12 +215,12 @@ func Test_SetContextExtractor_OverridesStack(t *testing.T) {
 func Test_RequestIDMiddleware_InboundHeader(t *testing.T) {
 	var (
 		gotRID    string
-		gotFields map[string]interface{}
+		gotFields map[string]any
 	)
 	h := RequestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotRID = RequestIDFromContext(r.Context())
 		lg := FromContext(r.Context())
-		gotFields = map[string]interface{}{}
+		gotFields = map[string]any{}
 		for _, f := range lg.fields {
 			gotFields[f.key] = f.value()
 		}
@@ -257,10 +257,10 @@ func Test_RequestIDMiddleware_Generates(t *testing.T) {
 
 // Test_RequestIDMiddleware_CustomHeaderAndField confirms Header/FieldName opts.
 func Test_RequestIDMiddleware_CustomHeaderAndField(t *testing.T) {
-	var gotFields map[string]interface{}
+	var gotFields map[string]any
 	h := RequestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lg := FromContext(r.Context())
-		gotFields = map[string]interface{}{}
+		gotFields = map[string]any{}
 		for _, f := range lg.fields {
 			gotFields[f.key] = f.value()
 		}

@@ -21,6 +21,8 @@ import (
 // Status is the health check result.
 type Status string
 
+// StatusHealthy and StatusUnhealthy are the possible Status values reported by
+// a Checker / aggregated Report.
 const (
 	StatusHealthy   Status = "healthy"
 	StatusUnhealthy Status = "unhealthy"
@@ -43,7 +45,10 @@ type CheckerFunc struct {
 	Fn          func() error
 }
 
+// Name returns the configured CheckerName.
 func (c CheckerFunc) Name() string { return c.CheckerName }
+
+// Check invokes the configured Fn and returns its result.
 func (c CheckerFunc) Check() error { return c.Fn() }
 
 // CheckerResult holds the outcome of one dependency check.

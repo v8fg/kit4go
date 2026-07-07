@@ -11,9 +11,9 @@ import (
 
 // decodeNumber unmarshals JSON preserving full int64 precision (json.Number) so
 // large values like unix_nano are not rounded through float64.
-func decodeNumber(t *testing.T, b []byte) map[string]interface{} {
+func decodeNumber(t *testing.T, b []byte) map[string]any {
 	t.Helper()
-	var m map[string]interface{}
+	var m map[string]any
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	if err := dec.Decode(&m); err != nil {
@@ -23,7 +23,7 @@ func decodeNumber(t *testing.T, b []byte) map[string]interface{} {
 }
 
 // intField extracts a JSON number field as int64 (via json.Number.Int64).
-func numField(t *testing.T, m map[string]interface{}, k string) int64 {
+func numField(t *testing.T, m map[string]any, k string) int64 {
 	t.Helper()
 	n, ok := m[k].(json.Number)
 	if !ok {
@@ -121,7 +121,7 @@ func Test_KafKaWriter_Payload_FastPathOmitsEmptyRouting(t *testing.T) {
 	w := &KafKaWriter{options: KafKaWriterOptions{ProducerTopic: "t"}} // no MSG, no fields
 	r := &Record{level: INFO, msg: "x", unixNano: 1, seq: 1}
 	b := w.buildPayload(r)
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("payload not JSON: %v\n%s", err, b)
 	}
@@ -147,7 +147,7 @@ func Test_KafKaWriter_Payload_MSGFallback(t *testing.T) {
 	}}
 	r := &Record{level: WARNING, msg: "m", unixNano: 2, seq: 2}
 	b := w.buildPayload(r)
-	var m map[string]interface{}
+	var m map[string]any
 	json.Unmarshal(b, &m)
 	if got, _ := m["server_ip"].(string); got != "10.0.0.1" {
 		t.Errorf("server_ip=%v want 10.0.0.1 (MSG fallback)", m["server_ip"])
@@ -188,11 +188,11 @@ func Test_SetFormat_JSON_CarriesBaseFields(t *testing.T) {
 	if len(r.formattedBytes) == 0 {
 		t.Fatal("formattedBytes empty under FormatJSON")
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(r.formattedBytes, &m); err != nil {
 		t.Fatalf("formattedBytes not valid JSON: %v\n%s", err, r.formattedBytes)
 	}
-	fields, _ := m["fields"].(map[string]interface{})
+	fields, _ := m["fields"].(map[string]any)
 	for k, want := range map[string]string{"hostname": "adx-prod-01", "app": "adx-dsp", "trace_id": "t-9"} {
 		if fields[k] != want {
 			t.Errorf("fields.%s=%v want %q (base field dropped from JSON?)", k, fields[k], want)
@@ -229,7 +229,7 @@ func Test_BaseField_PropagatesToChildLoggers(t *testing.T) {
 	cw.mu.Lock()
 	r := cw.records[0]
 	cw.mu.Unlock()
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range r.fields {
 		got[f.key] = f.value()
 	}

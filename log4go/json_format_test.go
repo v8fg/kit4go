@@ -46,7 +46,7 @@ func Test_ParseLogLogFormat(t *testing.T) {
 func Test_RecordJSON_NoFields(t *testing.T) {
 	r := &Record{level: INFO, time: "2026/06/25 10:00:00", file: "svc.go:42", msg: "hello"}
 	b := r.JSON()
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("Record.JSON() not valid JSON: %v\n%s", err, b)
 	}
@@ -74,11 +74,11 @@ func Test_RecordJSON_WithFields(t *testing.T) {
 		fields: []field{fld("trace_id", "abc"), fld("user", 42)},
 	}
 	b := r.JSON()
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, b)
 	}
-	fields, ok := m["fields"].(map[string]interface{})
+	fields, ok := m["fields"].(map[string]any)
 	if !ok {
 		t.Fatalf("fields not an object: %v", m["fields"])
 	}
@@ -97,7 +97,7 @@ func Test_RecordJSON_UnmarshallableAny(t *testing.T) {
 	r := &Record{level: INFO, time: "t", file: "f", msg: "m",
 		fields: []field{anyField("k", make(chan int))}}
 	b := r.JSON()
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("JSON() produced invalid JSON: %v\n%s", err, b)
 	}
@@ -137,7 +137,7 @@ func Test_SetFormat_DeliverJSON(t *testing.T) {
 	if len(r.formattedBytes) == 0 {
 		t.Fatalf("formattedBytes empty under FormatJSON; record was not pre-serialized")
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(r.formattedBytes, &m); err != nil {
 		t.Fatalf("formattedBytes not valid JSON: %v\n%s", err, r.formattedBytes)
 	}
@@ -147,7 +147,7 @@ func Test_SetFormat_DeliverJSON(t *testing.T) {
 	if m["level"] != "INFO" {
 		t.Errorf("level=%v want INFO", m["level"])
 	}
-	fields, _ := m["fields"].(map[string]interface{})
+	fields, _ := m["fields"].(map[string]any)
 	if fields["trace_id"] != "t-1" {
 		t.Errorf("fields.trace_id=%v want t-1", fields["trace_id"])
 	}

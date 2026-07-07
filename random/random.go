@@ -178,6 +178,8 @@ func RandNIn[T any](n int, slice []T) []T {
 	return ret
 }
 
+// DefaultSALT is the default salt value for the random code generator, and
+// LenLetterDigitBytes is the size of the letter+digit alphabet.
 const (
 	DefaultSALT         = 89482311 // SALT
 	LenLetterDigitBytes = 62

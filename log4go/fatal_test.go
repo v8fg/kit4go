@@ -28,7 +28,7 @@ func Test_Logger_Panic(t *testing.T) {
 	lg.Register(cw)
 	lg.SetLevel(DEBUG)
 
-	var got interface{}
+	var got any
 	func() {
 		defer func() { got = recover() }()
 		lg.Panic("boom %d", 7)

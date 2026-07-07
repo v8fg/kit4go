@@ -328,7 +328,7 @@ func Test_KafKaWriter_buildPayload_DedupDuplicateField(t *testing.T) {
 	w := &KafKaWriter{options: KafKaWriterOptions{
 		ProducerTopic: "t",
 		MSG: KafKaMSGFields{
-			ExtraFields: map[string]interface{}{"extra": "e"}, // forces dedup path
+			ExtraFields: map[string]any{"extra": "e"}, // forces dedup path
 		},
 	}}
 	r := &Record{

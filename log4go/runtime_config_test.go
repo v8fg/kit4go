@@ -94,7 +94,7 @@ func TestRuntimeConfig_SetContextExtractor(t *testing.T) {
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
 
-	fn := func(context.Context) map[string]interface{} { return map[string]interface{}{"trace_id": "x"} }
+	fn := func(context.Context) map[string]any { return map[string]any{"trace_id": "x"} }
 	root.SetContextExtractor(fn)
 	if root.ctxExtractor.Load() == nil {
 		t.Fatal("extractor not installed")
@@ -111,7 +111,7 @@ func TestClone_PreservesSamplerAndExtractor(t *testing.T) {
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
 	root.SetSampling(7, 3)
-	root.SetContextExtractor(func(context.Context) map[string]interface{} { return nil })
+	root.SetContextExtractor(func(context.Context) map[string]any { return nil })
 
 	child := root.With("k", "v") // triggers clone
 	if child.sampler.Load() == nil {

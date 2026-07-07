@@ -177,7 +177,7 @@
 //	lg.Info("server started")                        // no args: 1 alloc
 //	lg.With("trace_id", id).Info("served %s", route) // with args: 3 allocs
 //
-// With(key, interface{}) infers the scalar kind internally (fieldOf), so it
+// With(key, any) infers the scalar kind internally (fieldOf), so it
 // avoids boxing for common types. A no-arg Info("msg") is 2 allocs cheaper than
 // Info(fmt, args): no fmt.Sprintf and no variadic boxing.
 //

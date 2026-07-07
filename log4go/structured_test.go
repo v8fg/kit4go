@@ -43,7 +43,7 @@ func Test_RecordString_WithFields(t *testing.T) {
 	// extract the JSON object between the trailing space and the newline
 	fj := strings.TrimSpace(strings.TrimPrefix(got[strings.Index(got, "t [INFO]"):], "t [INFO] <f.go:1> hello "))
 	fj = strings.TrimSuffix(fj, "\n")
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal([]byte(fj), &m); err != nil {
 		t.Fatalf("fields not valid JSON (%q): %v", fj, err)
 	}
@@ -68,7 +68,7 @@ func Test_LoggerWith_Chainable(t *testing.T) {
 	if len(child.fields) != 2 {
 		t.Fatalf("child fields=%d want 2", len(child.fields))
 	}
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range child.fields {
 		got[f.key] = f.value()
 	}
@@ -83,7 +83,7 @@ func Test_LoggerWithFields_Map(t *testing.T) {
 	root := newLoggerWithRecords(make(chan *Record, 16))
 	defer root.Close()
 
-	in := map[string]interface{}{"k1": "v1", "k2": 99}
+	in := map[string]any{"k1": "v1", "k2": 99}
 	child := root.WithFields(in)
 	in["k3"] = "sneaky" // mutate after — must NOT appear on the child
 	if len(child.fields) != 2 {
@@ -154,7 +154,7 @@ func Test_KafKaWriter_BuildPayload_RecordFields(t *testing.T) {
 		ProducerTopic: "t",
 		MSG: KafKaMSGFields{
 			ServerIP: "1.2.3.4",
-			ExtraFields: map[string]interface{}{
+			ExtraFields: map[string]any{
 				"global_tag": "prod",
 				"level":      "SHADOW", // built-in wins
 			},
@@ -173,7 +173,7 @@ func Test_KafKaWriter_BuildPayload_RecordFields(t *testing.T) {
 	if b == nil {
 		t.Fatal("nil payload")
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("payload not JSON: %v\n%s", err, b)
 	}
@@ -321,7 +321,7 @@ func Test_Context_DefaultExtractor(t *testing.T) {
 	if len(child.fields) != 2 {
 		t.Fatalf("child fields=%d want 2 (trace_id + x-request-id)", len(child.fields))
 	}
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range child.fields {
 		got[f.key] = f.value()
 	}
@@ -334,12 +334,12 @@ func Test_Context_DefaultExtractor(t *testing.T) {
 func Test_Context_CustomExtractor(t *testing.T) {
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()
-	root.SetContextExtractor(func(ctx context.Context) map[string]interface{} {
-		return map[string]interface{}{"span_id": "s-1", "custom": true}
+	root.SetContextExtractor(func(ctx context.Context) map[string]any {
+		return map[string]any{"span_id": "s-1", "custom": true}
 	})
 
 	child := root.WithContext(context.Background())
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range child.fields {
 		got[f.key] = f.value()
 	}

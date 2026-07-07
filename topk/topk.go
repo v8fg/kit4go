@@ -125,12 +125,13 @@ func (t *Tracker) TouchN(key string, n int64) {
 	// else: key not competitive — do not store it, keeping counts bounded.
 }
 
-// Top returns the current top-K items sorted by count descending.
+// Entry is one ranked item returned by Top.
 type Entry struct {
 	Key   string
 	Count int64
 }
 
+// Top returns the current top-K items sorted by count descending.
 func (t *Tracker) Top() []Entry {
 	t.mu.Lock()
 	defer t.mu.Unlock()

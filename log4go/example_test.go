@@ -128,7 +128,7 @@ func Example_structuredFields() {
 	reqLog.With("route", "/api/v1").Info("routed") // adds route on top
 
 	// WithFields attaches a whole map in one clone
-	log4go.WithFields(map[string]interface{}{"k1": "v1", "k2": 2}).Info("batch fields")
+	log4go.WithFields(map[string]any{"k1": "v1", "k2": 2}).Info("batch fields")
 }
 
 // Example_jsonFormat shows structured JSON output (one JSON object per record),
@@ -376,7 +376,7 @@ func Example_presets() {
 
 // Example_typedFields shows the allocation-free typed field constructors
 // (WithString/WithInt/...), the counterpart to zap.Field / slog.Attr. Scalars
-// never box into interface{}.
+// never box into any.
 func Example_typedFields() {
 	_ = log4go.SetupLog(log4go.LogConfig{
 		Level:         log4go.LevelFlagInfo,

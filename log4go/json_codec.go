@@ -65,7 +65,7 @@ func GetJSONCodec() JSONCodec { return jsonCodecActive }
 // earlier structured-fields code (which defaulted to encoding/json for the
 // trailing-fields object). jsonMarshal is now wired to jsonMarshalEncode in
 // init() so ALL json output (text-with-fields AND FormatJSON) honors the codec.
-func jsonMarshalEncode(v interface{}) ([]byte, error) {
+func jsonMarshalEncode(v any) ([]byte, error) {
 	switch jsonCodecActive {
 	case JSONCodecStd:
 		return stdjson.Marshal(v)

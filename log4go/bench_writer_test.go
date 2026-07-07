@@ -434,7 +434,7 @@ func Benchmark_DeliverPipeline_NoCaller(b *testing.B) {
 }
 
 // Benchmark_Logger_WithInterfaceInt vs Benchmark_Logger_WithTypedInt isolates the
-// boxing cost the typed API removes: With(key, interface{}) boxes the int at the
+// boxing cost the typed API removes: With(key, any) boxes the int at the
 // call site (one alloc), WithInt never boxes.
 func Benchmark_Logger_WithInterfaceInt(b *testing.B) {
 	root := newBenchLogger()
@@ -442,7 +442,7 @@ func Benchmark_Logger_WithInterfaceInt(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = root.With("count", i) // i boxes into interface{}
+		_ = root.With("count", i) // i boxes into any
 	}
 }
 

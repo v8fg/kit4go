@@ -98,7 +98,7 @@ var unmarshallableValue = func() {}
 
 // TestJSONRetMarshalFailure covers the json.Marshal error branch of jsonRet.
 func TestJSONRetMarshalFailure(t *testing.T) {
-	data := map[string]interface{}{
+	data := map[string]any{
 		"ip":   "1.2.3.4",
 		"func": unmarshallableValue,
 	}

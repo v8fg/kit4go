@@ -184,9 +184,13 @@ func (m Money) Amount() int64 { return m.amount }
 // Currency returns the currency.
 func (m Money) Currency() Currency { return m.cur }
 
-// IsZero, IsPositive, IsNegative report the sign.
-func (m Money) IsZero() bool     { return m.amount == 0 }
+// IsZero reports whether the amount is zero.
+func (m Money) IsZero() bool { return m.amount == 0 }
+
+// IsPositive reports whether the amount is greater than zero.
 func (m Money) IsPositive() bool { return m.amount > 0 }
+
+// IsNegative reports whether the amount is less than zero.
 func (m Money) IsNegative() bool { return m.amount < 0 }
 
 // String renders the amount in major units with the currency's decimals and

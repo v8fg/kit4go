@@ -326,13 +326,13 @@ func (r *Record) FieldsJSON() string {
 // FormatJSON. Fields is nil when no structured fields are attached so the JSON
 // omits the key (the omitempty makes the line shorter for the common case).
 type RecordJSON struct {
-	UnixNano int64                  `json:"unix_nano"`
-	Seq      uint64                 `json:"seq"`
-	Time     string                 `json:"time"`
-	Level    string                 `json:"level"`
-	Msg      string                 `json:"msg"`
-	File     string                 `json:"file,omitempty"`
-	Fields   map[string]interface{} `json:"fields,omitempty"`
+	UnixNano int64          `json:"unix_nano"`
+	Seq      uint64         `json:"seq"`
+	Time     string         `json:"time"`
+	Level    string         `json:"level"`
+	Msg      string         `json:"msg"`
+	File     string         `json:"file,omitempty"`
+	Fields   map[string]any `json:"fields,omitempty"`
 }
 
 // JSON serializes the record to a single JSON object terminated by a newline
@@ -476,8 +476,8 @@ type RuntimeConfig interface {
 	WithFuncName(enable bool)
 	WithFullPath(enable bool)
 	SetSampling(initial, thereafter int)
-	SetContextExtractor(fn func(context.Context) map[string]interface{})
-	SetBaseField(key string, val interface{})
+	SetContextExtractor(fn func(context.Context) map[string]any)
+	SetBaseField(key string, val any)
 	RemoveBaseField(key string)
 }
 
@@ -575,7 +575,7 @@ type baseFieldsHolder struct {
 // nil pointer disables extraction — the common case, so the hot path pays no map
 // allocation). Used for runtime trace/context-capture control.
 type contextExtractor struct {
-	fn func(context.Context) map[string]interface{}
+	fn func(context.Context) map[string]any
 }
 
 // NewLogger create the logger
@@ -654,7 +654,7 @@ type WriterStatus struct {
 	// Metrics is the writer's own Metrics() snapshot if it exposes one (per
 	// writer type — FileWriterMetrics, WriterMetrics, …); nil otherwise. Fetch
 	// a typed snapshot via the writer directly for full detail.
-	Metrics interface{}
+	Metrics any
 }
 
 // RuntimeStatus is a point-in-time snapshot of the logger's runtime state —
@@ -709,7 +709,7 @@ func describeStrategy(p *SamplingStrategy) string {
 // metricSnapshot returns a writer's Metrics() if it exposes one. Each writer's
 // Metrics() returns its own concrete type, so we assert the known shapes rather
 // than require a shared interface (no writer changes needed); nil if none.
-func metricSnapshot(w Writer) interface{} {
+func metricSnapshot(w Writer) any {
 	switch v := w.(type) {
 	case interface{ Metrics() FileWriterMetrics }:
 		return v.Metrics()
@@ -864,7 +864,7 @@ func (l *Logger) SetLayout(layout string) {
 // Runtime update (e.g. canary deploy):
 //
 //	log4go.SetBaseField("service_name", "bidder-canary")
-func (l *Logger) SetBaseField(key string, val interface{}) {
+func (l *Logger) SetBaseField(key string, val any) {
 	f := fieldOf(key, val)
 	cur := l.baseFields.v.Load()
 	if cur != nil {
@@ -919,7 +919,7 @@ func (l *Logger) ClearBaseFields() {
 }
 
 // SetBaseField upserts (add-or-update by key) a base field on the default logger.
-func SetBaseField(key string, val interface{}) { defaultLogger().SetBaseField(key, val) }
+func SetBaseField(key string, val any) { defaultLogger().SetBaseField(key, val) }
 
 // RemoveBaseField removes a single base field by key on the default logger.
 func RemoveBaseField(key string) { defaultLogger().RemoveBaseField(key) }
@@ -1028,7 +1028,7 @@ func (l *Logger) clone() *Logger {
 // Fields surface in Record.String() (as a trailing JSON object) and in
 // KafKaWriter.buildPayload (hoisted into the top-level JSON map). Loggers
 // without With pay no fields cost: Record.String short-circuits on empty fields.
-func (l *Logger) With(key string, val interface{}) *Logger {
+func (l *Logger) With(key string, val any) *Logger {
 	return l.withField(fieldOf(key, val))
 }
 
@@ -1046,14 +1046,14 @@ func (l *Logger) withField(f field) *Logger {
 
 // WithField is an alias for With(key, val) for ergonomic parity with
 // logrus/zap-style APIs.
-func (l *Logger) WithField(key string, val interface{}) *Logger {
+func (l *Logger) WithField(key string, val any) *Logger {
 	return l.With(key, val)
 }
 
 // WithFields returns a child Logger attaching every key/value pair in fields.
 // This is equivalent to chaining With for each entry, but does it in one clone.
 // The map is copied; later mutation of the input map does not affect the logger.
-func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
+func (l *Logger) WithFields(fields map[string]any) *Logger {
 	c := l.clone()
 	nf := make([]field, 0, len(l.fields)+len(fields))
 	nf = append(nf, l.fields...)
@@ -1066,7 +1066,7 @@ func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
 
 // WithAttrs returns a child Logger carrying the given typed Fields (constructed
 // via log4go.String/Int/Bool/...). Scalars never box — the allocation-free
-// counterpart to With(key, interface{}).
+// counterpart to With(key, any).
 func (l *Logger) WithAttrs(attrs ...Field) *Logger {
 	if len(attrs) == 0 {
 		return l.clone()
@@ -1081,8 +1081,10 @@ func (l *Logger) WithAttrs(attrs ...Field) *Logger {
 	return c
 }
 
-// WithString/WithInt/... are the typed, allocation-free variants of With for
-// the common scalar types. They avoid the interface{} boxing that With pays.
+// WithString returns a child Logger carrying a string-typed structured field
+// (allocation-free). WithInt and the other typed With* helpers are the
+// allocation-free variants of With for the common scalar types; they avoid the
+// any boxing that With pays.
 func (l *Logger) WithString(key, val string) *Logger { return l.withField(strField(key, val)) }
 
 // WithInt returns a child Logger carrying an int-typed structured field.
@@ -1183,7 +1185,7 @@ func (l *Logger) SetSampling(initial, thereafter int) {
 //
 // The extractor is cloned into every child Logger produced after the call; a
 // child may override it independently.
-func (l *Logger) SetContextExtractor(fn func(context.Context) map[string]interface{}) {
+func (l *Logger) SetContextExtractor(fn func(context.Context) map[string]any) {
 	if fn == nil {
 		l.ctxExtractor.Store(nil)
 		return
@@ -1290,7 +1292,7 @@ func (l *Logger) attachContextFields(ctx context.Context) {
 	if ctx == nil {
 		return
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if x := l.ctxExtractor.Load(); x != nil {
 		// per-logger override: run ONLY this extractor (not the global stack),
 		// so SetContextExtractor is a full replacement, not an addition.
@@ -1329,15 +1331,15 @@ var defaultContextTraceKeys = []string{
 // It is the zero-config base of the global extractor stack; callers add more
 // via AddContextExtractor, and a per-logger SetContextExtractor overrides the
 // whole stack.
-func defaultContextExtractor(ctx context.Context) map[string]interface{} {
+func defaultContextExtractor(ctx context.Context) map[string]any {
 	if ctx == nil {
 		return nil
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	for _, k := range defaultContextTraceKeys {
 		if v := ctx.Value(k); v != nil {
 			if m == nil {
-				m = make(map[string]interface{}, len(defaultContextTraceKeys))
+				m = make(map[string]any, len(defaultContextTraceKeys))
 			}
 			m[k] = v
 		}
@@ -1346,52 +1348,52 @@ func defaultContextExtractor(ctx context.Context) map[string]interface{} {
 }
 
 // Debug level debug
-func (l *Logger) Debug(fmt string, args ...interface{}) {
+func (l *Logger) Debug(fmt string, args ...any) {
 	l.deliverRecordToWriter(DEBUG, fmt, args...)
 }
 
 // Trace level trace — finest granularity, below DEBUG. Use for variable-level
 // detail during troubleshooting (individual values, loop iterations).
-func (l *Logger) Trace(fmt string, args ...interface{}) {
+func (l *Logger) Trace(fmt string, args ...any) {
 	l.deliverRecordToWriter(TRACE, fmt, args...)
 }
 
 // Info level info
-func (l *Logger) Info(fmt string, args ...interface{}) {
+func (l *Logger) Info(fmt string, args ...any) {
 	l.deliverRecordToWriter(INFO, fmt, args...)
 }
 
 // Notice level notice
-func (l *Logger) Notice(fmt string, args ...interface{}) {
+func (l *Logger) Notice(fmt string, args ...any) {
 	l.deliverRecordToWriter(NOTICE, fmt, args...)
 }
 
 // Warn level warn
-func (l *Logger) Warn(fmt string, args ...interface{}) {
+func (l *Logger) Warn(fmt string, args ...any) {
 	l.deliverRecordToWriter(WARNING, fmt, args...)
 }
 
 // Error level error
-func (l *Logger) Error(fmt string, args ...interface{}) {
+func (l *Logger) Error(fmt string, args ...any) {
 	l.deliverRecordToWriter(ERROR, fmt, args...)
 }
 
 // Critical level critical
-func (l *Logger) Critical(fmt string, args ...interface{}) {
+func (l *Logger) Critical(fmt string, args ...any) {
 	l.deliverRecordToWriter(CRITICAL, fmt, args...)
 }
 
 // Alert level alert
-func (l *Logger) Alert(fmt string, args ...interface{}) {
+func (l *Logger) Alert(fmt string, args ...any) {
 	l.deliverRecordToWriter(ALERT, fmt, args...)
 }
 
 // Emergency level emergency
-func (l *Logger) Emergency(fmt string, args ...interface{}) {
+func (l *Logger) Emergency(fmt string, args ...any) {
 	l.deliverRecordToWriter(EMERGENCY, fmt, args...)
 }
 
-func (l *Logger) deliverRecordToWriter(level int, f string, args ...interface{}) {
+func (l *Logger) deliverRecordToWriter(level int, f string, args ...any) {
 	// Occurred: every log call, pre-filter/pre-sample (on the caller path). Written
 	// is counted later in the bootstrap goroutine (single-writer, no contention).
 	if l.occurredByLevel != nil {
@@ -1623,7 +1625,7 @@ func bootstrapLogWriter(logger *Logger) {
 }
 
 func init() {
-	recordPool = &sync.Pool{New: func() interface{} {
+	recordPool = &sync.Pool{New: func() any {
 		return &Record{}
 	}}
 	loggerDefault.Store(newDefaultLoggerInstance())
@@ -1729,18 +1731,18 @@ func WithFuncName(show bool) {
 // mutate the singleton; the returned logger is bound to the singleton's records
 // channel at call time, so callers should not reuse it across a Close() cycle
 // (Close rebuilds the singleton with a new channel).
-func With(key string, val interface{}) *Logger {
+func With(key string, val any) *Logger {
 	return defaultLogger().With(key, val)
 }
 
 // WithField is an alias for With(key, val) on the package singleton.
-func WithField(key string, val interface{}) *Logger {
+func WithField(key string, val any) *Logger {
 	return defaultLogger().WithField(key, val)
 }
 
 // WithFields returns a child Logger of the package singleton carrying every
 // key/value pair in fields (see Logger.WithFields).
-func WithFields(fields map[string]interface{}) *Logger {
+func WithFields(fields map[string]any) *Logger {
 	return defaultLogger().WithFields(fields)
 }
 
@@ -1748,8 +1750,9 @@ func WithFields(fields map[string]interface{}) *Logger {
 // typed Fields (allocation-free for scalars). See Logger.WithAttrs.
 func WithAttrs(attrs ...Field) *Logger { return defaultLogger().WithAttrs(attrs...) }
 
-// WithString/WithInt/... are the typed, allocation-free variants of With on the
-// package singleton (see the Logger methods of the same name).
+// WithString returns a child Logger of the package singleton carrying a
+// string-typed structured field (see Logger.WithString). WithInt and the other
+// typed With* helpers are the allocation-free variants of With on the singleton.
 func WithString(key, val string) *Logger { return defaultLogger().WithString(key, val) }
 
 // WithInt returns a child Logger of the package singleton carrying an int-typed
@@ -1795,7 +1798,7 @@ func WithSampling(initial, thereafter int) *Logger {
 // SetContextExtractor installs a context-field extractor on the package
 // singleton (see Logger.SetContextExtractor). Subsequent WithContext children
 // inherit it.
-func SetContextExtractor(fn func(context.Context) map[string]interface{}) {
+func SetContextExtractor(fn func(context.Context) map[string]any) {
 	defaultLogger().SetContextExtractor(fn)
 }
 
@@ -1806,47 +1809,47 @@ func WithContext(ctx context.Context) *Logger {
 }
 
 // Debug level debug
-func Debug(fmt string, args ...interface{}) {
+func Debug(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(DEBUG, fmt, args...)
 }
 
 // Trace level trace — finest granularity, below DEBUG.
-func Trace(fmt string, args ...interface{}) {
+func Trace(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(TRACE, fmt, args...)
 }
 
 // Info level info
-func Info(fmt string, args ...interface{}) {
+func Info(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(INFO, fmt, args...)
 }
 
 // Notice level notice
-func Notice(fmt string, args ...interface{}) {
+func Notice(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(NOTICE, fmt, args...)
 }
 
 // Warn level warn
-func Warn(fmt string, args ...interface{}) {
+func Warn(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(WARNING, fmt, args...)
 }
 
 // Error level error
-func Error(fmt string, args ...interface{}) {
+func Error(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(ERROR, fmt, args...)
 }
 
 // Critical level critical
-func Critical(fmt string, args ...interface{}) {
+func Critical(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(CRITICAL, fmt, args...)
 }
 
 // Alert level alert
-func Alert(fmt string, args ...interface{}) {
+func Alert(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(ALERT, fmt, args...)
 }
 
 // Emergency level emergency
-func Emergency(fmt string, args ...interface{}) {
+func Emergency(fmt string, args ...any) {
 	defaultLogger().deliverRecordToWriter(EMERGENCY, fmt, args...)
 }
 

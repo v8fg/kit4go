@@ -760,7 +760,7 @@ func Test_KafKaWriter_buildPayload_BothSources(t *testing.T) {
 	w := &KafKaWriter{options: KafKaWriterOptions{
 		ProducerTopic: "t",
 		MSG: KafKaMSGFields{
-			ExtraFields: map[string]interface{}{
+			ExtraFields: map[string]any{
 				"shared":   "from-extra", // overridden by r.fields
 				"only-ext": 1,
 			},
@@ -793,7 +793,7 @@ func Test_KafKaWriter_buildPayload_BothSources(t *testing.T) {
 func Test_KafKaWriter_buildPayload_ExtraOnly(t *testing.T) {
 	w := &KafKaWriter{options: KafKaWriterOptions{
 		ProducerTopic: "t",
-		MSG:           KafKaMSGFields{ExtraFields: map[string]interface{}{"k": "v"}},
+		MSG:           KafKaMSGFields{ExtraFields: map[string]any{"k": "v"}},
 	}}
 	b := w.buildPayload(&Record{level: INFO, msg: "m"})
 	s := string(b)

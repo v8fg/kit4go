@@ -64,7 +64,7 @@ func appendFieldProto(buf []byte, f field) []byte {
 	return appendBytesField(buf, 10, sub)
 }
 
-func scalarToJSON(v interface{}) string {
+func scalarToJSON(v any) string {
 	switch val := v.(type) {
 	case int:
 		return strconv.FormatInt(int64(val), 10)

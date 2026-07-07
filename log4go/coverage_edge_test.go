@@ -75,8 +75,8 @@ func Test_AddContextExtractor_Multiple(t *testing.T) {
 		extractorMu.Unlock()
 	}()
 
-	AddContextExtractor(func(_ context.Context) map[string]interface{} { return map[string]interface{}{"a": 1} })
-	AddContextExtractor(func(_ context.Context) map[string]interface{} { return map[string]interface{}{"b": 2} })
+	AddContextExtractor(func(_ context.Context) map[string]any { return map[string]any{"a": 1} })
+	AddContextExtractor(func(_ context.Context) map[string]any { return map[string]any{"b": 2} })
 
 	root := newLoggerWithRecords(make(chan *Record, 4))
 	defer root.Close()

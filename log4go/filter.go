@@ -14,7 +14,7 @@ type Filter func(*Record) bool
 // MatchField returns a Filter that matches records whose structured field key
 // equals want. Comparison is exact first, then by string form (fmt.Sprint), so a
 // numeric field 42 matches both want=42 and want="42".
-func MatchField(key string, want interface{}) Filter {
+func MatchField(key string, want any) Filter {
 	return func(r *Record) bool {
 		v, ok := r.FieldValue(key)
 		return ok && fieldEqual(v, want)
@@ -22,7 +22,7 @@ func MatchField(key string, want interface{}) Filter {
 }
 
 // MatchFieldIn matches when field key equals any of want (an OR over values).
-func MatchFieldIn(key string, want ...interface{}) Filter {
+func MatchFieldIn(key string, want ...any) Filter {
 	return func(r *Record) bool {
 		v, ok := r.FieldValue(key)
 		if !ok {
@@ -100,7 +100,7 @@ func NotMatch(f Filter) Filter {
 
 // fieldEqual compares two field values: exact interface equality first, then by
 // string form so callers can pass either the native value or its string form.
-func fieldEqual(got, want interface{}) bool {
+func fieldEqual(got, want any) bool {
 	if got == want {
 		return true
 	}

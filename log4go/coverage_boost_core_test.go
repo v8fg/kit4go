@@ -335,8 +335,8 @@ func TestCore_runContextExtractors_AllNilFns(t *testing.T) {
 	// stack with: a nil fn, an empty-return fn, and a producing fn
 	extractorSnapshotRef.Store(&extractorSnapshot{fns: []ContextExtractor{
 		nil,
-		func(context.Context) map[string]interface{} { return nil },
-		func(context.Context) map[string]interface{} { return map[string]interface{}{"x": 1} },
+		func(context.Context) map[string]any { return nil },
+		func(context.Context) map[string]any { return map[string]any{"x": 1} },
 	}})
 	m := runContextExtractors(context.Background())
 	if m["x"] != 1 {

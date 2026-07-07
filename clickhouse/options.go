@@ -13,6 +13,9 @@ import (
 // The wrapper does NOT remap ports — pass the matching port in WithAddrs.
 type Protocol int
 
+// ProtocolNative selects the columnar TCP wire protocol (port 9000 / TLS 9440),
+// the high-performance default; ProtocolHTTP selects the HTTP protocol
+// (port 8123 / TLS 8443) for use behind a reverse proxy or load balancer.
 const (
 	ProtocolNative Protocol = iota // default -> clickhouse.Native (TCP :9000)
 	ProtocolHTTP                   //          -> clickhouse.HTTP  (:8123)

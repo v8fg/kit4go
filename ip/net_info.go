@@ -310,7 +310,7 @@ func PublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 					sink(url, contentType, ip)
 				}
 			} else if strings.Contains(contentType, HeaderContentTypeApplicationJSON) {
-				data := make(map[string]interface{})
+				data := make(map[string]any)
 				err := json.Unmarshal(body, &data)
 				if err == nil {
 					ip, _ = data["ip"].(string)
@@ -331,9 +331,9 @@ func PublicIPByHTTPGet(url string, printResult bool) (ip string, err error) {
 
 // jsonRet renders the parsed JSON body for the diagnostic sink. It mirrors the
 // old fmt "%v" formatting of the map; on marshal failure (malformed map, which
-// should not happen for a freshly unmarshalled map[string]interface{}) it falls
+// should not happen for a freshly unmarshalled map[string]any) it falls
 // back to fmt.Sprintf("%v", data) so the sink still receives something useful.
-func jsonRet(data map[string]interface{}) string {
+func jsonRet(data map[string]any) string {
 	if b, mErr := json.Marshal(data); mErr == nil {
 		return string(b)
 	}

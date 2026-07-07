@@ -104,7 +104,7 @@ func WithLogger(ctx context.Context, lg *Logger) context.Context {
 // called. The default stack already covers common trace-id / request-id /
 // user-id keys; callers add domain-specific extractors (route, tenant, otel
 // span/baggage) without touching the library.
-type ContextExtractor = func(context.Context) map[string]interface{}
+type ContextExtractor = func(context.Context) map[string]any
 
 // extractorSnapshot is an immutable snapshot of the extractor stack, stored in
 // an atomic.Pointer so the WithContext hot path reads it lock-free. Replaced
@@ -147,13 +147,13 @@ func resetExtractorStackLocked() {
 // Example (OpenTelemetry trace, zero hard otel dependency — the extractor is
 // only registered if the caller imports otel and passes the function in):
 //
-//	log4go.AddContextExtractor(func(ctx context.Context) map[string]interface{} {
+//	log4go.AddContextExtractor(func(ctx context.Context) map[string]any {
 //	    span := trace.SpanFromContext(ctx)
 //	    sc := span.SpanContext()
 //	    if !sc.IsValid() {
 //	        return nil
 //	    }
-//	    return map[string]interface{}{
+//	    return map[string]any{
 //	        "trace_id": sc.TraceID().String(),
 //	        "span_id":  sc.SpanID().String(),
 //	    }
@@ -175,7 +175,7 @@ func AddContextExtractor(fn ContextExtractor) {
 // their maps. The result is nil if no extractor produced any field (so
 // attachContextFields adds nothing and the logger is unchanged). Later
 // extractors override earlier ones on key collision (last-writer-wins).
-func runContextExtractors(ctx context.Context) map[string]interface{} {
+func runContextExtractors(ctx context.Context) map[string]any {
 	if ctx == nil {
 		return nil
 	}
@@ -183,7 +183,7 @@ func runContextExtractors(ctx context.Context) map[string]interface{} {
 	if snap == nil {
 		return nil
 	}
-	var merged map[string]interface{}
+	var merged map[string]any
 	for _, fn := range snap.fns {
 		if fn == nil {
 			continue
@@ -193,7 +193,7 @@ func runContextExtractors(ctx context.Context) map[string]interface{} {
 			continue
 		}
 		if merged == nil {
-			merged = make(map[string]interface{}, len(m))
+			merged = make(map[string]any, len(m))
 		}
 		for k, v := range m {
 			merged[k] = v

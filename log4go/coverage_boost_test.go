@@ -71,7 +71,7 @@ func Test_PackageLevel_TypedWith(t *testing.T) {
 	_ = WithSampling(10, 100)
 	_ = With("k", "v")
 	_ = WithField("k2", 2)
-	_ = WithFields(map[string]interface{}{"k3": "v3"})
+	_ = WithFields(map[string]any{"k3": "v3"})
 }
 
 func Test_PackageLevel_Trace(t *testing.T) { Trace("pkg trace %d", 1) }
@@ -85,7 +85,7 @@ func Test_PackageLevel_Format(t *testing.T) {
 }
 
 func Test_PackageLevel_SetContextExtractor(t *testing.T) {
-	SetContextExtractor(func(_ context.Context) map[string]interface{} { return nil })
+	SetContextExtractor(func(_ context.Context) map[string]any { return nil })
 }
 
 func Test_PackageLevel_Panic(t *testing.T) {
@@ -193,7 +193,7 @@ func Test_JSONCodec_All(t *testing.T) {
 		SetJSONCodec(codec)
 		r := &Record{level: INFO, msg: "codec", unixNano: 1700000000_000000000,
 			fields: []field{strField("k", "v")}}
-		var m map[string]interface{}
+		var m map[string]any
 		if err := json.Unmarshal(r.JSON(), &m); err != nil {
 			t.Errorf("codec %d: %v", codec, err)
 		}
@@ -202,7 +202,7 @@ func Test_JSONCodec_All(t *testing.T) {
 
 func Test_FieldOf_Exhaustive(t *testing.T) {
 	cases := []struct {
-		val  interface{}
+		val  any
 		kind fieldKind
 	}{
 		{nil, kindAny}, {"s", kindString}, {true, kindBool},

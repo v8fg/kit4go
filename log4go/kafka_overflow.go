@@ -165,7 +165,7 @@ func (s *OverflowStats) Dropped() uint64 { return atomic.LoadUint64(&s.dropped) 
 // the spill policy (thread-safe).
 func (s *OverflowStats) Spilled() uint64 { return atomic.LoadUint64(&s.spilled) }
 
-// Spiller[T] is a bounded fallback store for type T. Always size-limited so it
+// Spiller is a bounded fallback store for type T. Always size-limited so it
 // cannot cause OOM. Records are recovered via Drain.
 type Spiller[T any] interface {
 	Push(msg T) bool // false = at capacity (caller may drop)
@@ -180,13 +180,13 @@ type SpillerRecoverable interface {
 	HasPersistent() bool
 }
 
-// SpillCodec[T] serializes T to/from bytes for FileSpiller persistence.
+// SpillCodec serializes T to/from bytes for FileSpiller persistence.
 type SpillCodec[T any] interface {
 	Encode(msg T) ([]byte, error)
 	Decode(b []byte) (T, error)
 }
 
-// RingSpiller[T] is a fixed-capacity in-memory ring; overwrites oldest when full.
+// RingSpiller is a fixed-capacity in-memory ring; overwrites oldest when full.
 type RingSpiller[T any] struct {
 	mu   sync.Mutex
 	buf  []T
@@ -264,7 +264,7 @@ func (r *RingSpiller[T]) PushNoOverwrite(msg T) bool {
 // Close is a no-op for the in-memory ring.
 func (r *RingSpiller[T]) Close() error { return nil }
 
-// FileSpiller[T] persists overflowed records to disk (length-prefixed framing),
+// FileSpiller persists overflowed records to disk (length-prefixed framing),
 // bounded by MaxBytes. Recover via Drain. Survives process memory pressure.
 type FileSpiller[T any] struct {
 	mu       sync.Mutex
@@ -410,7 +410,7 @@ func (f *FileSpiller[T]) HasPersistent() bool { return true }
 // Dir returns the spill directory (for startup-recovery detection).
 func (f *FileSpiller[T]) Dir() string { return f.dir }
 
-// ChainedSpiller[T] is multi-level overflow: ring (hot, in-memory) -> file
+// ChainedSpiller is multi-level overflow: ring (hot, in-memory) -> file
 // (cold, persistent) -> drop. Total space is bounded: ring cap + file MaxBytes.
 type ChainedSpiller[T any] struct {
 	ring *RingSpiller[T]

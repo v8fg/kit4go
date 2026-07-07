@@ -35,7 +35,7 @@ func (r *Record) Seq() uint64 { return r.seq }
 // whether such a field exists. Base Fields (SetBaseField), With/WithFields and
 // context-extracted fields are all merged into the record, so this sees every
 // attached field. Useful in custom WebhookWriter filters/formatters.
-func (r *Record) FieldValue(key string) (interface{}, bool) {
+func (r *Record) FieldValue(key string) (any, bool) {
 	for _, f := range r.fields {
 		if f.key == key {
 			return f.value(), true

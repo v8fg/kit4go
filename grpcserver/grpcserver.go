@@ -102,7 +102,7 @@ func (s *Server) build() {
 }
 
 // RegisterService registers a gRPC service.
-func (s *Server) RegisterService(sd *grpc.ServiceDesc, ss interface{}) {
+func (s *Server) RegisterService(sd *grpc.ServiceDesc, ss any) {
 	s.gs.RegisterService(sd, ss)
 }
 

@@ -15,10 +15,11 @@ import (
 	"github.com/pquerna/otp/totp"
 )
 
+// Algorithm identifiers mirror the HMAC algorithm used by the OTP computation.
+// AlgorithmSHA1 should be used for compatibility with Google Authenticator.
+//
+// See https://github.com/pquerna/otp/issues/55 for additional details.
 const (
-	// AlgorithmSHA1 should be used for compatibility with Google Authenticator.
-	//
-	// See https://github.com/pquerna/otp/issues/55 for additional details.
 	AlgorithmSHA1   = xtp.AlgorithmSHA1
 	AlgorithmSHA256 = xtp.AlgorithmSHA256
 	AlgorithmSHA512 = xtp.AlgorithmSHA512

@@ -232,8 +232,8 @@ func Test_FileWriter_RotateImpl_OpenFileError(t *testing.T) {
 	// Single action returning the sentinel; variables[0] differs -> first-round
 	// mismatch -> rotate=true; then variables[0] is overwritten to 999999.
 	w.actions = []func(*time.Time) int{func(*time.Time) int { return 999999 }}
-	w.variables = []interface{}{0} // any value != 999999 -> mismatch
-	w.initFileOk = false           // force first-round branch
+	w.variables = []any{0} // any value != 999999 -> mismatch
+	w.initFileOk = false   // force first-round branch
 	err := w.rotateImpl()
 	if err == nil {
 		t.Fatal("rotateImpl: expected OpenFile error on directory path, got nil")

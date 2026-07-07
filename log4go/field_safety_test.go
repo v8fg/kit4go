@@ -74,7 +74,7 @@ func Test_Field_TypedNilErrorDegrades(t *testing.T) {
 // Test_Field_UnmarshallableKinds verifies chan/func (JSON cannot encode them)
 // degrade safely to null in JSON (and '-' in logfmt) without panicking.
 func Test_Field_UnmarshallableKinds(t *testing.T) {
-	for _, v := range []interface{}{make(chan int), func() {}} {
+	for _, v := range []any{make(chan int), func() {}} {
 		f := anyField("k", v)
 		jb := appendFieldJSON([]byte{}, f)
 		if got := string(jb); got != `"k":null` {

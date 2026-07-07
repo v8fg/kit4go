@@ -11,12 +11,17 @@ import (
 	"time"
 )
 
+// Type distinguishes file-system entries by kind (directory vs. regular file),
+// used as a filter by the walk/list helpers below.
 type Type int
 
 var (
-	TypeDir  = Type(1)
+	// TypeDir selects directory entries.
+	TypeDir = Type(1)
+	// TypeFile selects regular-file entries.
 	TypeFile = Type(2)
-	TypeAll  = TypeDir | TypeFile
+	// TypeAll selects both directory and regular-file entries.
+	TypeAll = TypeDir | TypeFile
 )
 
 // IsDir checks whether the path is directory or not, returns true if directory.

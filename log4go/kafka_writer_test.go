@@ -94,7 +94,7 @@ func Test_KafKaWriter_BuildPayload(t *testing.T) {
 		ProducerTopic: "t",
 		MSG: KafKaMSGFields{
 			ServerIP: "1.2.3.4",
-			ExtraFields: map[string]interface{}{
+			ExtraFields: map[string]any{
 				"request_id": "abc",
 				"level":      "SHADOW", // must NOT override built-in "level"
 			},
@@ -116,7 +116,7 @@ func Test_KafKaWriter_BuildPayload(t *testing.T) {
 func Benchmark_KafKaWriter_buildPayload(b *testing.B) {
 	w := &KafKaWriter{options: KafKaWriterOptions{
 		ProducerTopic: "t",
-		MSG:           KafKaMSGFields{ServerIP: "1.2.3.4", ExtraFields: map[string]interface{}{"rid": "x"}},
+		MSG:           KafKaMSGFields{ServerIP: "1.2.3.4", ExtraFields: map[string]any{"rid": "x"}},
 	}}
 	r := &Record{level: INFO, msg: "benchmark message payload", file: "f.go:1"}
 	b.ReportAllocs()

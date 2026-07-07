@@ -49,10 +49,14 @@ type Sender interface {
 	Send(ctx context.Context, msg *Message) error
 }
 
+// Validation errors returned by Message validation before any SMTP send.
 var (
+	// ErrMissingRecipient is returned when a Message has no To address.
 	ErrMissingRecipient = errors.New("email: at least one To address required")
-	ErrMissingSubject   = errors.New("email: subject required")
-	ErrMissingBody      = errors.New("email: text or HTML body required")
+	// ErrMissingSubject is returned when a Message has an empty subject.
+	ErrMissingSubject = errors.New("email: subject required")
+	// ErrMissingBody is returned when a Message has neither text nor HTML body.
+	ErrMissingBody = errors.New("email: text or HTML body required")
 )
 
 // Compile-time interface assertion: guard that SMTPSender stays in sync with

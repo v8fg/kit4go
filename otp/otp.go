@@ -24,6 +24,8 @@ type Opts struct {
 	Algorithm xtp.Algorithm
 }
 
+// GetPeriod returns the configured TOTP period, defaulting to 30s when opts is
+// nil or the value is unset.
 func (opts *Opts) GetPeriod() uint {
 	if opts == nil || opts.Period == 0 {
 		return 30
@@ -31,6 +33,7 @@ func (opts *Opts) GetPeriod() uint {
 	return opts.Period
 }
 
+// GetSkew returns the configured step skew; a nil opts yields 0.
 func (opts *Opts) GetSkew() uint {
 	if opts == nil {
 		return 0
@@ -38,6 +41,8 @@ func (opts *Opts) GetSkew() uint {
 	return opts.Skew
 }
 
+// GetDigits returns the configured code length, defaulting to DigitsSix when
+// opts is nil or the value is unset.
 func (opts *Opts) GetDigits() xtp.Digits {
 	if opts == nil || opts.Digits == 0 {
 		return xtp.DigitsSix
@@ -45,6 +50,8 @@ func (opts *Opts) GetDigits() xtp.Digits {
 	return opts.Digits
 }
 
+// GetAlgorithm returns the configured HMAC algorithm, defaulting to SHA1 when
+// opts is nil.
 func (opts *Opts) GetAlgorithm() xtp.Algorithm {
 	if opts == nil {
 		return xtp.AlgorithmSHA1
@@ -134,6 +141,9 @@ func VerifyTOTP(passcode string, secret string) bool {
 	return totp.Validate(passcode, secret)
 }
 
+// VerifyTOTPCustom validates a TOTP passcode at an explicit time with custom
+// opts (period/skew/digits/algorithm). Comparison is constant-time but NOT
+// replay-safe; see VerifyTOTP for the same caveat.
 func VerifyTOTPCustom(passcode string, secret string, t time.Time, opts *Opts) (ret bool) {
 	ret, _ = totp.ValidateCustom(passcode, secret, t, totp.ValidateOpts{
 		Period:    opts.GetPeriod(),
@@ -151,6 +161,9 @@ func VerifyHOTP(passcode string, counter uint64, secret string) bool {
 	return hotp.Validate(passcode, counter, secret)
 }
 
+// VerifyHOTPCustom validates an HOTP passcode for the given counter with custom
+// opts (digits/algorithm). Comparison is constant-time; replay protection is
+// the caller's responsibility via a monotonically advancing counter.
 func VerifyHOTPCustom(passcode string, counter uint64, secret string, opts *Opts) (ret bool) {
 	ret, _ = hotp.ValidateCustom(passcode, counter, secret, hotp.ValidateOpts{
 		Digits:    opts.GetDigits(),

@@ -14,7 +14,7 @@ func Test_Field_TypedValueRoundTrip(t *testing.T) {
 	cases := []struct {
 		name string
 		f    field
-		want interface{}
+		want any
 	}{
 		{"string", strField("k", "v"), "v"},
 		{"int", intField("k", 42), 42},
@@ -57,7 +57,7 @@ func Test_Field_JSONEncoding(t *testing.T) {
 		anyField("a", map[string]int{"x": 1}),
 	}
 	buf := appendFieldsJSONObject([]byte{}, fields)
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(buf, &m); err != nil {
 		t.Fatalf("typed fields produced invalid JSON: %v\n%s", err, buf)
 	}
@@ -82,7 +82,7 @@ func Test_Field_JSONEncoding(t *testing.T) {
 	if m["e"] != "boom" {
 		t.Errorf("e=%v want boom", m["e"])
 	}
-	am, _ := m["a"].(map[string]interface{})
+	am, _ := m["a"].(map[string]any)
 	if am["x"] != float64(1) {
 		t.Errorf("a.x=%v want 1", am["x"])
 	}
@@ -102,10 +102,10 @@ func Test_Field_StringEscape(t *testing.T) {
 }
 
 // Test_FieldOf_Inference verifies the common Go types map to a typed (non-Any)
-// kind, so With(key, interface{}) stays allocation-free for scalars.
+// kind, so With(key, any) stays allocation-free for scalars.
 func Test_FieldOf_Inference(t *testing.T) {
 	cases := []struct {
-		v    interface{}
+		v    any
 		kind fieldKind
 	}{
 		{"s", kindString},

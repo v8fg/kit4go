@@ -78,7 +78,7 @@ func Test_SlogHandler_HandleAttrs(t *testing.T) {
 		t.Errorf("msg=%q", r.msg)
 	}
 	// typed attrs preserved as fields
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range r.fields {
 		got[f.key] = f.value()
 	}
@@ -120,7 +120,7 @@ func Test_SlogHandler_WithAttrsAndGroup(t *testing.T) {
 	r := cw.records[0]
 	cw.mu.Unlock()
 
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for _, f := range r.fields {
 		got[f.key] = f.value()
 	}

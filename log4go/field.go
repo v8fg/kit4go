@@ -9,7 +9,7 @@ import (
 )
 
 // fieldKind enumerates the concrete value type stored in a field, so the
-// serialization hot path can render it without reflection or interface{} boxing
+// serialization hot path can render it without reflection or any boxing
 // — the same technique zap.Field / slog.Attr use to stay allocation-free.
 type fieldKind uint8
 
@@ -29,14 +29,14 @@ const (
 
 // field is the internal structured key/value pair. The value is stored unboxed
 // across (kind, i, str, any) so attaching a scalar field never allocates a
-// boxed interface{} — the allocation that the old `val interface{}` design
+// boxed any — the allocation that the old `val any` design
 // paid on every With call. field is cheap to pass by value.
 type field struct {
 	key  string
 	kind fieldKind
 	i    int64
 	str  string
-	any  interface{}
+	any  any
 }
 
 // --- internal constructors (zero boxing for scalars) ---
@@ -60,13 +60,13 @@ func errField(k string, v error) field         { return field{key: k, kind: kind
 func bytesField(k string, v []byte) field {
 	return field{key: k, kind: kindBytes, str: base64.StdEncoding.EncodeToString(v)}
 }
-func anyField(k string, v interface{}) field { return field{key: k, kind: kindAny, any: v} }
+func anyField(k string, v any) field { return field{key: k, kind: kindAny, any: v} }
 
-// fieldOf builds a typed field from an interface{} value, mapping the common
+// fieldOf builds a typed field from an any value, mapping the common
 // scalar types to their unboxed kind and falling back to kindAny for the rest.
-// This keeps the existing With(key, val interface{}) API allocation-free for
+// This keeps the existing With(key, val any) API allocation-free for
 // scalars while remaining fully backward compatible.
-func fieldOf(key string, v interface{}) field {
+func fieldOf(key string, v any) field {
 	switch x := v.(type) {
 	case nil:
 		return field{key: key, kind: kindAny, any: nil}
@@ -117,9 +117,9 @@ func fieldOf(key string, v interface{}) field {
 	}
 }
 
-// value materializes the field value as an interface{} (for FieldValue and any
+// value materializes the field value as an any (for FieldValue and any
 // legacy consumer that wants the boxed form). kindUint beyond int63 is lossy.
-func (f field) value() interface{} {
+func (f field) value() any {
 	switch f.kind {
 	case kindString:
 		return f.str
@@ -172,26 +172,26 @@ const (
 // field so the hot path stays allocation-free.
 type Field struct{ f field }
 
-// String/Int/... field constructors return a Field for use with WithAttrs and
-// slog interop. They never box scalars.
+// String constructs a string-typed field for use with WithAttrs and slog
+// interop. It never boxes scalars.
 //
 // The typed constructors below are the allocation-free variants of With on the
-// package singleton; prefer them over With(key, interface{}) on hot paths.
+// package singleton; prefer them over With(key, any) on hot paths.
 func String(k, v string) Field { return Field{strField(k, v)} }
 
-// Int constructs an int-typed field (no interface{} boxing).
+// Int constructs an int-typed field (no any boxing).
 func Int(k string, v int) Field { return Field{intField(k, v)} }
 
-// Int64 constructs an int64-typed field (no interface{} boxing).
+// Int64 constructs an int64-typed field (no any boxing).
 func Int64(k string, v int64) Field { return Field{int64Field(k, v)} }
 
-// Uint64 constructs a uint64-typed field (no interface{} boxing).
+// Uint64 constructs a uint64-typed field (no any boxing).
 func Uint64(k string, v uint64) Field { return Field{uint64Field(k, v)} }
 
-// Bool constructs a bool-typed field (no interface{} boxing).
+// Bool constructs a bool-typed field (no any boxing).
 func Bool(k string, v bool) Field { return Field{boolField(k, v)} }
 
-// Float64 constructs a float64-typed field (no interface{} boxing).
+// Float64 constructs a float64-typed field (no any boxing).
 func Float64(k string, v float64) Field { return Field{floatField(k, v)} }
 
 // Duration constructs a duration-typed field rendered as nanoseconds (slog convention).
@@ -219,7 +219,7 @@ func ErrorField(k string, v error) Field { return Field{errField(k, v)} }
 
 // Any constructs an arbitrary-typed field; the value is rendered via the active
 // JSON codec. Prefer the typed constructors for scalars (allocation-free).
-func Any(k string, v interface{}) Field { return Field{anyField(k, v)} }
+func Any(k string, v any) Field { return Field{anyField(k, v)} }
 
 // Key returns the field key.
 func (f Field) Key() string { return f.f.key }
@@ -227,8 +227,8 @@ func (f Field) Key() string { return f.f.key }
 // Kind returns the field kind.
 func (f Field) Kind() FieldKind { return f.f.kind }
 
-// Value returns the field value as an interface{} (materialized via field.value).
-func (f Field) Value() interface{} { return f.f.value() }
+// Value returns the field value as an any (materialized via field.value).
+func (f Field) Value() any { return f.f.value() }
 
 // --- typed serialization (zero reflection, zero boxing) ---
 
@@ -350,7 +350,7 @@ var marshalPanics uint64
 // never crash the log pipeline. A recovered panic increments marshalPanics so
 // the silent-to-null degradation is visible to monitoring (L5: observable
 // degradation).
-func safeJSONMarshal(v interface{}) (b []byte, ok bool) {
+func safeJSONMarshal(v any) (b []byte, ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			atomic.AddUint64(&marshalPanics, 1)

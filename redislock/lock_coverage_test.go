@@ -31,11 +31,11 @@ type nilReplyClient struct {
 	goredis.Cmdable // delegate everything (SetNX, etc.) to the real client
 }
 
-func (nilReplyClient) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *goredis.Cmd {
+func (nilReplyClient) Eval(ctx context.Context, script string, keys []string, args ...any) *goredis.Cmd {
 	return newNilCmd(ctx)
 }
 
-func (nilReplyClient) EvalSha(ctx context.Context, sha1 string, keys []string, args ...interface{}) *goredis.Cmd {
+func (nilReplyClient) EvalSha(ctx context.Context, sha1 string, keys []string, args ...any) *goredis.Cmd {
 	return newNilCmd(ctx)
 }
 

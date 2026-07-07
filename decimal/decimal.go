@@ -14,7 +14,8 @@ import (
 	"strings"
 )
 
-// Scale is the number of decimal places. All Decimal values in a computation
+// Decimal is an immutable arbitrary-precision decimal backed by math/big.
+// Scale is the number of decimal places; all Decimal values in a computation
 // should share the same scale for exact results.
 type Decimal struct {
 	value *big.Int // unscaled value (value / 10^scale = actual number)
