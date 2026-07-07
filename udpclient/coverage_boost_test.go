@@ -577,32 +577,55 @@ func TestSendReceiveWithRetry_SetWriteDeadlineError(t *testing.T) {
 }
 
 // TestSendReceiveWithRetry_SetReadDeadlineError covers the SetReadDeadline
-// error branch. We arm a write error (ICMP) but with a LIVE conn so writes
-// succeed on the first attempt — then the read stage runs. To make the read
-// deadline fail we instead drive it via a closed conn where the write stage
-// also fails. The reliable, race-free drive for the SetReadDeadline branch is:
-// point at an unreachable peer so writes succeed (no ICMP on first write), the
-// read deadline is set, and the read itself blocks until its deadline expires
-// (retryable). For the SetReadDeadline *error* specifically (a closed conn),
-// coverage is shared with the SetWriteDeadline path since both error on a
-// closed conn. This test asserts the closed-conn read path surfaces an error
-// and documents that the SetReadDeadline error branch is covered when the
-// write stage happens to succeed on this platform.
+// error branch (the `return nil, rerr` after a failed SetReadDeadline in the
+// read stage of sendReceiveWithRetry).
+//
+// Closing the conn up front does not reach this branch: on a closed conn the
+// write stage's SetWriteDeadline fails first and returns early. The reliable,
+// race-free drive is to close the conn from the synchronous "send" event hook,
+// which fires AFTER the write completes (so SetWriteDeadline + Write succeed
+// against the silent server) but BEFORE the read stage's SetReadDeadline. The
+// subsequent SetReadDeadline on the now-closed conn returns "use of closed
+// network connection", exercising the target branch.
 func TestSendReceiveWithRetry_SetReadDeadlineError(t *testing.T) {
 	addr, _ := startSilentServer(t)
 	c, err := NewClient(ClientOptions{
 		Address:      addr,
 		WriteTimeout: 100 * time.Millisecond,
 		ReadTimeout:  100 * time.Millisecond,
-		RetryMax:     0, // single attempt
+		RetryMax:     0, // single attempt; we only need the first read to fail
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	_ = c.conn.Close()
+	t.Cleanup(func() { _ = c.Close() })
+
+	// Close the conn once the "send" event fires, i.e. after the write has
+	// succeeded. The hook runs synchronously on the calling goroutine, so this
+	// is race-free and lands between the write and SetReadDeadline.
+	closedOnce := false
+	c.SetOnEvent(func(evt ClientEvent) {
+		if evt.Name == "send" && !closedOnce {
+			closedOnce = true
+			_ = c.conn.Close()
+		}
+	})
+
 	_, err = c.sendReceiveWithRetry(context.Background(), []byte("read-deadline"))
 	if err == nil {
-		t.Fatal("sendReceiveWithRetry on closed conn = nil, want a deadline error")
+		t.Fatal("sendReceiveWithRetry: nil err, want SetReadDeadline (closed-conn) error")
+	}
+	if errors.Is(err, errClosed) {
+		t.Fatalf("returned errClosed, want a net error from SetReadDeadline (got %v)", err)
+	}
+	// The error must be a closed-network-connection failure from SetReadDeadline,
+	// not a write-stage error or a read timeout.
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("want *net.OpError from SetReadDeadline, got %T: %v", err, err)
+	}
+	if opErr.Op != "set" {
+		t.Fatalf("want Op==\"set\" (SetReadDeadline), got Op=%q: %v", opErr.Op, err)
 	}
 }
 
@@ -943,5 +966,37 @@ func TestSend_FailedBookkeeping_OnClosedConn(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&failedEvents); got != 1 {
 		t.Fatalf("failed events = %d, want 1", got)
+	}
+}
+
+// --- withDefaults: negative RetryMax defaulting --------------------------------
+
+// TestWithDefaults_RetryMaxNegative covers the only withDefaults branch the
+// public tests leave cold: the `if o.RetryMax < 0` defaulting guard (every
+// other zero/negative field is already driven through NewClient). RetryMax is
+// the one field whose guard is `< 0` rather than `<= 0`, so a negative value
+// (not zero) is the case that distinguishes it. The table also pins the
+// contract that 0 is preserved (send-exactly-once) while a negative value is
+// clamped to the default.
+func TestWithDefaults_RetryMaxNegative(t *testing.T) {
+	def := defaultClientOptions()
+
+	cases := []struct {
+		name string
+		in   int
+		want int
+	}{
+		{"negative clamps to default", -5, def.RetryMax},
+		{"negative one clamps to default", -1, def.RetryMax},
+		{"zero is preserved (send exactly once)", 0, 0},
+		{"positive is preserved", 7, 7},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			o := ClientOptions{RetryMax: tc.in}.withDefaults()
+			if o.RetryMax != tc.want {
+				t.Fatalf("RetryMax = %d, want %d", o.RetryMax, tc.want)
+			}
+		})
 	}
 }

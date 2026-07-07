@@ -207,6 +207,23 @@ func TestRun_StopReturnsError(t *testing.T) {
 	require.ErrorAs(t, err, &se)
 }
 
+// TestAdd_ZeroValueManager covers the nil-map init branch of Add: when a
+// Manager is constructed via its zero value (&Manager{}) instead of New, byName
+// is nil on the first Add. Add must lazily initialize it. The Manager docstring
+// promises safe use, and zero-value construction is a valid Go idiom, so this
+// branch is reachable and contract-bearing — not dead defensive code.
+func TestAdd_ZeroValueManager(t *testing.T) {
+	m := &Manager{} // zero value: byName is nil
+	require.NoError(t, m.Add("a", nil, nil))
+	require.NoError(t, m.Add("b", nil, nil, "a"))
+	// The lazy init let both components register; the graph resolves and runs.
+	order, err := m.Components()
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, order)
+	// A duplicate after lazy init still errors (proves the map is wired up).
+	require.ErrorIs(t, m.Add("a", nil, nil), ErrDuplicate)
+}
+
 // TestRunWithSignal_ContextCancelNoSignal covers the signal goroutine's
 // <-ctx.Done() branch: WithSignal is configured but the context is cancelled
 // directly (no OS signal is sent), so the goroutine exits via ctx.Done().

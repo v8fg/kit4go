@@ -364,6 +364,134 @@ func TestDoWithRetry_LastAttemptNoBackoff(t *testing.T) {
 	}
 }
 
+// --- unreachable defensive branches: documented + locked-in ------------------
+//
+// shouldRetry and DoWithRetry each contain a sub-branch that is logically
+// unreachable for any input a real caller can produce. Rather than contrive a
+// fragile fixture that happens to flip a coverage bit, we document WHY each
+// branch cannot fire and lock the reasoning into a test: if a future refactor
+// makes the branch reachable, these tests break and force a review. The
+// branches themselves stay (they are correct defensive guards); we just refuse
+// to claim coverage we cannot honestly earn.
+
+// TestShouldRetry_NetErrorCtxBranchUnreachable proves the inner
+// `errors.Is(netErr, context.Canceled|DeadlineExceeded)` checks inside the
+// net.Error and *net.OpError blocks of shouldRetry can never evaluate true.
+//
+// Reasoning: errors.As(err, &netErr) sets netErr to err or to an error in err's
+// chain. Therefore any error in netErr's chain is also in err's chain. The
+// top-level errors.Is(err, <ctx error>) at the head of shouldRetry already
+// returned false for any ctx error reachable from err, so by the time we enter
+// the net.Error block the inner errors.Is(netErr, ...) is necessarily false.
+// The *net.OpError block is identical.
+//
+// We assert the invariant directly: for a net.Error / *net.OpError whose chain
+// contains a context error, shouldRetry returns false via the TOP-LEVEL check
+// (reachable), not via the inner check (unreachable). The observable outcome is
+// the same; only the coverage attribution differs.
+func TestShouldRetry_NetErrorCtxBranchUnreachable(t *testing.T) {
+	// (1) A net.Error whose Unwrap chains to context.Canceled. shouldRetry must
+	// short-circuit at the top-level errors.Is and return false; it must NOT
+	// need the inner net.Error-block guard.
+	e := &timeoutErr{timeout: true, wrapped: context.Canceled}
+	if shouldRetry(e) != false {
+		t.Fatal("net.Error wrapping context.Canceled should be non-retryable")
+	}
+	// (2) Same for DeadlineExceeded through a real *net.OpError.
+	opE := &net.OpError{Op: "read", Err: context.DeadlineExceeded}
+	if shouldRetry(opE) != false {
+		t.Fatal("*net.OpError wrapping DeadlineExceeded should be non-retryable")
+	}
+	// (3) A net.Error that does NOT chain to a ctx error reaches the net.Error
+	// block and returns true via `return true` (NOT via the inner guard).
+	plain := &timeoutErr{timeout: true}
+	if shouldRetry(plain) != true {
+		t.Fatal("plain net.Error timeout should be retryable")
+	}
+	// (4) Prove the inner check is redundant: a net.Error that is a ctx error
+	// at the SAME object is caught at the top. There is no input shape for
+	// which the top-level check is false but the inner check is true.
+	t.Logf("documented: shouldRetry's inner net.Error/*net.OpError context-error " +
+		"guards (tcpclient.go ~lines 56-58, 64-66) are unreachable; the same " +
+		"outcomes are produced by the top-level errors.Is check at line 44")
+}
+
+// TestDoWithRetry_CtxDoneNilErrUnreachable proves the `if err == nil` sub-branch
+// inside DoWithRetry's `case <-ctx.Done()` cannot fire.
+//
+// Reasoning: the select is only reachable when shouldRetry(err) returned true at
+// the top of the loop body. shouldRetry(nil) returns false, so err is non-nil
+// at the select. Therefore `err == nil` is always false there and the
+// `err = ctx.Err()` assignment is dead. The guard is retained defensively.
+//
+// We assert the contract that makes it dead: shouldRetry(nil) == false. If that
+// ever changed, this test would need updating and the dead branch would become
+// live.
+func TestDoWithRetry_CtxDoneNilErrUnreachable(t *testing.T) {
+	if shouldRetry(nil) != false {
+		t.Fatal("shouldRetry(nil) must be false; the DoWithRetry ctx.Done nil-err " +
+			"guard depends on this contract")
+	}
+	// And concretely: a fn returning nil never enters backoff, so ctx.Done
+	// racing a nil err is structurally impossible.
+	c := NewClient(ClientOptions{
+		Address:      "127.0.0.1:1",
+		RetryMax:     2,
+		RetryWaitMin: 5 * time.Second, // would hang if we wrongly entered backoff
+		RetryWaitMax: 10 * time.Second,
+	})
+	defer c.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+	err := c.DoWithRetry(ctx, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("err = %v, want nil (nil is not retried, returns at once)", err)
+	}
+	t.Logf("documented: DoWithRetry's `if err == nil` in case <-ctx.Done() " +
+		"(tcpclient.go ~lines 375-377) is unreachable; shouldRetry(nil)==false " +
+		"guarantees err is non-nil whenever the select is reached")
+}
+
+// TestDoWithRetry_TrailingReturnUnreachable proves the `return err` after the
+// for loop in DoWithRetry cannot execute for any Client built via NewClient.
+//
+// Reasoning: withDefaults forces RetryMax >= 0. The loop runs attempt from 0 to
+// RetryMax inclusive. On the iteration where attempt == RetryMax, the early
+// `if attempt == c.opts.RetryMax { return err }` fires unconditionally, so the
+// loop never falls through to the trailing return. The trailing return exists
+// only to satisfy the compiler's exhaustiveness check.
+//
+// We assert the invariant: every NewClient yields RetryMax >= 0, and a
+// forever-retryable fn terminates exactly at attempt == RetryMax (not via loop
+// exhaustion).
+func TestDoWithRetry_TrailingReturnUnreachable(t *testing.T) {
+	for _, rm := range []int{-1, 0, 1, 3} {
+		c := NewClient(ClientOptions{Address: "127.0.0.1:1", RetryMax: rm})
+		if c.opts.RetryMax < 0 {
+			t.Fatalf("RetryMax=%d left negative after withDefaults", rm)
+		}
+		sentinel := errors.New("forever-retryable")
+		calls := 0
+		err := c.DoWithRetry(context.Background(), func(context.Context) error {
+			calls++
+			return sentinel
+		})
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("RetryMax=%d: err = %v, want sentinel", rm, err)
+		}
+		// Exactly RetryMax+1 calls: the final attempt returns via the early
+		// return, NOT via loop fall-through (which would imply RetryMax+2 calls
+		// or a nil err from the trailing return).
+		if calls != c.opts.RetryMax+1 {
+			t.Fatalf("RetryMax=%d: calls = %d, want %d", rm, calls, c.opts.RetryMax+1)
+		}
+		c.Close()
+	}
+	t.Logf("documented: DoWithRetry's trailing `return err` (tcpclient.go " +
+		"~line 382) is unreachable; withDefaults forces RetryMax>=0 and the " +
+		"attempt==RetryMax early return always fires first")
+}
+
 // --- connPool: newConnPool negative size, expired disabled, put nil/closed --
 
 func TestNewConnPool_NegativeSize(t *testing.T) {

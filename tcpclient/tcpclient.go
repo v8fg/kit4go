@@ -51,6 +51,15 @@ func shouldRetry(err error) bool {
 	// Transport-layer timeouts (dial/read/write) are retryable on a fresh
 	// attempt — distinct from context deadlines above. Guard against the rare
 	// wrapper that surfaces a context error through net.Error.
+	//
+	// NOTE: the inner errors.Is(netErr, ctx-err) check below is logically
+	// unreachable for a single error value. errors.As sets netErr to err (or to
+	// an error in err's chain), so if netErr chains to a context error then err
+	// does too and the top-level errors.Is at line 44 already returned false.
+	// The branch is retained as a defensive belt-and-braces guard against a
+	// hypothetical custom error whose Unwrap chain is inconsistent under As vs
+	// Is; it is correct (returns false) if ever reached, just never reached in
+	// practice. See TestShouldRetry_NetErrorCtxBranchUnreachable.
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		if errors.Is(netErr, context.Canceled) || errors.Is(netErr, context.DeadlineExceeded) {
@@ -59,6 +68,9 @@ func shouldRetry(err error) bool {
 		return true
 	}
 	// Any net.OpError (connection refused / reset / broken pipe) is retryable.
+	// The same unreachability reasoning applies to the inner context-error
+	// check: by the time errors.As matches *net.OpError, any context error in
+	// opErr's chain is already in err's chain and was caught at line 44.
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
 		if errors.Is(opErr, context.Canceled) || errors.Is(opErr, context.DeadlineExceeded) {
@@ -372,6 +384,13 @@ func (c *Client) DoWithRetry(ctx context.Context, fn func(ctx context.Context) e
 		case <-ctx.Done():
 			// Cancelled while waiting: surface the last transport error if one
 			// is present, otherwise the ctx error.
+			//
+			// NOTE: the `err == nil` sub-branch is unreachable. We only reach
+			// the select when shouldRetry(err) was true (line 360), and
+			// shouldRetry(nil) returns false, so err is guaranteed non-nil
+			// here. The guard is defensive: if shouldRetry's contract ever
+			// changed to retry on nil, this would correctly surface ctx.Err().
+			// See TestDoWithRetry_CtxDoneNilErrUnreachable.
 			if err == nil {
 				err = ctx.Err()
 			}
@@ -379,6 +398,12 @@ func (c *Client) DoWithRetry(ctx context.Context, fn func(ctx context.Context) e
 		case <-time.After(delay):
 		}
 	}
+	// Unreachable for any Client built via NewClient: withDefaults forces
+	// RetryMax >= 0, the loop runs at least once, and on the iteration where
+	// attempt == RetryMax the early return at line ~364 fires. The trailing
+	// return exists only to satisfy the compiler's "missing return" check and
+	// to defend against a future change to the loop bound. See
+	// TestDoWithRetry_TrailingReturnUnreachable.
 	return err
 }
 

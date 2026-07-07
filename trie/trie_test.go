@@ -150,6 +150,67 @@ func TestConcurrency(t *testing.T) {
 	require.Equal(t, g, tr.Len())
 }
 
+func TestWithMaxKeysOption(t *testing.T) {
+	// White-box: WithMaxKeys wires maxKeys onto the Trie, and New applies it
+	// via the options loop (covers the previously-uncovered option-application
+	// branch and the WithMaxKeys constructor itself).
+	tr := New[int](WithMaxKeys[int](5))
+	require.Equal(t, 5, tr.maxKeys)
+
+	// Composing multiple options still drives the range loop body for each.
+	tr2 := New[int](WithMaxKeys[int](3), WithMaxKeys[int](7))
+	require.Equal(t, 7, tr2.maxKeys) // last option wins
+
+	// Nil-safe default: no options leaves maxKeys at its zero value (unbounded).
+	tr3 := New[int]()
+	require.Equal(t, 0, tr3.maxKeys)
+}
+
+func TestLongestPrefixRootFallback(t *testing.T) {
+	// Covers the LongestPrefix branch where no query-path node carries a value
+	// but the root does (Insert("", v)). The empty-prefix value must be
+	// returned with an empty key and ok=true.
+	tr := New[string]()
+	tr.Insert("", "root-val")
+
+	// Query that does not exist as a path: found stays false, root.hasValue true.
+	v, key, ok := tr.LongestPrefix("does/not/exist")
+	require.True(t, ok)
+	require.Equal(t, "root-val", v)
+	require.Equal(t, "", key)
+
+	// Empty query also resolves to the root value.
+	v, key, ok = tr.LongestPrefix("")
+	require.True(t, ok)
+	require.Equal(t, "root-val", v)
+	require.Equal(t, "", key)
+
+	// When a real prefix exists, the root fallback must NOT shadow it.
+	tr.Insert("a/b", "ab")
+	v, key, ok = tr.LongestPrefix("a/b/c")
+	require.True(t, ok)
+	require.Equal(t, "ab", v)
+	require.Equal(t, "a/b", key)
+}
+
+func TestDeletePathExistsButNoValue(t *testing.T) {
+	// Covers the Delete branch `if !cur.hasValue { return false }`: the full
+	// path to the target exists (because a longer key was inserted) but the
+	// target node itself holds no value.
+	tr := New[int]()
+	tr.Insert("a/b/c", 1)
+
+	// "a/b" is a real node on the path to "a/b/c", but has no value of its own.
+	require.False(t, tr.Delete("a/b"))
+	require.True(t, tr.Has("a/b/c")) // deeper key untouched
+	require.Equal(t, 1, tr.Len())
+
+	// "a" likewise is a prefix-only node.
+	require.False(t, tr.Delete("a"))
+	require.True(t, tr.Has("a/b/c"))
+	require.Equal(t, 1, tr.Len())
+}
+
 // itoa is a tiny int-to-string to avoid importing strconv in the test loop.
 func itoa(n int) string {
 	if n == 0 {
