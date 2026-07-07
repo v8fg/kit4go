@@ -471,15 +471,13 @@ func (c *Client) withConn(ctx context.Context, fn func(conn net.Conn, poolable *
 	return nil
 }
 
-// isClosedErr reports whether err is (or wraps) a "use of closed network
-// connection" error, which is how an in-flight Read/Write surfaces a
-// connection torn down by the ctx watcher. errors.Is(net.ErrClosed) covers the
-// Go-tracked path; the string fallback covers the syscall variant.
+// isClosedErr reports whether err is (or wraps) net.ErrClosed, which is how an
+// in-flight Read/Write surfaces a connection torn down by the ctx watcher. The
+// Go stdlib returns net.ErrClosed for closed conns on the supported paths; do
+// not match the human-readable "use of closed network connection" string, which
+// is not an API-stable contract.
 func isClosedErr(err error) bool {
-	if errors.Is(err, net.ErrClosed) {
-		return true
-	}
-	return err != nil && err.Error() == "use of closed network connection"
+	return errors.Is(err, net.ErrClosed)
 }
 
 // writeOnce performs a single write of data on a pooled connection with the

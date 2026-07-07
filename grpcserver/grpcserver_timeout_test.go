@@ -25,6 +25,12 @@ func TestStart_ShutdownTimeoutDeterministic(t *testing.T) {
 	// blockingUntil releases the handler only after we close it, keeping the
 	// RPC in-flight and forcing GracefulStop to exceed shutdownTO.
 	blockingUntil := make(chan struct{})
+	// rpcReceived is signalled by the handler once the RPC has landed inside
+	// grpc.Server (after decode, before it blocks). Waiting on it — instead of a
+	// fixed sleep — proves the RPC is genuinely in-flight when GracefulStop
+	// runs, removing the scheduling race where, under -race/CI load, the RPC
+	// had not yet arrived so GracefulStop completed and Start returned nil.
+	rpcReceived := make(chan struct{})
 
 	srv := grpcserver.NewWithListener(ln,
 		grpcserver.WithShutdownTimeout(30*time.Millisecond),
@@ -34,11 +40,11 @@ func TestStart_ShutdownTimeoutDeterministic(t *testing.T) {
 		HandlerType: (*blkServerIface)(nil),
 		Methods: []grpc.MethodDesc{{
 			MethodName: "Hang",
-			Handler:    blkHandler(&blkServer{release: blockingUntil}),
+			Handler:    blkHandler(&blkServer{release: blockingUntil, received: rpcReceived}),
 		}},
 		Streams:  []grpc.StreamDesc{},
 		Metadata: "blk.proto",
-	}, &blkServer{release: blockingUntil})
+	}, &blkServer{release: blockingUntil, received: rpcReceived})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -55,8 +61,17 @@ func TestStart_ShutdownTimeoutDeterministic(t *testing.T) {
 		_ = cc.Invoke(context.Background(), "/blk.Blk/Hang", &empty{}, out)
 	}()
 
-	// Wait long enough for the RPC to be in-flight inside the server.
-	time.Sleep(100 * time.Millisecond)
+	// Wait until the RPC is actually in-flight inside grpc.Server (handler has
+	// decoded it and is about to block). This is the deterministic replacement
+	// for a fixed sleep: under -race/CI load the RPC may not have landed by the
+	// old 100ms mark, in which case GracefulStop completes immediately and Start
+	// returns nil, failing require.Error. Signalling after decode guarantees the
+	// in-flight condition GracefulStop needs to actually block.
+	select {
+	case <-rpcReceived:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocking RPC never reached the server handler")
+	}
 
 	// Cancel triggers GracefulStop. The in-flight RPC holds it open past the
 	// 30ms shutdownTO, so Start must fall through to the timeout branch.
@@ -81,7 +96,8 @@ func TestStart_ShutdownTimeoutDeterministic(t *testing.T) {
 type blkServerIface any
 
 type blkServer struct {
-	release chan struct{}
+	release  chan struct{}
+	received chan struct{} // closed once the handler has decoded the RPC
 }
 
 type empty struct{}
@@ -97,11 +113,20 @@ func (b *bytes) String() string { return "" }
 func (b *bytes) ProtoMessage()  {}
 
 // blkHandler returns a grpc method handler that blocks until `release` is
-// closed, simulating a long-running RPC.
+// closed, simulating a long-running RPC. It signals `received` after decoding
+// so callers can deterministically confirm the RPC is in-flight before relying
+// on GracefulStop actually blocking.
 func blkHandler(srvIface *blkServer) func(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	return func(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 		// Ignore decode errors; we only care about blocking.
 		_ = dec(new(empty))
+		// Signal receipt AFTER the RPC has landed inside grpc.Server but BEFORE
+		// we block, so a waiting test knows GracefulStop will genuinely block.
+		select {
+		case <-srvIface.received: // already signalled (handler reused)
+		default:
+			close(srvIface.received)
+		}
 		select {
 		case <-srvIface.release:
 		case <-ctx.Done():

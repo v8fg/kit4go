@@ -57,12 +57,19 @@ type LimiterMetrics struct {
 	Acquired uint64
 }
 
-// NewLimiter builds a [Limiter] from opts. It returns nil if the algorithm is
-// unrecognised or Rate is non-positive (after defaults); callers can therefore
-// rely on a non-nil result when the options validate.
+// NewLimiter builds a [Limiter] from opts.
+//
+// Contract:
+//   - Rate <= 0 returns nil.
+//   - An empty Algorithm defaults to token bucket (treated as "unset").
+//   - A non-empty but unrecognised Algorithm returns nil — check for nil before
+//     use. This deliberately rejects typos (e.g. "tokn_bucket") instead of
+//     silently falling back to token-bucket semantics.
 //
 // opts is normalised via [LimiterOptions.withDefaults] before use, so partial
-// config (e.g. omitting Burst) is tolerated.
+// config (e.g. omitting Burst) is tolerated. Note that only an empty Algorithm
+// is defaulted; a misspelled non-empty value reaches the switch unmodified and
+// is rejected by the default arm.
 func NewLimiter(opts LimiterOptions) Limiter {
 	if opts.Rate <= 0 {
 		return nil

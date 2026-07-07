@@ -168,6 +168,69 @@ func TestConcurrency(t *testing.T) {
 	require.Equal(t, int64(0), bad.Load())
 }
 
+// TestGetZeroAllocs guards the HRW hot path against per-node heap allocation
+// regressions. Get is the per-request shard-routing primitive; it must not
+// allocate per node. The scratch buffer is pool-recycled, so steady-state
+// allocs/op must be 0 regardless of node count.
+func TestGetZeroAllocs(t *testing.T) {
+	for _, n := range []int{1, 10, 100, 500} {
+		n := n
+		t.Run(strconv.Itoa(n)+"nodes", func(t *testing.T) {
+			m := New[string](strID, WithNodes(makeNodes(n)...))
+			// Warm the pool so the first-call growth alloc is excluded.
+			_, _ = m.Get("warmup")
+			allocs := testing.AllocsPerRun(100, func() {
+				_, _ = m.Get("auction-42")
+			})
+			require.Equal(t, float64(0), allocs,
+				"Get allocated %v per call at %d nodes; expected 0 (pool-recycled scratch)", allocs, n)
+		})
+	}
+}
+
+// TestGetNBoundedAllocs guards GetN: the only steady-state allocs are the
+// scores slice and the returned result slice (2 allocs for n>0). The per-node
+// hash scratch is pool-recycled and must not allocate.
+func TestGetNBoundedAllocs(t *testing.T) {
+	for _, n := range []int{10, 100, 500} {
+		n := n
+		t.Run(strconv.Itoa(n)+"nodes", func(t *testing.T) {
+			m := New[string](strID, WithNodes(makeNodes(n)...))
+			_ = m.GetN("warmup", 3) // warm pool
+			allocs := testing.AllocsPerRun(100, func() {
+				_ = m.GetN("auction-42", 3)
+			})
+			require.LessOrEqual(t, allocs, float64(2),
+				"GetN allocated %v per call at %d nodes; expected <=2 (scores+result slices)", allocs, n)
+		})
+	}
+}
+
+// TestHashInputUnchanged confirms the recycled scratch produces byte-for-byte
+// identical hash input to a fresh make — i.e. recycling the buffer does not
+// change which node wins, preserving the HRW contract.
+func TestHashInputUnchanged(t *testing.T) {
+	const N = 5000
+	nodes := makeNodes(20)
+	m := New[string](strID, WithNodes(nodes...))
+	// Snapshot ownership, then re-query many times; pool reuse + buffer
+	// recycling across sizes must yield identical selections every time.
+	first := make(map[string]string, N)
+	for i := 0; i < N; i++ {
+		k := strconv.Itoa(i)
+		first[k], _ = m.Get(k)
+	}
+	for rep := 0; rep < 10; rep++ {
+		for i := 0; i < N; i++ {
+			k := strconv.Itoa(i)
+			got, ok := m.Get(k)
+			require.True(t, ok)
+			require.Equal(t, first[k], got,
+				"node selection changed on rep %d for key %s — scratch recycling altered hash input", rep, k)
+		}
+	}
+}
+
 func ExampleNew() {
 	// Assign each auction ID to a bidder shard; scaling out moves few keys.
 	m := New(strID, WithNodes("shard-1", "shard-2", "shard-3"))

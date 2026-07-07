@@ -34,10 +34,11 @@ func DefaultHash(data []byte) uint64 {
 // empty, unusable map; construct with New. All methods are safe for concurrent
 // use.
 type Map[T any] struct {
-	mu    sync.RWMutex
-	id    func(T) string
-	hash  Hash
-	nodes []T
+	mu      sync.RWMutex
+	id      func(T) string
+	hash    Hash
+	nodes   []T
+	scratch sync.Pool // *[]byte, reused as hash(id || key) scratch
 }
 
 // Option configures a Map.
@@ -110,19 +111,18 @@ func (m *Map[T]) Get(key string) (T, bool) {
 	var best T
 	bestScore := uint64(0)
 	bestSet := false
-	kb := []byte(key)
+	bufp := m.acquireScratch()
+	defer m.scratch.Put(bufp)
+	buf := *bufp
 	for _, n := range m.nodes {
-		nid := m.id(n)
-		scratch := make([]byte, 0, len(nid)+len(kb))
-		scratch = append(scratch, nid...)
-		scratch = append(scratch, kb...)
-		score := m.hash(scratch)
+		score := m.scoreNode(&buf, n, key)
 		if !bestSet || score > bestScore {
 			bestScore = score
 			best = n
 			bestSet = true
 		}
 	}
+	*bufp = buf
 	return best, true
 }
 
@@ -139,15 +139,14 @@ func (m *Map[T]) GetN(key string, n int) []T {
 		node  T
 		score uint64
 	}
-	kb := []byte(key)
 	scores := make([]scored, len(m.nodes))
+	bufp := m.acquireScratch()
+	defer m.scratch.Put(bufp)
+	buf := *bufp
 	for i, nd := range m.nodes {
-		nid := m.id(nd)
-		scratch := make([]byte, 0, len(nid)+len(kb))
-		scratch = append(scratch, nid...)
-		scratch = append(scratch, kb...)
-		scores[i] = scored{node: nd, score: m.hash(scratch)}
+		scores[i] = scored{node: nd, score: m.scoreNode(&buf, nd, key)}
 	}
+	*bufp = buf
 	// Partial selection of the top-n by score; sort only when n exceeds nodes.
 	if n > len(scores) {
 		n = len(scores)
@@ -167,6 +166,38 @@ func (m *Map[T]) GetN(key string, n int) []T {
 		out[i] = scores[i].node
 	}
 	return out
+}
+
+// scoreNode hashes id(node) || key into buf, returning the digest. buf is a
+// per-Map scratch buffer (pool-backed) reused across node iterations within a
+// single Get/GetN and across calls; only its first use allocates. The byte
+// sequence fed to the hash is identical to a fresh make([]byte, 0, len(id)+len(key))
+// each iteration, so hash output is byte-for-byte unchanged — only the backing
+// storage is recycled.
+func (m *Map[T]) scoreNode(buf *[]byte, node T, key string) uint64 {
+	nodeID := m.id(node)
+	n := len(nodeID) + len(key)
+	if cap(*buf) < n {
+		*buf = make([]byte, n, n*2)
+	} else {
+		*buf = (*buf)[:n]
+	}
+	copy(*buf, nodeID)
+	copy((*buf)[len(nodeID):], key)
+	return m.hash(*buf)
+}
+
+// acquireScratch fetches a reusable []byte scratch from the pool. The returned
+// pointer is Put back by the caller (via defer). Pool reuse means the per-node
+// make in the original Get/GetN is replaced by a single amortized buffer that
+// grows once to the largest (id || key) and is then recycled.
+func (m *Map[T]) acquireScratch() *[]byte {
+	v := m.scratch.Get()
+	if v == nil {
+		b := make([]byte, 0, 64)
+		return &b
+	}
+	return v.(*[]byte)
 }
 
 func (m *Map[T]) containsLocked(id string) bool {

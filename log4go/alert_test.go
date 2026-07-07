@@ -26,13 +26,26 @@ func Test_WebhookAlertSink_Post(t *testing.T) {
 	defer sink.Close()
 	sink.Send(AlertError, "DROP", "queue full; record lost")
 
-	select {
-	case got := <-gotCh:
-		if !strings.Contains(got, "DROP") || !strings.Contains(got, "queue full") {
-			t.Errorf("unexpected payload: %s", got)
+	// The webhook POST runs on WebhookAlertSink's async daemon goroutine. Under
+	// -race/CI load the daemon's select + http.Client.Do round-trip against the
+	// httptest server can exceed the original 2s budget, falsely timing out.
+	// Poll up to 5s (the same budget used by the NetWriter coverage waits) so
+	// the test observes the POST deterministically rather than racing a fixed
+	// deadline.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		select {
+		case got := <-gotCh:
+			if !strings.Contains(got, "DROP") || !strings.Contains(got, "queue full") {
+				t.Errorf("unexpected payload: %s", got)
+			}
+			return
+		default:
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("webhook POST not received in time")
+		if !time.Now().Before(deadline) {
+			t.Fatal("webhook POST not received in time")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

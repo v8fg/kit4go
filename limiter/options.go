@@ -66,18 +66,22 @@ func defaultLimiterOptions() LimiterOptions {
 }
 
 // withDefaults returns a copy of o with zero values replaced by defaults:
-//   - Algorithm ""      -> [AlgorithmTokenBucket]
+//   - Algorithm "" -> [AlgorithmTokenBucket] (UNSET only; a non-empty but
+//     unrecognised value is left untouched so [NewLimiter]'s switch can reject
+//     it via its default arm — see the contract on [NewLimiter])
 //   - Rate <= 0         -> 1
 //   - Burst <= 0        -> 1 (token bucket only)
 //   - Window <= 0       -> 1s (sliding window only, then rounded to >= 1s)
 //
 // Burst and Window are clamped regardless of algorithm so the struct is always
 // internally consistent if the caller flips Algorithm later.
+//
+// Note: only the empty string is treated as "unset". A typo like "tokn_bucket"
+// is preserved and surfaces as a nil limiter from [NewLimiter] rather than
+// silently degrading to token-bucket semantics.
 func (o LimiterOptions) withDefaults() LimiterOptions {
 	d := defaultLimiterOptions()
-	if o.Algorithm != AlgorithmTokenBucket && o.Algorithm != AlgorithmSlidingWindow &&
-		o.Algorithm != AlgorithmFixedWindow && o.Algorithm != AlgorithmLeakyBucket &&
-		o.Algorithm != AlgorithmGCRA {
+	if o.Algorithm == "" {
 		o.Algorithm = d.Algorithm
 	}
 	if o.Rate <= 0 {

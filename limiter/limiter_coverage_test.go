@@ -656,8 +656,9 @@ func TestLeakyBucket_NextDrainDelay_RealDeficitClamped(t *testing.T) {
 
 // TestNewLimiter_BurstAndWindowDefaults covers that withDefaults clamps Burst
 // and Window for every algorithm, exercised via the factory. (The default case
-// in the switch is unreachable through NewLimiter because withDefaults always
-// normalises the algorithm; we cover the clamp paths instead.)
+// in the switch is reached only for non-empty unknown algorithms; we cover the
+// clamp paths for the known algorithms here, and the rejection path in
+// TestNewLimiter_DefaultRejection.)
 func TestNewLimiter_BurstAndWindowDefaults(t *testing.T) {
 	// Token bucket with Burst=0 -> clamped to 1.
 	l := NewLimiter(LimiterOptions{Algorithm: AlgorithmTokenBucket, Rate: 100, Burst: 0})

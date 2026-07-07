@@ -144,8 +144,12 @@ func TestGCRABurstAndSteady(t *testing.T) {
 }
 
 func TestUnknownAlgorithmDefaultsToTokenBucket(t *testing.T) {
-	// withDefaults normalizes an unknown algorithm to token_bucket (lenient).
-	l := NewLimiter(LimiterOptions{Algorithm: "nonexistent", Rate: 100, Burst: 10})
+	// Only the EMPTY algorithm is defaulted to token_bucket. A non-empty but
+	// unrecognised algorithm is rejected (nil) — no silent fallback.
+	l := NewLimiter(LimiterOptions{Algorithm: "", Rate: 100, Burst: 10})
 	require.NotNil(t, l)
 	require.True(t, l.Allow())
+
+	// Non-empty unknown algorithm must return nil, not silently fall back.
+	require.Nil(t, NewLimiter(LimiterOptions{Algorithm: "nonexistent", Rate: 100, Burst: 10}))
 }

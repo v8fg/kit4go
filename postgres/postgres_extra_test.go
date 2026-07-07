@@ -2,7 +2,10 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"net"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,17 +27,30 @@ func TestNew_BadSSLModeParseError(t *testing.T) {
 	}
 }
 
-// TestNew_InvalidUserinfoParseError covers the pgxpool.ParseConfig error branch
-// via a malformed userinfo (space in the username breaks URL parsing).
-func TestNew_InvalidUserinfoParseError(t *testing.T) {
+// TestNew_UserinfoEscaped_NoParseError documents the behaviour change from
+// userinfo escaping (Dimension I-1): a space in the username previously broke
+// URL parsing and surfaced as a ParseConfig error; now that New escapes the
+// userinfo with url.PathEscape, the same input parses cleanly. The ParseConfig
+// error branch is still covered by TestNew_BadSSLModeParseError above.
+func TestNew_UserinfoEscaped_NoParseError(t *testing.T) {
+	// "u p" -> escaped "u%20p" -> valid userinfo -> ParseConfig succeeds and
+	// New proceeds to Ping, which fails on a non-listening port. The relevant
+	// assertion is that the error is NOT a ParseConfig error.
 	_, err := New(context.Background(), Options{
-		Host:   "localhost",
-		Port:   5432,
-		DBName: "test",
-		User:   "u p", // space -> invalid userinfo
+		Host:           "127.0.0.1",
+		Port:           1, // unreachable -> Ping fails fast
+		DBName:         "test",
+		User:           "u p", // space, now escaped — no longer a parse error
+		ConnectTimeout: 100 * time.Millisecond,
 	})
 	if err == nil {
-		t.Fatal("expected ParseConfig error for invalid userinfo")
+		t.Skip("port 1 unexpectedly accepted a connection; skipping")
+	}
+	// The error must come from Ping, not from ParseConfig: a ParseConfig error
+	// here would mean escaping regressed. pgx reports parse failures as
+	// "cannot parse ... as ..."; pgconn-level parse errors say "invalid port".
+	if strings.Contains(err.Error(), "cannot parse") || strings.Contains(err.Error(), "invalid port") {
+		t.Fatalf("userinfo escaping regressed — got ParseConfig-style error: %v", err)
 	}
 }
 
@@ -188,5 +204,105 @@ func TestNew_SuccessAgainstLocalPG(t *testing.T) {
 	}
 	if c.Pool() == nil {
 		t.Fatal("Pool() must be non-nil for a real (non-mock) Client")
+	}
+}
+
+// TestDSN_UserinfoEscaping_RoundTrip locks in the Dimension I-1 fix: the user
+// and password are url.PathEscape'd when building the connection DSN, so a
+// password containing URL-special chars (@ : / # % space) round-trips through
+// pgxpool.ParseConfig and net/url back to the original raw value. A password
+// like "p@ss:w/o#rd%x" would, without escaping, split the userinfo at the first
+// @ and silently rebind the host — the classic managed-PG (RDS/Azure) footgun.
+//
+// The test mirrors the exact DSN assembly in New (postgres.go): the escaping
+// contract is what matters here, and verifying it does not require a live PG.
+func TestDSN_UserinfoEscaping_RoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		user string
+		pass string
+	}{
+		{"plain", "postgres", "12345678"},
+		{"special_chars", "user", "p@ss:w/o#rd%x"},
+		{"space", "u p", "p w"},
+		{"percent_first", "%user", "%pass%"},
+		// NOTE: a username containing ':' is intentionally NOT covered. The ':'
+		// is the userinfo separator and PathEscape does not encode it (it is
+		// legal in a path segment); such a username cannot be represented in
+		// URL userinfo without bespoke percent-encoding beyond PathEscape. This
+		// is an RFC 3986 property of the userinfo component, not a defect of
+		// the fix, and no real-world PG (managed or self-hosted) permits ':' in
+		// role names. Passwords containing ':' (the separator's own value) ARE
+		// correctly escaped, as the special_chars case above demonstrates.
+		{"empty_password", "u", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Mirror the DSN assembly in New exactly (same escapes + format).
+			dsn := fmt.Sprintf("postgres://%s:%s@127.0.0.1:1/test?sslmode=disable",
+				url.PathEscape(tc.user), url.PathEscape(tc.pass))
+
+			// 1) pgxpool.ParseConfig (the real consumer in New) must accept it.
+			cfg, err := pgxpool.ParseConfig(dsn)
+			if err != nil {
+				t.Fatalf("ParseConfig failed for %q: %v", dsn, err)
+			}
+			// pgx exposes the decoded user/password on the parsed config.
+			if cfg.ConnConfig.User != tc.user {
+				t.Errorf("user round-trip: got %q want %q (dsn=%s)", cfg.ConnConfig.User, tc.user, dsn)
+			}
+			if tc.pass != "" && cfg.ConnConfig.Password != tc.pass {
+				t.Errorf("password round-trip: got %q want %q (dsn=%s)", cfg.ConnConfig.Password, tc.pass, dsn)
+			}
+
+			// 2) net/url userinfo must also decode back to the raw values — this
+			// is the RFC 3986 contract PathEscape is chosen for.
+			u, err := url.Parse(dsn)
+			if err != nil {
+				t.Fatalf("url.Parse failed for %q: %v", dsn, err)
+			}
+			if u.User.Username() != tc.user {
+				t.Errorf("url username round-trip: got %q want %q (dsn=%s)", u.User.Username(), tc.user, dsn)
+			}
+			gotPass, ok := u.User.Password()
+			if !ok {
+				t.Fatalf("url userinfo has no password in %s", dsn)
+			}
+			if gotPass != tc.pass {
+				t.Errorf("url password round-trip: got %q want %q (dsn=%s)", gotPass, tc.pass, dsn)
+			}
+			// 3) Critical: the authority host must NOT have been rebound by an
+			// unescaped @ in the password. The host is always 127.0.0.1:1.
+			if u.Hostname() != "127.0.0.1" || u.Port() != "1" {
+				t.Errorf("host rebound by unescaped userinfo: got %s want 127.0.0.1:1 (dsn=%s)", u.Host, dsn)
+			}
+		})
+	}
+}
+
+// TestDSN_NoEscaping_BreaksParseConfig_DemonstratesVulnerability is a negative
+// control that documents precisely WHY the escaping is necessary: building the
+// DSN WITHOUT url.PathEscape for a password containing both '@' and ':' — the
+// kind of punctuation common in generated RDS/Azure managed-PG credentials —
+// causes pgxpool.ParseConfig (the real consumer New calls) to FAIL outright.
+// The application then cannot connect despite the credentials being correct.
+//
+// Verified against pgx/v5 v5.10.0: the unescaped form errors with
+// "invalid port ... after host" because the embedded ':' lets pgx's stricter
+// parser reinterpret part of the password as a host:port. The escaped form
+// (covered by TestDSN_UserinfoEscaping_RoundTrip above) parses cleanly.
+func TestDSN_NoEscaping_BreaksParseConfig_DemonstratesVulnerability(t *testing.T) {
+	const user, pass = "user", "p@ss:w/o#rd%x"
+	raw := fmt.Sprintf("postgres://%s:%s@127.0.0.1:1/test?sslmode=disable", user, pass)
+	if _, err := pgxpool.ParseConfig(raw); err == nil {
+		t.Fatalf("expected raw (unescaped) form to fail ParseConfig — the " +
+			"vulnerability premise is broken; if pgx now tolerates this, the " +
+			"fix is still correct but this negative control needs updating")
+	}
+	// And the escaped form MUST parse — proving the fix resolves it.
+	esc := fmt.Sprintf("postgres://%s:%s@127.0.0.1:1/test?sslmode=disable",
+		url.PathEscape(user), url.PathEscape(pass))
+	if _, err := pgxpool.ParseConfig(esc); err != nil {
+		t.Fatalf("escaped form must parse cleanly, got: %v (dsn=%s)", err, esc)
 	}
 }

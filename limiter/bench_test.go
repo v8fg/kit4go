@@ -296,10 +296,16 @@ func TestLimiterOptions_Defaults(t *testing.T) {
 		t.Errorf("partial Burst=%d want >0", partial.Burst)
 	}
 
-	// Unknown algorithm falls back to token bucket.
+	// Unknown NON-EMPTY algorithm is preserved (NOT defaulted) so NewLimiter's
+	// switch can reject it; only the empty string is treated as "unset".
 	unk := LimiterOptions{Algorithm: "weird", Rate: 5}.withDefaults()
-	if unk.Algorithm != AlgorithmTokenBucket {
-		t.Errorf("unknown Algorithm=%q want token_bucket fallback", unk.Algorithm)
+	if unk.Algorithm != "weird" {
+		t.Errorf("non-empty unknown Algorithm=%q want preserved %q (only empty defaults to token_bucket)", unk.Algorithm, "weird")
+	}
+	// Empty algorithm is treated as unset and defaulted to token bucket.
+	empty := LimiterOptions{Algorithm: "", Rate: 5}.withDefaults()
+	if empty.Algorithm != AlgorithmTokenBucket {
+		t.Errorf("empty Algorithm want token_bucket default, got %q", empty.Algorithm)
 	}
 }
 

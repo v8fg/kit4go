@@ -38,6 +38,16 @@ func TestClose_FinalDrainHit(t *testing.T) {
 		// exits while a producer is still stuffing the buffer.
 		b := New[int](4, 0, flush, WithBufferSize[int](64))
 
+		// Pre-seed at least one item synchronously BEFORE the timing-dependent
+		// producer/Close section. The producer goroutine below may not call
+		// b.Add before Close completes under -race/CI load (the scheduler can
+		// run Close to completion first), which would leave flushedN==0 and
+		// fail the require.Greater at the end despite the test being written to
+		// PASS regardless of who wins the race. Seeding deterministically
+		// guarantees flushedN>0 while still exercising the close-drain straggler
+		// branch when the producer wins.
+		require.True(t, b.Add(-1), "pre-seed Add must succeed before producer starts")
+
 		var pumpWG sync.WaitGroup
 		pumpWG.Add(1)
 		stop := make(chan struct{})

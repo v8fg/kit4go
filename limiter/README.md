@@ -17,8 +17,9 @@ Select via `LimiterOptions.Algorithm`:
 
 ## Usage
 
-- `NewLimiter(opts LimiterOptions) Limiter` returns the `Limiter` interface, or
-  nil if the algorithm is unrecognised or `Rate <= 0`.
+- `NewLimiter(opts LimiterOptions) Limiter` returns the `Limiter` interface.
+  `Rate <= 0` returns nil. An empty `Algorithm` defaults to token bucket; a
+  non-empty but unrecognised `Algorithm` returns nil (check for nil before use).
 - `LimiterOptions{ Algorithm, Rate, Burst, Window }` — zero values fall back to
   defaults (`Rate` is required; `Algorithm ""` selects token-bucket).
 - `(*Limiter).Allow() bool` non-blocking, one token.

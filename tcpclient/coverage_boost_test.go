@@ -222,7 +222,7 @@ func TestIsClosedErr(t *testing.T) {
 		{"nil", nil, false},
 		{"net.ErrClosed bare", net.ErrClosed, true},
 		{"net.ErrClosed wrapped", fmt.Errorf("read: %w", net.ErrClosed), true},
-		{"matching string", errors.New("use of closed network connection"), true},
+		{"plain string not API-stable", errors.New("use of closed network connection"), false},
 		{"non-matching string", errors.New("read: connection reset by peer"), false},
 	}
 	for _, tc := range cases {
@@ -892,7 +892,7 @@ const maxInt64 = 1<<63 - 1
 // shouldRetry treats it as non-retryable.
 func TestWithConn_CtxCancelSurfacesCtxErr(t *testing.T) {
 	// real listener so the conn is a real *net.TCPConn; the watcher's Close
-	// surfaces as "use of closed network connection".
+	// surfaces as net.ErrClosed (wrapped).
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -53,8 +54,16 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 	if ssl == "" {
 		ssl = "disable"
 	}
+	// Escape the userinfo components (user, password) per RFC 3986: they
+	// live in the authority's userinfo section, where url.PathEscape is the
+	// correct encoder. Raw interpolation would let a password containing
+	// URL-special chars (@ : / # % or space) silently misparse — e.g. an
+	// embedded @ splits userinfo and rebinds the host, which is the classic
+	// RDS/Azure managed-PG credential injection footgun. PathEscape (not
+	// QueryEscape) is the precise choice for the userinfo component.
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-		opts.User, opts.Password, opts.Host, opts.Port, opts.DBName, ssl)
+		url.PathEscape(opts.User), url.PathEscape(opts.Password),
+		opts.Host, opts.Port, opts.DBName, ssl)
 
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

@@ -2,6 +2,7 @@ package consistenthash
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -40,7 +41,8 @@ func BenchmarkAdd(b *testing.B) {
 
 // BenchmarkGet is the hot path: a single rendezvous lookup. Parameterized by
 // node count since Get is O(N). 10/50/100 nodes cover the documented shard
-// routing range; 500 shows the linear cost.
+// routing range; 500 shows the linear cost. The scratch buffer is pool-recycled,
+// so steady-state allocs/op should be 0 regardless of node count.
 func BenchmarkGet(b *testing.B) {
 	for _, n := range []int{10, 50, 100, 500} {
 		b.Run(strconv.Itoa(n)+"nodes", func(b *testing.B) {
@@ -51,6 +53,26 @@ func BenchmarkGet(b *testing.B) {
 				_, _ = m.Get("auction-42")
 			}
 		})
+	}
+}
+
+// BenchmarkGetLongIDs exercises the oversized-input path: node IDs and key well
+// beyond the initial scratch capacity force the buffer to grow once, then it is
+// reused. Confirms the recycled scratch still yields 0 steady-state allocs even
+// for large hash inputs.
+func BenchmarkGetLongIDs(b *testing.B) {
+	const nNodes = 100
+	nodes := make([]string, nNodes)
+	pad := strings.Repeat("x", 256) // force scratch growth past initial cap
+	for i := 0; i < nNodes; i++ {
+		nodes[i] = "node-" + strconv.Itoa(i) + "-" + pad
+	}
+	longKey := "auction-" + strings.Repeat("k", 256)
+	m := New[string](strID, WithNodes(nodes...))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = m.Get(longKey)
 	}
 }
 

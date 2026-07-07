@@ -459,30 +459,40 @@ func TestLeakyBucket_NegativeRateDrainGuards(t *testing.T) {
 	}
 }
 
-// --- the single genuinely-unreachable branch -------------------------------
+// --- the default branch is reachable for non-empty unknown algorithms --------
 //
-// limiter.go NewLimiter `default: return nil` is the only statement in this
-// package that cannot be covered without modifying production code.
-// LimiterOptions.withDefaults (called at the top of NewLimiter, line
-// `opts = opts.withDefaults()`) normalises ANY unrecognised Algorithm to
-// AlgorithmTokenBucket. So by the time the switch runs, opts.Algorithm is
-// guaranteed to be one of the five known constants, and the switch always
-// matches. The `default` arm is a defensive guard against a future algorithm
-// constant being added to the switch without updating withDefaults' whitelist.
+// limiter.go NewLimiter `default: return nil` rejects any non-empty Algorithm
+// that withDefaults does not recognise. withDefaults only defaults the EMPTY
+// string to AlgorithmTokenBucket (treating it as "unset"); a non-empty but
+// unrecognised value (a typo like "tokn_bucket") is preserved and surfaces as
+// nil from NewLimiter. This is the documented contract and removes the
+// silent-misconfiguration footgun where a typo would degrade to token-bucket
+// semantics.
 //
-// TestNewLimiter_DefaultIsUnreachable asserts the normalisation that makes the
-// default dead, keeping the coverage gap honest and documented.
-func TestNewLimiter_DefaultIsUnreachable(t *testing.T) {
-	// withDefaults maps every non-whitelisted algorithm to TokenBucket.
-	for _, alg := range []string{"", "unknown", "TOKEN_BUCKET", "token-bucket"} {
+// TestNewLimiter_DefaultRejection asserts both halves of the contract: empty
+// defaults to token bucket; non-empty unknown is rejected.
+func TestNewLimiter_DefaultRejection(t *testing.T) {
+	// Empty algorithm is treated as UNSET and defaulted to token bucket.
+	for _, alg := range []string{""} {
 		normalised := LimiterOptions{Algorithm: alg, Rate: 10}.withDefaults()
 		if normalised.Algorithm != AlgorithmTokenBucket {
 			t.Fatalf("withDefaults(%q) = %q, want %q", alg, normalised.Algorithm, AlgorithmTokenBucket)
 		}
 	}
-	// Consequently NewLimiter never returns nil for an unknown algorithm via the
-	// default arm — it returns a working token bucket instead.
-	if l := NewLimiter(LimiterOptions{Algorithm: "nope", Rate: 10}); l == nil {
-		t.Fatal("NewLimiter should normalise unknown algorithm, not hit the default nil return")
+	// Non-empty unknown algorithms are preserved (NOT normalised) so the switch
+	// can reject them.
+	for _, alg := range []string{"unknown", "TOKEN_BUCKET", "token-bucket", "bogus", "nope"} {
+		normalised := LimiterOptions{Algorithm: alg, Rate: 10}.withDefaults()
+		if normalised.Algorithm != alg {
+			t.Fatalf("withDefaults(%q) = %q, want %q (non-empty algos must not be silently defaulted)", alg, normalised.Algorithm, alg)
+		}
+	}
+	// Empty algorithm -> working token bucket via NewLimiter.
+	if l := NewLimiter(LimiterOptions{Algorithm: "", Rate: 10}); l == nil {
+		t.Fatal("NewLimiter with empty Algorithm should default to token bucket, got nil")
+	}
+	// Non-empty unknown algorithm -> nil (rejected, not silently fallen back).
+	if l := NewLimiter(LimiterOptions{Algorithm: "nope", Rate: 10}); l != nil {
+		t.Fatal("NewLimiter with non-empty unknown Algorithm should return nil, got a limiter")
 	}
 }

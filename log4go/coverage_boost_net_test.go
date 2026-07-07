@@ -22,12 +22,18 @@ import (
 	"time"
 )
 
+// netTestDeadline is the budget for polling an async NetWriter daemon under
+// -race/CI load. The daemon writes through a network conn whose scheduling can
+// lag under contention; 5s (up from 3s) keeps the polling-based waits robust
+// without masking genuine hangs.
+const netTestDeadline = 5 * time.Second
+
 // waitForSent polls Metrics().Sent until it reaches want or the deadline
 // passes (fails the test on timeout). Lets tests deterministically observe an
 // async daemon write without sleeping a fixed interval.
 func waitForSent(t *testing.T, w *NetWriter, want uint64) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(netTestDeadline)
 	for time.Now().Before(deadline) {
 		if w.Metrics().Sent >= want {
 			return
@@ -41,7 +47,7 @@ func waitForSent(t *testing.T, w *NetWriter, want uint64) {
 // passes. Used to confirm a write/dial error path fired.
 func waitForErr(t *testing.T, w *NetWriter, want uint64) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(netTestDeadline)
 	for time.Now().Before(deadline) {
 		if w.Metrics().Errored >= want {
 			return
@@ -49,6 +55,27 @@ func waitForErr(t *testing.T, w *NetWriter, want uint64) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("Metrics.Errored=%d want %d", w.Metrics().Errored, want)
+}
+
+// waitForChan polls ch (closed/signalled by an async daemon) until it is ready
+// or the deadline passes. This replaces the `select { case <-done: case
+// <-time.After(3s) }` pattern whose fixed deadline was the flake source under
+// -race/CI load — polling keeps the same upper bound but is consistent with the
+// waitForSent/waitForErr style used across these coverage tests.
+func waitForChan(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	deadline := time.Now().Add(netTestDeadline)
+	for {
+		select {
+		case <-ch:
+			return
+		default:
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("%s not signalled within %s", what, netTestDeadline)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // Test_NetWriterCov_NewNetWriter_SpillCtor covers NewNetWriter's
@@ -193,11 +220,7 @@ func Test_NetWriterCov_dialLocked_DefaultNetwork(t *testing.T) {
 	t.Cleanup(func() { w.Stop() })
 
 	_ = w.Write(&Record{level: INFO, time: "t", file: "f", msg: "default-net"})
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("default-network dial never delivered a record")
-	}
+	waitForChan(t, done, "default-network dial record delivery")
 	mu.Lock()
 	out := got.String()
 	mu.Unlock()
@@ -315,11 +338,7 @@ func Test_NetWriterCov_daemon_StopChannel(t *testing.T) {
 	// generous timeout. After this, n.run may still read true (we bypassed
 	// Stop()), so mark it false to avoid leaking Stop() state in case a later
 	// test reuses this writer — simplest is to not call Stop() at all.
-	select {
-	case <-n_quit_safe(w):
-	case <-time.After(3 * time.Second):
-		t.Fatal("daemon did not signal quit on stop-channel close")
-	}
+	waitForChan(t, n_quit_safe(w), "daemon quit on stop-channel close")
 }
 
 // n_stop_safe / n_quit_safe return the writer's internal shutdown channels.
@@ -369,11 +388,7 @@ func Test_NetWriterCov_drainAll_EmptyChannelExit(t *testing.T) {
 	// No records queued -> drainAll's messages loop hits the default branch on
 	// the first iteration and falls through to spill (spiller is nil -> return).
 	close(n_stop_safe(w))
-	select {
-	case <-n_quit_safe(w):
-	case <-time.After(3 * time.Second):
-		t.Fatal("daemon did not exit after drainAll on empty channel")
-	}
+	waitForChan(t, n_quit_safe(w), "daemon exit after drainAll on empty channel")
 	// Give a brief window for any spurious dial; the server must NOT have seen
 	// data because nothing was queued.
 	select {
@@ -457,11 +472,7 @@ func Test_NetWriterCov_drainAll_SpillFlush(t *testing.T) {
 	}
 	w.connMu.Unlock()
 
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("server never received the flushed spill records")
-	}
+	waitForChan(t, done, "server receiving flushed spill records")
 	mu.Lock()
 	out := got.String()
 	mu.Unlock()
@@ -499,11 +510,7 @@ func Test_NetWriterCov_drainAll_EmptyOpenChannel(t *testing.T) {
 		w.drainAll()
 		close(done)
 	}()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("drainAll blocked on an empty open channel (default branch not taken)")
-	}
+	waitForChan(t, done, "drainAll return on empty open channel (default branch)")
 }
 
 // Test_NetWriterCov_daemon_TickerDrainSpill covers the daemon's ticker branch
@@ -537,11 +544,7 @@ func Test_NetWriterCov_daemon_TickerDrainSpill(t *testing.T) {
 
 	// Shut the daemon down via the stop channel and confirm it exits.
 	close(n_stop_safe(w))
-	select {
-	case <-n_quit_safe(w):
-	case <-time.After(3 * time.Second):
-		t.Fatal("daemon did not exit after ticker test")
-	}
+	waitForChan(t, n_quit_safe(w), "daemon exit after ticker test")
 }
 
 // Test_NetWriterCov_Stop_NoDaemon covers Stop's early return at
@@ -559,11 +562,7 @@ func Test_NetWriterCov_Stop_NoDaemon(t *testing.T) {
 		w.Stop()
 		close(done)
 	}()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("Stop blocked on a never-started daemon")
-	}
+	waitForChan(t, done, "Stop return on a never-started daemon")
 }
 
 // Test_NetWriterCov_Stop_DrainsAndClosesConn covers Stop's normal shutdown
@@ -613,11 +612,12 @@ func Test_NetWriterCov_Stop_DrainsAndClosesConn(t *testing.T) {
 	// Stop must drain any remaining queued records and close the conn.
 	w.Stop()
 
+	// Non-fatal: the daemon may have already closed the conn before the server
+	// read saw EOF; the payload assertion below is authoritative. Bound the wait
+	// at the same netTestDeadline used elsewhere for consistency under load.
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		// not fatal: the daemon may have already closed the conn before the
-		// server read saw EOF; assert payload instead below.
+	case <-time.After(netTestDeadline):
 	}
 	mu.Lock()
 	out := got.String()

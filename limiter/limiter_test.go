@@ -14,7 +14,8 @@ import (
 // --- options ----------------------------------------------------------------
 
 // withDefaults is unexported, so we assert its observable behaviour through
-// NewLimiter: empty/unknown fields should fall back to a working token bucket.
+// NewLimiter: an UNSET (empty) Algorithm defaults to token bucket; a non-empty
+// unrecognised Algorithm is rejected (nil); Rate <= 0 returns nil.
 
 func TestLimiterOptions_defaultsViaFactory(t *testing.T) {
 	t.Run("empty still yields a working limiter", func(t *testing.T) {
@@ -25,16 +26,24 @@ func TestLimiterOptions_defaultsViaFactory(t *testing.T) {
 			t.Fatal("Rate=0 must yield nil even with defaults")
 		}
 	})
-	t.Run("valid rate + unknown algorithm falls back to token bucket", func(t *testing.T) {
-		lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: "bogus", Rate: 100})
+	t.Run("empty algorithm + valid rate defaults to token bucket", func(t *testing.T) {
+		// Algorithm="" is treated as UNSET and defaulted to token bucket.
+		lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: "", Rate: 100})
 		if lm == nil {
-			t.Fatal("unknown algorithm + valid Rate should fall back via withDefaults, not nil")
+			t.Fatal("empty algorithm + valid Rate should default to token bucket, not nil")
 		}
 		// Token bucket default Burst=1: first Allow() succeeds, second is denied
 		// at rate=1/s (default) — but we set Rate=100 so refill is fast. Just
 		// assert the first call works.
 		if !lm.Allow() {
-			t.Fatal("fallback token bucket should allow its first token")
+			t.Fatal("default token bucket should allow its first token")
+		}
+	})
+	t.Run("non-empty unknown algorithm returns nil (no silent fallback)", func(t *testing.T) {
+		// A typo like "bogus" must NOT silently degrade to token-bucket semantics.
+		// Only the empty string is treated as "unset".
+		if lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: "bogus", Rate: 100}); lm != nil {
+			t.Fatal("non-empty unknown algorithm must return nil, got a limiter (silent fallback footgun)")
 		}
 	})
 	t.Run("sliding window with zero window falls back to 1s", func(t *testing.T) {
@@ -75,14 +84,22 @@ func TestNewLimiter_Factory(t *testing.T) {
 			t.Fatal("Rate<0 should yield nil")
 		}
 	})
-	t.Run("unknown algorithm returns nil", func(t *testing.T) {
-		// Bypass withDefaults by setting a known-valid Rate but unknown algorithm;
-		// withDefaults normalises the algorithm, so this should *not* be nil.
-		// To genuinely hit the nil path we go through a rate that survives but an
-		// algorithm that withDefaults replaces — verify the fallback instead.
-		lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: "nope", Rate: 10})
+	t.Run("non-empty unknown algorithm returns nil", func(t *testing.T) {
+		// A non-empty unrecognised algorithm now reaches the switch's default arm
+		// (withDefaults only defaults the EMPTY string) and is rejected as nil.
+		// This honours the documented contract and rejects typos like "nope".
+		if lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: "nope", Rate: 10}); lm != nil {
+			t.Fatal("non-empty unknown algorithm must return nil, got a limiter (silent fallback footgun)")
+		}
+	})
+	t.Run("empty algorithm defaults to token bucket", func(t *testing.T) {
+		// Algorithm="" is treated as UNSET and defaulted to token bucket.
+		lm := limiter.NewLimiter(limiter.LimiterOptions{Algorithm: "", Rate: 10})
 		if lm == nil {
-			t.Fatal("unknown algorithm should fall back to token_bucket via withDefaults, got nil")
+			t.Fatal("empty algorithm should default to token bucket, got nil")
+		}
+		if !lm.Allow() {
+			t.Fatal("default token bucket should allow its first token")
 		}
 	})
 }
