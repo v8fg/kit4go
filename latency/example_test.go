@@ -12,7 +12,7 @@ import (
 // bucket-interpolated and intentionally not asserted here.
 func ExampleNewHistogram() {
 	h := latency.NewHistogram(latency.Options{})
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		h.Observe(time.Duration(i) * time.Microsecond)
 	}
 	fmt.Println("count:", h.Snapshot().Count)

@@ -12,7 +12,7 @@ import (
 func TestNoneIsExponential(t *testing.T) {
 	b := New(WithJitter(JitterNone), WithBase(10*time.Millisecond), WithFactor(2), WithMax(10*time.Second))
 	var got []time.Duration
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		d, ok := b.Next()
 		require.True(t, ok)
 		got = append(got, d)
@@ -23,7 +23,7 @@ func TestNoneIsExponential(t *testing.T) {
 
 func TestCapped(t *testing.T) {
 	b := New(WithJitter(JitterNone), WithBase(1*time.Second), WithFactor(10), WithMax(5*time.Second))
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		d, _ := b.Next()
 		require.LessOrEqual(t, d, 5*time.Second)
 	}
@@ -58,7 +58,7 @@ func TestReset(t *testing.T) {
 func TestFullJitterBounds(t *testing.T) {
 	b := New(WithJitter(JitterFull), WithBase(100*time.Millisecond), WithFactor(2), WithMax(10*time.Second))
 	cur := 100 * time.Millisecond
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		d, ok := b.Next()
 		require.True(t, ok)
 		require.LessOrEqual(t, d, cur, "full jitter must be <= exp")
@@ -73,7 +73,7 @@ func TestFullJitterBounds(t *testing.T) {
 func TestEqualJitterBounds(t *testing.T) {
 	b := New(WithJitter(JitterEqual), WithBase(100*time.Millisecond), WithFactor(2), WithMax(10*time.Second))
 	cur := 100 * time.Millisecond
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		d, ok := b.Next()
 		require.True(t, ok)
 		// equal jitter: exp/2 <= d <= exp.
@@ -89,7 +89,7 @@ func TestEqualJitterBounds(t *testing.T) {
 func TestDecorrelatedBounds(t *testing.T) {
 	b := New(WithJitter(JitterDecorrelated), WithBase(50*time.Millisecond), WithMax(5*time.Second))
 	prev := 50 * time.Millisecond
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		d, ok := b.Next()
 		require.True(t, ok)
 		// decorrelated: base <= d <= min(max, last*3).
@@ -143,7 +143,7 @@ func TestErrSentinel(t *testing.T) {
 func TestDecorrelatedCapsAtMax(t *testing.T) {
 	const max = 3 * time.Nanosecond
 	b := New(WithJitter(JitterDecorrelated), WithBase(1), WithMax(max), WithFactor(2))
-	for i := 0; i < 2000; i++ {
+	for range 2000 {
 		d, ok := b.Next()
 		require.True(t, ok)
 		require.LessOrEqual(t, d, max, "decorrelated delay must never exceed max")
@@ -156,7 +156,7 @@ func TestDecorrelatedCapsAtMax(t *testing.T) {
 // public API.
 func TestFullJitterZeroBase(t *testing.T) {
 	b := New(WithBase(0), WithJitter(JitterFull), WithMax(time.Second))
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		d, ok := b.Next()
 		require.True(t, ok)
 		require.Equal(t, time.Duration(0), d, "randRange(0,0) guard must return 0 while raw==0")

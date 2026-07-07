@@ -258,7 +258,7 @@ func FuzzSmoothRoundtrip(f *testing.F) {
 
 		var prevTime time.Time
 		var prevRate float64
-		for i := 0; i < n; i++ {
+		for i := range n {
 			off := i * stride
 			spend := float64(binary.LittleEndian.Uint32(schedule[off : off+4]))
 			sec := int32(binary.LittleEndian.Uint32(schedule[off+4 : off+8]))

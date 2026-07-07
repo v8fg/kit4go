@@ -11,11 +11,11 @@ import (
 
 func TestNoFalseNegatives(t *testing.T) {
 	f := New(1000, 0.01)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		f.AddString(fmt.Sprintf("item-%d", i))
 	}
 	// Every inserted item must test true (no false negatives).
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		require.True(t, f.TestString(fmt.Sprintf("item-%d", i)), "false negative on item-%d", i)
 	}
 }
@@ -24,13 +24,13 @@ func TestFalsePositiveRateWithinBounds(t *testing.T) {
 	const n = 10000
 	const fp = 0.01
 	f := New(n, fp)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		f.AddString(fmt.Sprintf("in-%d", i))
 	}
 	// Test entirely distinct keys.
 	falsePositives := 0
 	const probes = 50000
-	for i := 0; i < probes; i++ {
+	for i := range probes {
 		if f.TestString(fmt.Sprintf("out-%d", i)) {
 			falsePositives++
 		}
@@ -150,12 +150,12 @@ func TestConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	const g = 32
 	wg.Add(g)
-	for i := 0; i < g; i++ {
+	for i := range g {
 		i := i
 		go func() {
 			defer wg.Done()
 			r := rand.New(rand.NewPCG(uint64(i), 1))
-			for j := 0; j < 500; j++ {
+			for range 500 {
 				s := fmt.Sprintf("k-%d", r.IntN(2000))
 				f.TestAndAddString(s)
 				f.TestString(s)
@@ -164,7 +164,7 @@ func TestConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 	// All keys ever added must still test true (no false negatives despite churn).
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		f.AddString(fmt.Sprintf("k-%d", i))
 		require.True(t, f.TestString(fmt.Sprintf("k-%d", i)))
 	}

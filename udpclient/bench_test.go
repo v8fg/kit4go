@@ -185,13 +185,13 @@ func BenchmarkClient_Metrics(b *testing.B) {
 
 	// Move some counters off zero so the load path isn't optimised away.
 	ctx := context.Background()
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		_ = c.Send(ctx, []byte("x"))
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = c.Metrics()
 	}
 }
@@ -238,11 +238,11 @@ func TestStress_HighRateSend(t *testing.T) {
 	wg.Add(goroutines)
 	var failures atomic.Int64
 	start := make(chan struct{})
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			<-start
-			for j := 0; j < perGoro; j++ {
+			for range perGoro {
 				if err := c.Send(ctx, []byte("x")); err != nil {
 					failures.Add(1)
 				}

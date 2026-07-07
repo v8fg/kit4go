@@ -26,7 +26,7 @@ func newBatchWriter(t *testing.T, mp *mockKafkaProducer, batchSize int, flush ti
 
 func writeN(t *testing.T, w *KafkaWriter, n int) {
 	t.Helper()
-	for i := 0; i < n; i++ {
+	for range n {
 		if err := w.Write(&Record{level: INFO, msg: "x"}); err != nil {
 			t.Fatal(err)
 		}

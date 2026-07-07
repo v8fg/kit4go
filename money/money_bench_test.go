@@ -10,8 +10,8 @@ func BenchmarkAdd(b *testing.B) {
 	a := MustFromMinor(123456, "USD")
 	c := MustFromMinor(654321, "USD")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = a.Add(c)
 	}
 }
@@ -21,8 +21,8 @@ func BenchmarkSub(b *testing.B) {
 	a := MustFromMinor(1234567, "USD")
 	c := MustFromMinor(123456, "USD")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = a.Sub(c)
 	}
 }
@@ -31,8 +31,8 @@ func BenchmarkSub(b *testing.B) {
 func BenchmarkMul(b *testing.B) {
 	a := MustFromMinor(12345, "USD")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = a.Mul(7)
 	}
 }
@@ -41,8 +41,8 @@ func BenchmarkMul(b *testing.B) {
 func BenchmarkScale(b *testing.B) {
 	a := MustFromMinor(1234567, "USD")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = a.Scale(1.07, RoundHalfUp)
 	}
 }
@@ -51,8 +51,8 @@ func BenchmarkScale(b *testing.B) {
 func BenchmarkString(b *testing.B) {
 	a := MustFromMinor(-1234567, "USD")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = a.String()
 	}
 }
@@ -60,7 +60,7 @@ func BenchmarkString(b *testing.B) {
 // BenchmarkParse measures amount-string parsing into minor units.
 func BenchmarkParse(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = Parse("USD", "-12345.67")
 	}
 }

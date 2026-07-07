@@ -65,7 +65,7 @@ func TestIncrementUpdatesHeap(t *testing.T) {
 
 func TestFillThenExceed(t *testing.T) {
 	tr := New(3)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tr.TouchN("k", 1)
 	}
 	tr.TouchN("new", 200) // new key with high count
@@ -115,10 +115,10 @@ func TestConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	const g = 16
 	wg.Add(g)
-	for i := 0; i < g; i++ {
+	for range g {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				tr.Touch("shared")
 			}
 		}()
@@ -144,7 +144,7 @@ func TestCountsMapBounded(t *testing.T) {
 	const k = 10
 	const n = 10000
 	tr := New(k)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		tr.Touch(fmt.Sprintf("key-%d", i))
 	}
 

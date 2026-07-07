@@ -185,10 +185,10 @@ func TestConcurrency(t *testing.T) {
 
 	var pwg sync.WaitGroup
 	pwg.Add(4)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		go func() {
 			defer pwg.Done()
-			for j := 0; j < total/4; j++ {
+			for j := range total / 4 {
 				_ = rb.Push(j)
 			}
 		}()
@@ -198,9 +198,7 @@ func TestConcurrency(t *testing.T) {
 	var mu sync.Mutex
 	count := 0
 	var cwg sync.WaitGroup
-	cwg.Add(1)
-	go func() {
-		defer cwg.Done()
+	cwg.Go(func() {
 		for {
 			_, err := rb.Pop()
 			if errors.Is(err, ErrClosed) {
@@ -212,7 +210,7 @@ func TestConcurrency(t *testing.T) {
 				mu.Unlock()
 			}
 		}
-	}()
+	})
 
 	pwg.Wait()
 	rb.Close()

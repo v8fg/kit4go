@@ -123,10 +123,10 @@ func TestConcurrency(t *testing.T) {
 	const g = 16
 	const perG = 300
 	wg.Add(g)
-	for i := 0; i < g; i++ {
+	for range g {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < perG; j++ {
+			for j := range perG {
 				b.Add(j)
 			}
 		}()

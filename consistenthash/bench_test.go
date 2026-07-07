@@ -64,14 +64,14 @@ func BenchmarkGetLongIDs(b *testing.B) {
 	const nNodes = 100
 	nodes := make([]string, nNodes)
 	pad := strings.Repeat("x", 256) // force scratch growth past initial cap
-	for i := 0; i < nNodes; i++ {
+	for i := range nNodes {
 		nodes[i] = "node-" + strconv.Itoa(i) + "-" + pad
 	}
 	longKey := "auction-" + strings.Repeat("k", 256)
 	m := New[string](strID, WithNodes(nodes...))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = m.Get(longKey)
 	}
 }
@@ -94,7 +94,7 @@ func BenchmarkGetN(b *testing.B) {
 // BenchmarkRemove measures node removal (O(N) id scan + in-place compaction).
 func BenchmarkRemove(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		m := New[string](strID, WithNodes(makeNodes(100)...))
 		b.StartTimer()
@@ -107,15 +107,15 @@ func BenchmarkRemove(b *testing.B) {
 func BenchmarkDefaultHash(b *testing.B) {
 	data := []byte("node-0042auction-42")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = DefaultHash(data)
 	}
 }
 
 func makeNodes(n int) []string {
 	out := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out[i] = "node-" + strconv.Itoa(i)
 	}
 	return out

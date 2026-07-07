@@ -209,8 +209,8 @@ func BenchmarkPool_GetPut(b *testing.B) {
 	p.put(conn)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		c, err := p.get(ctx, time.Second)
 		if err != nil {
 			b.Fatalf("get: %v", err)
@@ -231,13 +231,13 @@ func BenchmarkClient_Metrics(b *testing.B) {
 
 	// Move some counters off zero so the load path isn't optimised away.
 	ctx := context.Background()
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		_ = c.Send(ctx, []byte("x"))
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = c.Metrics()
 	}
 }
@@ -285,7 +285,7 @@ func TestStress_MillionSends(t *testing.T) {
 	// so we launch them all (Go's scheduler handles the multiplexing).
 	var failures atomic.Int64
 	start := make(chan struct{})
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			<-start

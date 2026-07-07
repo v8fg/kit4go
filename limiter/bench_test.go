@@ -23,8 +23,8 @@ import (
 func BenchmarkTokenBucket_Allow(b *testing.B) {
 	tb := newTokenBucket(1e9, 1<<20) // huge rate + burst: never denies
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = tb.Allow()
 	}
 }
@@ -49,8 +49,8 @@ func BenchmarkTokenBucket_Allow_Parallel(b *testing.B) {
 func BenchmarkSlidingWindow_Allow(b *testing.B) {
 	sw := newSlidingWindow(1e9, time.Second) // huge rate: never denies
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = sw.Allow()
 	}
 }
@@ -75,8 +75,8 @@ func BenchmarkTokenBucket_Wait(b *testing.B) {
 	tb := newTokenBucket(1e9, 1<<20) // always a token available
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = tb.Wait(ctx)
 	}
 }
@@ -87,8 +87,8 @@ func BenchmarkTokenBucket_Wait(b *testing.B) {
 func BenchmarkNewLimiter_Factory(b *testing.B) {
 	opts := LimiterOptions{Algorithm: AlgorithmTokenBucket, Rate: 100, Burst: 10}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		lm := NewLimiter(opts)
 		lm.Close()
 	}
@@ -224,7 +224,7 @@ func TestTokenBucket_Wait_TokenAvailable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	start := time.Now()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if err := tb.Wait(ctx); err != nil {
 			t.Fatalf("Wait %d err=%v want nil", i, err)
 		}
@@ -240,7 +240,7 @@ func TestTokenBucket_Wait_TokenAvailable(t *testing.T) {
 func TestTokenBucket_Refill_OverTime(t *testing.T) {
 	// rate=1000/s => 1ms per token. Drain a 3-token burst.
 	tb := newTokenBucket(1000, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !tb.Allow() {
 			t.Fatalf("burst %d denied", i)
 		}
@@ -404,7 +404,7 @@ func TestTokenBucket_ClockBackward(t *testing.T) {
 	}
 	// Drain whatever is available; total must not exceed burst.
 	got := 0
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if !tb.Allow() {
 			break
 		}
@@ -423,12 +423,12 @@ func TestConcurrent_TokenBucket_Wait(t *testing.T) {
 	var wg sync.WaitGroup
 	var ok atomic.Uint64
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			defer cancel()
-			for j := 0; j < 20; j++ {
+			for range 20 {
 				if err := tb.Wait(ctx); err == nil {
 					ok.Add(1)
 				}

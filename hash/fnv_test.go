@@ -59,10 +59,10 @@ func TestFNV_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	ok := make(chan bool, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 200; j++ {
+			for range 200 {
 				if FNV1a64([]byte("k")) != want {
 					ok <- false
 					return

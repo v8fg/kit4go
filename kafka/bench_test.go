@@ -24,8 +24,8 @@ func BenchmarkKafkaCodec_JSON_Encode(b *testing.B) {
 	c := CodecJSON{}
 	in := benchEvent{ID: 7, AdID: "a1", Price: 0.5, Tags: []string{"rtb", "bid"}}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		_, _ = c.Encode(in)
 	}
 }
@@ -34,8 +34,8 @@ func BenchmarkKafkaCodec_JSON_Decode(b *testing.B) {
 	c := CodecJSON{}
 	payload, _ := c.Encode(benchEvent{ID: 7, AdID: "a1", Price: 0.5, Tags: []string{"rtb"}})
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		var out benchEvent
 		_ = c.Decode(payload, &out)
 	}
@@ -70,8 +70,8 @@ func BenchmarkThroughput_ProduceConsume(b *testing.B) {
 	defer cancel()
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		if err := prod.Send(ctx, Message{Value: payload}); err != nil {
 			b.Fatal(err)
 		}

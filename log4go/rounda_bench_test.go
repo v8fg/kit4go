@@ -18,8 +18,8 @@ func Benchmark_Record_Logfmt(b *testing.B) {
 		fields:   []field{fld("trace_id", "abc"), fld("user", 42), fld("route", "/api/v1")},
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = r.Logfmt()
 	}
 }
@@ -47,8 +47,8 @@ func Benchmark_Logger_WithAttrs_Typed(b *testing.B) {
 	defer root.Close()
 	attrs := []Field{String("trace_id", "t"), Int("n", 42), Bool("ok", true)}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = root.WithAttrs(attrs...)
 	}
 }
@@ -62,8 +62,8 @@ func Benchmark_Logger_DeliverTypedFields(b *testing.B) {
 	lg.Register(discardWriter{})
 	defer lg.Close()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		lg.WithAttrs(String("trace_id", "t"), Int("user", 42), Duration("elapsed", time.Millisecond)).Info("served")
 	}
 }

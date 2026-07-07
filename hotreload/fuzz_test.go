@@ -187,10 +187,8 @@ func FuzzConcurrentReloadGet(f *testing.F) {
 		stop := make(chan struct{})
 		var badValue atomicBadValue
 
-		for r := 0; r < readers; r++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range readers {
+			wg.Go(func() {
 				for {
 					select {
 					case <-stop:
@@ -203,7 +201,7 @@ func FuzzConcurrentReloadGet(f *testing.F) {
 						return
 					}
 				}
-			}()
+			})
 		}
 
 		for i := 1; i < len(entries); i++ {

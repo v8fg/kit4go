@@ -125,7 +125,7 @@ func Test_NetWriter_LazyReconnect(t *testing.T) {
 
 	// emit while down -> records queue (then dropped on write error). No panic,
 	// no block. Direct writes so we don't depend on the bootstrap goroutine.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_ = w.Write(&Record{level: INFO, time: "t", file: "f", msg: "down"})
 	}
 
@@ -220,7 +220,7 @@ func Test_NetWriter_NoGoroutineBurst(t *testing.T) {
 	}
 	defer w.Stop()
 	before := runtime.NumGoroutine()
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		_ = w.Write(&Record{level: INFO, msg: "burst"})
 	}
 	after := runtime.NumGoroutine()

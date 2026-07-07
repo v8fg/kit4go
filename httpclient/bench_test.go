@@ -60,8 +60,8 @@ func BenchmarkClient_Get(b *testing.B) {
 	c := NewClient(benchOpts())
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		resp, err := c.Get(ctx, srv.URL, nil)
 		if err != nil {
 			b.Fatalf("get: %v", err)
@@ -80,8 +80,8 @@ func BenchmarkClient_Get_NoRetry(b *testing.B) {
 	c := NewClient(opts)
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		resp, err := c.Get(ctx, srv.URL, nil)
 		if err != nil {
 			b.Fatalf("get: %v", err)
@@ -121,8 +121,8 @@ func BenchmarkClient_Post(b *testing.B) {
 	body := bytes.Repeat([]byte("x"), 64)
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		resp, err := c.Post(ctx, srv.URL, body, nil)
 		if err != nil {
 			b.Fatalf("post: %v", err)
@@ -136,8 +136,8 @@ func BenchmarkClient_Post(b *testing.B) {
 func BenchmarkClient_Metrics(b *testing.B) {
 	c := NewClient(benchOpts())
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = c.Metrics()
 	}
 }
@@ -342,17 +342,17 @@ func TestClient_SetOnEvent_Concurrent(t *testing.T) {
 	const goroutines = 8
 	var wg sync.WaitGroup
 	wg.Add(goroutines * 2)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			ctx := context.Background()
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				_, _ = c.Get(ctx, srv.URL, nil)
 			}
 		}()
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				c.SetOnEvent(func(ClientEvent) {})
 			}
 		}()

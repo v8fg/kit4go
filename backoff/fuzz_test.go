@@ -82,7 +82,7 @@ func FuzzNext_NoPanicAndBounds(f *testing.F) {
 			WithMaxAttempts(0), // unlimited → exercise the compute path fully
 		)
 
-		for i := 0; i < 64; i++ {
+		for i := range 64 {
 			d, ok := b.Next()
 			if !ok {
 				t.Fatalf("Next returned ok=false with unlimited attempts (i=%d)", i)
@@ -161,7 +161,7 @@ func FuzzWait_OrderingAndRoundtrip(f *testing.F) {
 		// the cap is set (unlimited when 0), counter advancing one-for-one and
 		// freezing once the cap trips.
 		successes := 0
-		for i := 0; i < 10_000; i++ {
+		for range 10_000 {
 			before := b.Attempt()
 			_, ok := b.Next()
 			after := b.Attempt()

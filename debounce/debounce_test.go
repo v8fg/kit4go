@@ -92,7 +92,7 @@ func TestThrottleDropsWithinInterval(t *testing.T) {
 	th := NewThrottle(50*time.Millisecond, func() { fired.Add(1) })
 	defer th.Close()
 	th.Call() // fires
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		require.False(t, th.Call()) // throttled
 	}
 	time.Sleep(10 * time.Millisecond) // wait for safeFire goroutine

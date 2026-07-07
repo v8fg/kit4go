@@ -10,8 +10,8 @@ func BenchmarkRequestID(b *testing.B) {
 	h := RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	req := httptest.NewRequest("GET", "/", nil)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		h.ServeHTTP(httptest.NewRecorder(), req)
 	}
 }
@@ -21,8 +21,8 @@ func BenchmarkCORS(b *testing.B) {
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Origin", "https://example.com")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		h.ServeHTTP(httptest.NewRecorder(), req)
 	}
 }
@@ -30,8 +30,8 @@ func BenchmarkCORS(b *testing.B) {
 func BenchmarkRateLimit(b *testing.B) {
 	h := RateLimit(func() bool { return true }, 0)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	req := httptest.NewRequest("GET", "/", nil)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		h.ServeHTTP(httptest.NewRecorder(), req)
 	}
 }

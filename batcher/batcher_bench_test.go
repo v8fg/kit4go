@@ -38,8 +38,8 @@ func BenchmarkFlush(b *testing.B) {
 	bt := New[int](64, 0, func([]int) {}, WithBufferSize[int](1024))
 	defer bt.Close()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		bt.Flush()
 	}
 }

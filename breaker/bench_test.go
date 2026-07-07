@@ -44,8 +44,8 @@ func BenchmarkBreaker_Execute_Success(b *testing.B) {
 	ctx := context.Background()
 	fn := func(context.Context) (int, error) { return 1, nil }
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = br.Execute(ctx, fn)
 	}
 }
@@ -58,8 +58,8 @@ func BenchmarkBreaker_Execute_Fail(b *testing.B) {
 	ctx := context.Background()
 	fn := func(context.Context) (int, error) { return 0, errBench }
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = br.Execute(ctx, fn)
 	}
 }
@@ -84,8 +84,8 @@ func BenchmarkBreaker_Execute_Parallel(b *testing.B) {
 func BenchmarkBreaker_State(b *testing.B) {
 	br := NewBreaker[int](benchOpts())
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = br.State()
 	}
 }
@@ -95,8 +95,8 @@ func BenchmarkBreaker_State(b *testing.B) {
 func BenchmarkBreaker_Metrics(b *testing.B) {
 	br := NewBreaker[int](benchOpts())
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = br.Metrics()
 	}
 }
@@ -130,7 +130,7 @@ func TestBreaker_HalfOpen_Rejects_Excess(t *testing.T) {
 
 	// Trip: two failures at FailRate 0.5 with MinRequests 2 -> rate 1.0 >= 0.5.
 	failFn := func(context.Context) (int, error) { return 0, errBench }
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, _ = br.Execute(context.Background(), failFn)
 	}
 	if got := br.State(); got != StateOpen {
@@ -428,17 +428,17 @@ func TestBreaker_SetOnEvent_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	// Half the goroutines drive traffic; the other half flip the hook on/off.
 	wg.Add(goroutines * 2)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			ctx := context.Background()
-			for j := 0; j < 200; j++ {
+			for j := range 200 {
 				_, _ = br.Execute(ctx, func(context.Context) (int, error) { return j, nil })
 			}
 		}()
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 200; j++ {
+			for range 200 {
 				br.SetOnEvent(func(BreakerEvent) {})
 			}
 		}()

@@ -17,7 +17,7 @@ func ExampleNew() {
 		},
 		loadbalance.WithStrategy[string](loadbalance.StrategyRoundRobin),
 	)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		v, _ := b.Next()
 		fmt.Println(v)
 	}

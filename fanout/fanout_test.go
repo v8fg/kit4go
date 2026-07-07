@@ -76,7 +76,7 @@ func TestPublishBlockingCtxCancel(t *testing.T) {
 	defer f.Close()
 	// Fill the subscriber's buffer (default 16) so the next PublishBlocking blocks.
 	s := f.Subscribe()
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		f.Publish(i)
 	}
 	// Now the buffer is full; PublishBlocking will block (no reader).
@@ -111,7 +111,7 @@ func TestPublishedCounter(t *testing.T) {
 	f.Publish(2)
 	f.Publish(3)
 	require.Equal(t, uint64(3), f.Published())
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-s.Ch
 	}
 }
@@ -121,11 +121,11 @@ func TestCustomBufferSize(t *testing.T) {
 	defer f.Close()
 	s := f.Subscribe()
 	// Fill without dropping.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		f.Publish(i)
 	}
 	require.Equal(t, uint64(0), f.Dropped())
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		v := <-s.Ch
 		require.Equal(t, i, v)
 	}
@@ -154,25 +154,21 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 	var received atomic.Int64
 	const subs = 10
 	var wg sync.WaitGroup
-	for i := 0; i < subs; i++ {
+	for range subs {
 		s := f.Subscribe()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range s.Ch {
 				received.Add(1)
 			}
-		}()
+		})
 	}
 	// Publishers
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 5 {
+		wg.Go(func() {
+			for j := range 100 {
 				f.Publish(j)
 			}
-		}()
+		})
 	}
 	time.Sleep(100 * time.Millisecond)
 	f.Close()

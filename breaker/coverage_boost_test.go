@@ -283,7 +283,7 @@ func TestBreaker_HalfOpen_Admission_RaceLoser(t *testing.T) {
 	const rounds = 80
 	const contenders = 64
 
-	for r := 0; r < rounds; r++ {
+	for r := range rounds {
 		// Use a fresh breaker per round (cheap) so the contenders race into a
 		// pristine HalfOpen with count==0, maximising the Load/Add race window.
 		rb := NewBreaker[int](BreakerOptions{
@@ -304,7 +304,7 @@ func TestBreaker_HalfOpen_Admission_RaceLoser(t *testing.T) {
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		wg.Add(contenders)
-		for i := 0; i < contenders; i++ {
+		for range contenders {
 			go func() {
 				defer wg.Done()
 				<-start

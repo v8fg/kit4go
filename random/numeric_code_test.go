@@ -27,11 +27,11 @@ func TestNumericCode_DistributionAndUniqueness(t *testing.T) {
 	const samples = 5000
 	seen := make(map[string]struct{}, samples)
 	digitCount := [10]int{}
-	for i := 0; i < samples; i++ {
+	for range samples {
 		code := NumericCode(n)
 		require.Len(t, code, n)
 		seen[code] = struct{}{}
-		for j := 0; j < n; j++ {
+		for j := range n {
 			digitCount[code[j]-'0']++
 		}
 	}

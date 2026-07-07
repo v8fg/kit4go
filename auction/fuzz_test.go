@@ -17,7 +17,7 @@ func decodePrices(b []byte) []int64 {
 		return nil
 	}
 	out := make([]int64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out[i] = int64(binary.LittleEndian.Uint64(b[i*8 : i*8+8]))
 	}
 	return out

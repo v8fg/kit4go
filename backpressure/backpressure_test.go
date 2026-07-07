@@ -62,15 +62,13 @@ func TestGate_ConcurrentSafe(t *testing.T) {
 	g := New(10)
 	var wg sync.WaitGroup
 	var acquired atomic.Int32
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 100 {
+		wg.Go(func() {
 			if g.TryAcquire() {
 				acquired.Add(1)
 				g.Release()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	// All 100 should eventually acquire (since each releases immediately).
@@ -114,7 +112,7 @@ func TestGate_SetMax(t *testing.T) {
 	}
 	g.SetMax(5)
 	// Now 1 in flight, max 5 → 4 more should succeed.
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if !g.TryAcquire() {
 			t.Fatalf("acquire %d should succeed after SetMax(5)", i+1)
 		}
@@ -143,7 +141,7 @@ func TestGate_SetMaxNegativeClampsToZero(t *testing.T) {
 func TestGate_SetMaxBelowCurrentDoesNotRejectInflight(t *testing.T) {
 	g := New(5)
 	// Fill 3 in-flight slots.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !g.TryAcquire() {
 			t.Fatalf("acquire %d should succeed at max=5", i+1)
 		}

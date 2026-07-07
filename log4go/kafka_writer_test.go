@@ -76,7 +76,7 @@ func Test_KafkaWriter_WriteNoGoroutineBurst(t *testing.T) {
 		options:  KafkaWriterOptions{ProducerTopic: "t"},
 	}
 	before := runtime.NumGoroutine()
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		if err := w.Write(&Record{level: INFO, msg: "burst message"}); err != nil {
 			t.Fatal(err)
 		}
@@ -120,8 +120,8 @@ func Benchmark_KafkaWriter_buildPayload(b *testing.B) {
 	}}
 	r := &Record{level: INFO, msg: "benchmark message payload", file: "f.go:1"}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = w.buildPayload(r)
 	}
 }
@@ -151,8 +151,8 @@ func Benchmark_KafkaWriter_buildPayload_baseFields(b *testing.B) {
 		},
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = w.buildPayload(r)
 	}
 }

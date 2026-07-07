@@ -43,7 +43,7 @@ func Test_ChainedSpiller_FileCapDrop(t *testing.T) {
 	defer c.Close()
 
 	accepted := 0
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if c.Push(spillerMsg("t", "0123456789")) {
 			accepted++
 		}

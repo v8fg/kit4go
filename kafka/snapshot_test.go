@@ -96,23 +96,19 @@ func TestSnapshotHistory_OrderMonotonic(t *testing.T) {
 func TestSnapshotHistory_Concurrent(t *testing.T) {
 	h := newSnapshotHistory(100)
 	var wg sync.WaitGroup
-	for g := 0; g < 50; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 100; i++ {
+	for range 50 {
+		wg.Go(func() {
+			for i := range 100 {
 				h.record(mkSnap(i))
 			}
-		}()
+		})
 	}
-	for r := 0; r < 5; r++ { // concurrent readers
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 100; i++ {
+	for range 5 { // concurrent readers
+		wg.Go(func() {
+			for range 100 {
 				_ = h.snapshot()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := h.snapshot(); len(got) != 100 {

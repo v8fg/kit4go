@@ -577,7 +577,7 @@ func ExampleRestoreToRealNumberStr() {
 
 func TestRoundTrunc(t *testing.T) {
 	precisions := []int{-11, 0, 11}
-	for i := 0; i < len(precisions); i++ {
+	for i := range precisions {
 		if i&1 == 1 {
 			number.SetRegForNumber(true)
 		} else {

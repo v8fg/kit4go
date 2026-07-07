@@ -37,7 +37,7 @@ func ExampleCache_Do() {
 	const n = 10
 	results := make([]string, n)
 	done := make(chan struct{})
-	for i := 0; i < n; i++ {
+	for i := range n {
 		i := i
 		go func() {
 			defer func() { done <- struct{}{} }()
@@ -45,7 +45,7 @@ func ExampleCache_Do() {
 			results[i] = v
 		}()
 	}
-	for i := 0; i < n; i++ {
+	for range n {
 		<-done
 	}
 

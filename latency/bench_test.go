@@ -14,8 +14,8 @@ func BenchmarkHistogram_Observe(b *testing.B) {
 	h := latency.NewHistogram(latency.Options{})
 	d := 5 * time.Millisecond
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		h.Observe(d)
 	}
 }
@@ -40,12 +40,12 @@ func BenchmarkHistogram_Observe_Parallel(b *testing.B) {
 // reuse.
 func BenchmarkHistogram_Quantile(b *testing.B) {
 	h := latency.NewHistogram(latency.Options{})
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		h.Observe(time.Duration(i%50) * time.Millisecond)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = h.Quantile(0.99)
 	}
 }
@@ -53,12 +53,12 @@ func BenchmarkHistogram_Quantile(b *testing.B) {
 // BenchmarkHistogram_Snapshot measures one fold + four percentile scans.
 func BenchmarkHistogram_Snapshot(b *testing.B) {
 	h := latency.NewHistogram(latency.Options{})
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		h.Observe(time.Duration(i%50) * time.Millisecond)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = h.Snapshot()
 	}
 }
@@ -83,8 +83,8 @@ func BenchmarkShardHistogram_Observe_Parallel(b *testing.B) {
 // histogram per scope.
 func BenchmarkNewHistogram_Factory(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = latency.NewHistogram(latency.Options{})
 	}
 }

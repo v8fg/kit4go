@@ -23,7 +23,7 @@ import (
 // the most frequent allocation in the package and the baseline for Wrap.
 func BenchmarkNew(b *testing.B) {
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		_ = New(NotFound, "user missing")
 	}
 }
@@ -34,8 +34,8 @@ func BenchmarkNew(b *testing.B) {
 func BenchmarkWrap(b *testing.B) {
 	cause := errors.New("root cause")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		_ = Wrap(Internal, cause, "db down")
 	}
 }
@@ -46,8 +46,8 @@ func BenchmarkWrap(b *testing.B) {
 func BenchmarkErrorString(b *testing.B) {
 	e := New(NotFound, "user missing")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		_ = e.Error()
 	}
 }
@@ -57,8 +57,8 @@ func BenchmarkErrorString(b *testing.B) {
 func BenchmarkErrorStringWrapped(b *testing.B) {
 	e := Wrap(Internal, errors.New("root cause"), "db down")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		_ = e.Error()
 	}
 }
@@ -69,8 +69,8 @@ func BenchmarkErrorStringWrapped(b *testing.B) {
 func BenchmarkErrorsIs_SameCode(b *testing.B) {
 	err := New(NotFound, "user missing")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		if !errors.Is(err, ErrNotFound) {
 			b.Fatal("errors.Is = false, want true")
 		}
@@ -82,8 +82,8 @@ func BenchmarkErrorsIs_SameCode(b *testing.B) {
 func BenchmarkErrorsIs_DifferentCode(b *testing.B) {
 	err := New(Internal, "boom")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		if errors.Is(err, ErrNotFound) {
 			b.Fatal("errors.Is = true, want false")
 		}
@@ -96,8 +96,8 @@ func BenchmarkErrorsIs_ThroughWrapChain(b *testing.B) {
 	inner := New(PermissionDenied, "no access")
 	wrapped := fmt.Errorf("handler: %w", inner)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		if !errors.Is(wrapped, ErrPermissionDenied) {
 			b.Fatal("errors.Is = false, want true")
 		}
@@ -108,7 +108,7 @@ func BenchmarkErrorsIs_ThroughWrapChain(b *testing.B) {
 // without any allocation.
 func BenchmarkCodeOf_Nil(b *testing.B) {
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		if got := CodeOf(nil); got != OK {
 			b.Fatalf("CodeOf(nil) = %v, want OK", got)
 		}
@@ -120,8 +120,8 @@ func BenchmarkCodeOf_Nil(b *testing.B) {
 func BenchmarkCodeOf_DirectError(b *testing.B) {
 	err := New(AlreadyExists, "dup")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		if got := CodeOf(err); got != AlreadyExists {
 			b.Fatalf("CodeOf = %v, want AlreadyExists", got)
 		}
@@ -133,8 +133,8 @@ func BenchmarkCodeOf_DirectError(b *testing.B) {
 func BenchmarkCodeOf_Wrapped(b *testing.B) {
 	err := fmt.Errorf("outer: %w", Wrap(ResourceExhausted, nil, "quota"))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		if got := CodeOf(err); got != ResourceExhausted {
 			b.Fatalf("CodeOf = %v, want ResourceExhausted", got)
 		}
@@ -146,8 +146,8 @@ func BenchmarkCodeOf_Wrapped(b *testing.B) {
 func BenchmarkCodeOf_PlainError(b *testing.B) {
 	err := errors.New("untyped")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+
+	for b.Loop() {
 		if got := CodeOf(err); got != Unknown {
 			b.Fatalf("CodeOf = %v, want Unknown", got)
 		}
@@ -158,7 +158,7 @@ func BenchmarkCodeOf_PlainError(b *testing.B) {
 // details. The append growth of the Details slice is the only allocation.
 func BenchmarkWithDetail(b *testing.B) {
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		_ = New(DeadlineExceeded, "slow").
 			WithDetail("request-id").
 			WithDetail(42).
@@ -170,7 +170,7 @@ func BenchmarkWithDetail(b *testing.B) {
 // operation in the package; it establishes a floor for the rest.
 func BenchmarkCodeString(b *testing.B) {
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		if s := NotFound.String(); s == "" {
 			b.Fatal("empty code name")
 		}
@@ -182,7 +182,7 @@ func BenchmarkCodeString(b *testing.B) {
 func BenchmarkCodeString_OutOfRange(b *testing.B) {
 	c := Code(-1)
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		if s := c.String(); s == "" {
 			b.Fatal("empty code name")
 		}

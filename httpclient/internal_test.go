@@ -81,7 +81,7 @@ func (*timeoutError) Temporary() bool { return true }
 func TestRetryDelay_BoundedByMax(t *testing.T) {
 	minW := 10 * time.Millisecond
 	maxW := 100 * time.Millisecond
-	for attempt := 0; attempt < 30; attempt++ {
+	for attempt := range 30 {
 		d := retryDelay(attempt, minW, maxW)
 		if d < 0 {
 			t.Fatalf("attempt %d: delay %v < 0", attempt, d)
@@ -101,7 +101,7 @@ func TestRetryDelay_GrowsExponentiallyBeforeCap(t *testing.T) {
 	// Take many samples of attempt 0 and attempt 10; the max-of-attempt-10
 	// must exceed the max-of-attempt-0 with very high probability.
 	var max0, max10 time.Duration
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		if d := retryDelay(0, minW, maxW); d > max0 {
 			max0 = d
 		}
@@ -131,7 +131,7 @@ func TestRetryDelay_MinMaxEqual(t *testing.T) {
 	// When min == max the exponential immediately clamps to max; the jitter
 	// factor still varies the output in [0.5*max, max).
 	w := 50 * time.Millisecond
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		d := retryDelay(i, w, w)
 		if d > w {
 			t.Fatalf("attempt %d: delay %v > equal min/max %v", i, d, w)

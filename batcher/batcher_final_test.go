@@ -60,7 +60,7 @@ func TestFlush_FirstSelectDoneBranch(t *testing.T) {
 // / no error); coverage instrumentation records the hit.
 func TestClose_FinalDrainMaxSizeFlushBranch(t *testing.T) {
 	const iterations = 3000
-	for iter := 0; iter < iterations; iter++ {
+	for range iterations {
 		var flushed atomic.Int64
 		// maxSize=1 so any single item Close drains trips the threshold.
 		// buffer cap=1 so the producer's send blocks almost every iteration,
@@ -71,15 +71,13 @@ func TestClose_FinalDrainMaxSizeFlushBranch(t *testing.T) {
 		}, WithBufferSize[int](1))
 
 		var pumpWG sync.WaitGroup
-		pumpWG.Add(1)
-		go func() {
-			defer pumpWG.Done()
+		pumpWG.Go(func() {
 			// Pump for the whole duration of Close: stop only when Add returns
 			// false (done closed by Close), so an in-flight send is always
 			// racing Close's final drain.
 			for b.Add(0) {
 			}
-		}()
+		})
 
 		// Let the producer start and block on its first send (buffer cap=1),
 		// holding the read lock; then Close races it.

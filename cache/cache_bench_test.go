@@ -13,8 +13,8 @@ func BenchmarkGet(b *testing.B) {
 	ctx := context.Background()
 	_ = s.Set(ctx, "k", "v", 0)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = s.Get(ctx, "k")
 	}
 }
@@ -24,8 +24,8 @@ func BenchmarkGetMiss(b *testing.B) {
 	s := NewMemory[string](WithMaxSize[string](1024))
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = s.Get(ctx, "absent")
 	}
 }
@@ -35,8 +35,8 @@ func BenchmarkSet(b *testing.B) {
 	s := NewMemory[string](WithMaxSize[string](1024))
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = s.Set(ctx, "k", "v", 0)
 	}
 }
@@ -46,8 +46,8 @@ func BenchmarkSetWithTTL(b *testing.B) {
 	s := NewMemory[string](WithMaxSize[string](1024))
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = s.Set(ctx, "k", "v", time.Minute)
 	}
 }
@@ -58,8 +58,8 @@ func BenchmarkHas(b *testing.B) {
 	ctx := context.Background()
 	_ = s.Set(ctx, "k", "v", 0)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = s.Has(ctx, "k")
 	}
 }

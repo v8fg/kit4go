@@ -89,7 +89,7 @@ func Test_WebhookWriter_Gate(t *testing.T) {
 		}
 	})
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_ = w.Write(&Record{level: ERROR, msg: "boom"})
 	}
 	// 10 errors in 1s, threshold 3, cooldown 1s => exactly 1 forwarded.

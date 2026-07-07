@@ -15,8 +15,8 @@ var benchParams = map[string]string{
 // query-escaped) + HMAC-SHA256 + hex encode.
 func BenchmarkSign(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, err := Sign(benchParams, "topsecret", WithTimestamp(time.Unix(1_700_000_000, 0)))
 		if err != nil {
 			b.Fatal(err)
@@ -38,8 +38,8 @@ func BenchmarkVerify(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if !Verify(params, "topsecret", sig, WithMaxAge(0), WithNow(func() time.Time { return ts })) {
 			b.Fatal("Verify failed")
 		}
@@ -49,8 +49,8 @@ func BenchmarkVerify(b *testing.B) {
 // BenchmarkCanonical measures the canonical-string construction in isolation.
 func BenchmarkCanonical(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = canonical(benchParams, 1_700_000_000)
 	}
 }
@@ -59,8 +59,8 @@ func BenchmarkCanonical(b *testing.B) {
 func BenchmarkCompute(b *testing.B) {
 	msg := canonical(benchParams, 1_700_000_000)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = compute("topsecret", msg)
 	}
 }

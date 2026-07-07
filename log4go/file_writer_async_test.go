@@ -41,7 +41,7 @@ func driveAsyncWriter(fw *FileWriter, n int) FileWriterMetrics {
 	if err := fw.Init(); err != nil {
 		panic("fw.Init: " + err.Error())
 	}
-	for i := 0; i < n; i++ {
+	for range n {
 		_ = fw.Write(&Record{level: INFO, time: "2026-01-02 03:04:05", file: "cov_test.go:1", msg: "async writer coverage line"})
 	}
 	// Allow the daemon to drain the channel + spill before Stop so the spill
@@ -277,7 +277,7 @@ func Test_FileWriter_Async_WriteLevelFiltered(t *testing.T) {
 	}
 
 	// INFO records are filtered by the writer (level=ERROR), so written stays 0.
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_ = fw.Write(&Record{level: INFO, time: "t", file: "f", msg: "filtered info"})
 	}
 	time.Sleep(150 * time.Millisecond)
@@ -322,7 +322,7 @@ func Test_FileWriter_Async_WriteOneError(t *testing.T) {
 	if err := fw.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		_ = fw.Write(&Record{level: INFO, time: "t", file: "f", msg: "should-error"})
 	}
 	time.Sleep(200 * time.Millisecond)
@@ -343,7 +343,7 @@ func Test_FileWriter_Async_WriteOneError(t *testing.T) {
 // does not leak goroutines: after Stop the daemon goroutine has exited.
 func Test_FileWriter_Async_GoroutinesBounded(t *testing.T) {
 	before := runtime.NumGoroutine()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		fw, dir := newAsyncFileWriter(t, FileWriterOptions{AsyncBufferSize: 128})
 		_ = driveAsyncWriter(fw, 500)
 		os.RemoveAll(dir)

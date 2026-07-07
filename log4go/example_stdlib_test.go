@@ -252,7 +252,7 @@ func ExampleLogger_WithSampling() {
 	defer lg.Close()
 
 	sampled := lg.WithSampling(10, 100)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		sampled.Info("high frequency event %d", i) // ~10 + 9 = 19 logged
 	}
 }

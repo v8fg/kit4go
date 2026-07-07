@@ -97,7 +97,7 @@ func TestPercent(t *testing.T) {
 	// source cannot be seeded/mocked.
 	convey.Convey("clamps the [100,101) draw to exactly 100", t, func() {
 		maxObserved := 0.0
-		for i := 0; i < 3000; i++ {
+		for range 3000 {
 			p := random.Percent()
 			if p > maxObserved {
 				maxObserved = p

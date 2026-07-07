@@ -107,7 +107,7 @@ func TestDecodeMatchesCustomPath(t *testing.T) {
 // TestDefaultDecodeTable checks the package-init precomputed table directly.
 func TestDefaultDecodeTable(t *testing.T) {
 	// Every default-alphabet byte maps to its own index.
-	for i := 0; i < 62; i++ {
+	for i := range 62 {
 		require.Equal(t, int8(i), defaultDecodeTable[Alphabet[i]],
 			"index of byte %q", Alphabet[i])
 	}

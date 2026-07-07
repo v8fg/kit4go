@@ -118,13 +118,13 @@ func BenchmarkMiddleware_Metrics(b *testing.B) {
 
 	// Move some counters off zero so the load path isn't optimised away.
 	ctx := context.Background()
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		_, _ = echoUnary(ctx, conn, wrapperspb.String("x"))
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = mw.Metrics()
 	}
 }

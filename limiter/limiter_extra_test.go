@@ -41,13 +41,13 @@ func TestAllAlgorithmsRespectsBurst(t *testing.T) {
 		case "sliding_window", "fixed_window":
 			continue // these use rate-per-window, not burst
 		}
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			require.True(t, l.Allow(), "%s: burst token %d should pass", name, i)
 		}
 		// 6th within the same instant → denied (or at most a few more due to
 		// time elapsed). We assert that it's NOT all-1000-allowed.
 		denied := false
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			if !l.Allow() {
 				denied = true
 				break
@@ -98,10 +98,10 @@ func TestAllAlgorithmsConcurrency(t *testing.T) {
 		var wg sync.WaitGroup
 		const g = 8
 		wg.Add(g)
-		for i := 0; i < g; i++ {
+		for range g {
 			go func() {
 				defer wg.Done()
-				for j := 0; j < 100; j++ {
+				for range 100 {
 					l.Allow()
 				}
 			}()
@@ -117,7 +117,7 @@ func TestAllAlgorithmsConcurrency(t *testing.T) {
 func TestFixedWindowRateCap(t *testing.T) {
 	// rate=5 per 1s window: first 5 pass, 6th denied (same window).
 	l := NewLimiter(LimiterOptions{Algorithm: AlgorithmFixedWindow, Rate: 5, Window: time.Second})
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.True(t, l.Allow(), "token %d", i)
 	}
 	require.False(t, l.Allow(), "6th should be denied in same window")
@@ -136,7 +136,7 @@ func TestLeakyBucketStartsEmpty(t *testing.T) {
 func TestGCRABurstAndSteady(t *testing.T) {
 	// rate=1000, burst=5 → first 5 pass instantly, then denied until time passes.
 	l := NewLimiter(LimiterOptions{Algorithm: AlgorithmGCRA, Rate: 1000, Burst: 5})
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.True(t, l.Allow(), "burst %d", i)
 	}
 	// 6th instantly → denied.

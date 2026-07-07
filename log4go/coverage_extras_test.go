@@ -66,7 +66,7 @@ func Test_WebhookAlertSink_RateLimit(t *testing.T) {
 	defer sink.Close()
 
 	// Fire several alerts; rate limit caps how many enqueue.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		sink.Send(AlertWarn, "overflow", "burst")
 	}
 	time.Sleep(300 * time.Millisecond)
@@ -107,7 +107,7 @@ func Test_ShardLogger_RegisterSetLevel(t *testing.T) {
 	}))
 	// Each shard should have the writer + level set; producing on all shard
 	// methods exercises Register (writer present) and SetLevel (DEBUG allowed).
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		sl.Debug("shard register/setlevel debug %d", i)
 		sl.Info("shard register/setlevel info %d", i)
 		sl.Warn("shard register/setlevel warn %d", i)

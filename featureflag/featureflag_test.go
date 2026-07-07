@@ -35,7 +35,7 @@ func TestFlag_Percentage(t *testing.T) {
 	f := New(WithEnabled(true), WithPercentage(50))
 	enabled := 0
 	total := 1000
-	for i := 0; i < total; i++ {
+	for i := range total {
 		if f.Enabled("user-" + itoa(i)) {
 			enabled++
 		}
@@ -48,7 +48,7 @@ func TestFlag_Percentage(t *testing.T) {
 
 func TestFlag_PercentageConsistent(t *testing.T) {
 	f := New(WithEnabled(true), WithPercentage(30))
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		key := "user-" + itoa(i)
 		first := f.Enabled(key)
 		second := f.Enabled(key)
@@ -149,7 +149,7 @@ func TestFlag_RuntimeChanges(t *testing.T) {
 func TestFlag_HashPercentDeterministic(t *testing.T) {
 	const key = "deterministic-key"
 	first := hashPercent(key)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		if got := hashPercent(key); got != first {
 			t.Fatalf("hashPercent(%q) drifted: first=%d got=%d at i=%d", key, first, got, i)
 		}
@@ -178,7 +178,7 @@ func TestFlag_HashPercentMatchesStdlib(t *testing.T) {
 // always within range.
 func TestFlag_HashPercentDistinctKeys(t *testing.T) {
 	seen := make(map[uint]int)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		p := hashPercent(itoa(i))
 		if p > 99 {
 			t.Fatalf("hashPercent out of range: %d", p)
@@ -201,7 +201,7 @@ func TestFlag_HotPathAllocs(t *testing.T) {
 	f := New(WithEnabled(true), WithPercentage(50))
 	key := "alloc-probe"
 	// Prime any internal caches so steady state is measured.
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_ = f.Enabled(key)
 	}
 	allocs := testing.AllocsPerRun(100, func() {
@@ -222,7 +222,7 @@ func TestFlag_ConcurrentEnabledAndMutators(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Readers.
-	for r := 0; r < 8; r++ {
+	for r := range 8 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -239,7 +239,7 @@ func TestFlag_ConcurrentEnabledAndMutators(t *testing.T) {
 	}
 
 	// Writers.
-	for w := 0; w < 4; w++ {
+	for w := range 4 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()

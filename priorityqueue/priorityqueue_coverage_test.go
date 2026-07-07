@@ -140,7 +140,7 @@ func TestTieBehavior(t *testing.T) {
 	// must remain a valid max-heap (all ties share the top priority, and the
 	// heap invariant holds after every pop).
 	q := New[int]()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		q.Push(i, 10) // all same priority
 	}
 	require.Equal(t, 5, q.Len())

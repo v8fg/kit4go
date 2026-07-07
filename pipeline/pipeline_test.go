@@ -124,7 +124,7 @@ func TestConcurrencyLimit(t *testing.T) {
 		concurrent.Add(-1)
 		return n, true, nil
 	}, WithInputBuffer[int, int](20), WithOutputBuffer[int, int](20))
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		p.Send(context.Background(), i)
 	}
 	p.Close()

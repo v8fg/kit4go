@@ -22,8 +22,8 @@ func BenchmarkNew(b *testing.B) {
 	newFn := func() *bytes.Buffer { return &bytes.Buffer{} }
 	reset := WithReset(func(buf *bytes.Buffer) { buf.Reset() })
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = New(newFn, reset)
 	}
 }
@@ -34,8 +34,8 @@ func BenchmarkNew(b *testing.B) {
 func BenchmarkGetNoResetCold(b *testing.B) {
 	p := newBufferPool(false)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = p.Get()
 	}
 }
@@ -46,8 +46,8 @@ func BenchmarkGetNoResetCold(b *testing.B) {
 func BenchmarkGetPutNoReset(b *testing.B) {
 	p := newBufferPool(false)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		x := p.Get()
 		p.Put(x)
 	}
@@ -59,8 +59,8 @@ func BenchmarkGetPutNoReset(b *testing.B) {
 func BenchmarkGetPutWithReset(b *testing.B) {
 	p := newBufferPool(true)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		x := p.Get()
 		p.Put(x)
 	}
@@ -73,8 +73,8 @@ func BenchmarkStats(b *testing.B) {
 	x := p.Get()
 	p.Put(x)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = p.Stats()
 	}
 }

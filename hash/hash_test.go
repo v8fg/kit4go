@@ -80,10 +80,10 @@ func TestCryptoDigests_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	var mismatches atomic.Uint64
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iters; j++ {
+			for range iters {
 				if got := SHA256Hex("payload"); got != want {
 					mismatches.Add(1)
 				}

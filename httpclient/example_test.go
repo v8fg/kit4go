@@ -86,7 +86,7 @@ func ExampleClient_Metrics() {
 	defer srv.Close()
 
 	cli := httpclient.NewClient(httpclient.ClientOptions{RetryMax: 0})
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if _, err := cli.Get(context.Background(), srv.URL, nil); err != nil {
 			fmt.Println("error:", err)
 			return

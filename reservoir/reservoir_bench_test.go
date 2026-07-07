@@ -8,7 +8,7 @@ import (
 // steady-state Algorithm R path (one rng draw + maybe one slot write).
 func BenchmarkOfferSteady(b *testing.B) {
 	s := NewWithOpts[int](128, WithSeed[int](1, 2))
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		s.Offer(i)
 	}
 	b.ReportAllocs()
@@ -21,9 +21,9 @@ func BenchmarkOfferSteady(b *testing.B) {
 // BenchmarkOfferFill measures Offer during the initial fill (append path).
 func BenchmarkOfferFill(b *testing.B) {
 	b.ReportAllocs()
-	for n := 0; n < b.N; n++ {
+	for b.Loop() {
 		s := NewWithOpts[int](128, WithSeed[int](1, 2))
-		for i := 0; i < 128; i++ {
+		for i := range 128 {
 			s.Offer(i)
 		}
 	}
@@ -32,12 +32,12 @@ func BenchmarkOfferFill(b *testing.B) {
 // BenchmarkSample measures the snapshot copy (allocates a new slice of k items).
 func BenchmarkSample(b *testing.B) {
 	s := NewWithOpts[int](128, WithSeed[int](1, 2))
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		s.Offer(i)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = s.Sample()
 	}
 }
@@ -45,12 +45,12 @@ func BenchmarkSample(b *testing.B) {
 // BenchmarkCount measures the counter accessor (acquires the mutex).
 func BenchmarkCount(b *testing.B) {
 	s := NewWithOpts[int](128, WithSeed[int](1, 2))
-	for i := 0; i < 128; i++ {
+	for i := range 128 {
 		s.Offer(i)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = s.Count()
 	}
 }

@@ -127,11 +127,11 @@ func Test_ShardLogger_RegisterFunc_IndependentFileWriters(t *testing.T) {
 	const perWorker = 4000
 	const workers = 4
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for i := 0; i < perWorker; i++ {
+			for i := range perWorker {
 				s.Info("worker=%d i=%d", id, i)
 			}
 		}(w)

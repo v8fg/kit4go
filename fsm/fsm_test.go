@@ -199,21 +199,17 @@ func TestMachine_Can(t *testing.T) {
 func TestMachine_ConcurrentSafe(t *testing.T) {
 	m := mustNew(t, StateIdle, orderRules()...)
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 10 {
+		wg.Go(func() {
+			for range 100 {
 				_ = m.Current()
 				_ = m.Is(StateIdle)
 			}
-		}()
+		})
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_ = m.Send(EventSubmit, nil)
-	}()
+	})
 	wg.Wait()
 }
 

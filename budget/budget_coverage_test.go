@@ -51,7 +51,7 @@ func TestUnreachableDefensiveBranches(t *testing.T) {
 	// invariant that makes them dead code.
 	p, _ := New(100.0, 24*time.Hour, WithBuckets(4))
 	maxF := -1.0
-	for h := 0; h < 24; h++ {
+	for h := range 24 {
 		f := p.fractionOfPeriod(time.Date(2026, 7, 1, h, 59, 59, 999999999, time.UTC))
 		if f > maxF {
 			maxF = f

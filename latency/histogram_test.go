@@ -111,7 +111,7 @@ func TestHistogram_Quantile_Tail(t *testing.T) {
 	// sorted values = 1ms (only the 100th is the slow one). The 99.9th lands
 	// on the slow sample's bucket.
 	h := latency.NewHistogram(latency.Options{})
-	for i := 0; i < 99; i++ {
+	for range 99 {
 		h.Observe(time.Millisecond)
 	}
 	h.Observe(50 * time.Millisecond)
@@ -134,7 +134,7 @@ func TestHistogram_Quantile_UniformP50(t *testing.T) {
 	// Uniform spread 0..~50ms; the median of a uniform distribution is the
 	// midpoint ~25ms. Allow bucket-resolution tolerance.
 	h := latency.NewHistogram(latency.Options{})
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		h.Observe(time.Duration(i) * 10 * time.Microsecond) // 0 .. 49.99ms
 	}
 	p50 := h.Quantile(0.50)
@@ -148,7 +148,7 @@ func TestHistogram_Quantile_IdenticalSamples(t *testing.T) {
 	// interpolated P50 reports the bucket midpoint (~4ms), NOT exactly 5ms —
 	// this documents the within-bucket interpolation bias.
 	h := latency.NewHistogram(latency.Options{})
-	for i := 0; i < 101; i++ {
+	for range 101 {
 		h.Observe(5 * time.Millisecond)
 	}
 	p50 := h.Quantile(0.50)
@@ -196,7 +196,7 @@ func TestHistogram_Snapshot_MeanExact(t *testing.T) {
 func TestHistogram_WindowExpiry(t *testing.T) {
 	// A 1s window: samples from a previous second must drop out of the count.
 	h := latency.NewHistogram(latency.Options{Window: time.Second})
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		h.Observe(time.Millisecond)
 	}
 	if got := h.Snapshot().Count; got != 100 {
@@ -229,10 +229,10 @@ func TestHistogram_Concurrent(t *testing.T) {
 		}
 	}()
 
-	for g := 0; g < goroutines; g++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < perG; i++ {
+			for i := range perG {
 				h.Observe(time.Duration(i) * time.Microsecond)
 			}
 		}()
@@ -254,7 +254,7 @@ func TestShardHistogram_Distribution(t *testing.T) {
 		t.Fatal("nil")
 	}
 	const n = 10000
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h.Observe(time.Duration(i%50) * time.Millisecond)
 	}
 	if got := h.Snapshot().Count; got != n {
@@ -270,7 +270,7 @@ func TestShardHistogram_MatchesSingle(t *testing.T) {
 	shard := latency.NewShardHistogram(16, opts)
 
 	const n = 100000
-	for i := 0; i < n; i++ {
+	for i := range n {
 		d := time.Duration(i%100) * time.Microsecond
 		single.Observe(d)
 		shard.Observe(d)

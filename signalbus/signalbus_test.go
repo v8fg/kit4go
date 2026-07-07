@@ -401,20 +401,18 @@ func TestConcurrent(t *testing.T) {
 	const workers = 8
 
 	// Publishers and subscribers hammer the same signal concurrently.
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 200; i++ {
+	for range workers {
+		wg.Go(func() {
+			for i := range 200 {
 				b.Send("evt", i)
 			}
-		}()
+		})
 	}
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for i := range 100 {
 				disc := b.Connect("evt", func(args ...any) {})
 				_ = b.Len("evt")
 				if i%7 == 0 {
@@ -423,14 +421,12 @@ func TestConcurrent(t *testing.T) {
 			}
 		}(w)
 	}
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
+	for range workers {
+		wg.Go(func() {
+			for range 50 {
 				b.Disconnect("evt")
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -474,7 +470,7 @@ func TestSetPanicHook_NoRaceWithPanickingHandler(t *testing.T) {
 			}
 		}
 	}()
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		b.Send("boom")
 	}
 	close(stop)

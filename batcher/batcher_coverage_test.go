@@ -117,7 +117,7 @@ func TestRunDrainOnDone(t *testing.T) {
 	}, WithBufferSize[int](8))
 	// Fill the buffer; the collector reads some, others remain buffered when
 	// Close fires. The run-loop's done-branch must drain the rest.
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		require.True(t, b.Add(i))
 	}
 	// Give the collector a moment to read a few items, then Close.
@@ -140,7 +140,7 @@ func TestFlushDrainsInputChannel(t *testing.T) {
 	}, WithBufferSize[int](16))
 	// Add several items without yielding to the collector, then Flush. The
 	// flushCh handler drains b.in before flushing.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.True(t, b.Add(i))
 	}
 	b.Flush()
@@ -157,7 +157,7 @@ func TestNewWithBufferSize_SmallerThanMax(t *testing.T) {
 	defer func() { _ = b.Close() }()
 	// maxSize=5; buffer=2 -> a full batch needs 5 Adds, the collector reads and
 	// buffers internally until it hits 5.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.True(t, b.Add(i))
 	}
 	b.Flush()

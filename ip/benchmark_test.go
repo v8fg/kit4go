@@ -18,8 +18,7 @@ func BenchmarkBytesIPToIPv4Number(b *testing.B) {
 		{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.BytesIPToIPv4Number(ipSet[index])
 		}
@@ -34,8 +33,7 @@ func BenchmarkBytesIPToNumber(b *testing.B) {
 		{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.BytesIPToNumber(ipSet[index])
 		}
@@ -50,8 +48,7 @@ func BenchmarkBytesIPToStrIPv4(b *testing.B) {
 		{255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.BytesIPToStrIPv4(ipSet[index])
 		}
@@ -71,9 +68,8 @@ func BenchmarkInCIDRIPRange(b *testing.B) {
 	cidr := "192.168.192.0/16"
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.InRangeCIDRIP(cidr, ipSet[index])
 		}
@@ -92,9 +88,8 @@ func BenchmarkInCIDRRange(b *testing.B) {
 	cidr := "192.168.192.0/16"
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.InRangeCIDRStr(cidr, ipSet[index])
 		}
@@ -117,9 +112,8 @@ func BenchmarkInCIDRsOrIPs(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_, _ = ip.InCIDRsOrIPs(cidrOrIPs, ipSet[index])
 		}
@@ -139,9 +133,8 @@ func BenchmarkInIPNetRange(b *testing.B) {
 	_, _, subNet := ip.ParseCIDR("192.168.192.0/16")
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.InRangeIPNet(subNet, ipSet[index])
 		}
@@ -161,9 +154,8 @@ func BenchmarkInRangeIP(b *testing.B) {
 	end := net.IPv4(192, 168, 192, 0)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.InRangeIP(start, end, ipSet[index])
 		}
@@ -183,9 +175,8 @@ func BenchmarkInRangeIPv6(b *testing.B) {
 	end := net.IPv4(192, 168, 192, 0)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.InRangeIPv6(start, end, ipSet[index])
 		}
@@ -204,9 +195,8 @@ func BenchmarkInRange(b *testing.B) {
 	end := "192.168.192.0"
 
 	b.ReportAllocs()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.InRange(start, end, ipSet[index])
 		}
@@ -224,8 +214,7 @@ func BenchmarkNumberIPv4ToStr(b *testing.B) {
 		math.MaxUint32,
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.NumberIPv4ToStr(ipSet[index])
 		}
@@ -240,8 +229,7 @@ func BenchmarkToNumber(b *testing.B) {
 		"2408:8226:6a02:3822::",
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.ToNumber(ipSet[index])
 		}
@@ -256,8 +244,7 @@ func BenchmarkToNumberIPv4(b *testing.B) {
 		"2408:8226:6a02:3822::",
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.ToNumberIPv4(ipSet[index])
 		}
@@ -271,8 +258,8 @@ func BenchmarkVersionFlag(b *testing.B) {
 		"2001:db8::",
 		"2408:8226:6a02:3822::",
 	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.VersionFlag(ipSet[index])
 		}
@@ -286,8 +273,8 @@ func BenchmarkVersionFlagByContains(b *testing.B) {
 		"2001:db8::",
 		"2408:8226:6a02:3822::",
 	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		for index := range ipSet {
 			_ = ip.VersionFlagByContains(ipSet[index])
 		}
@@ -322,8 +309,8 @@ func BenchmarkFastInRangeMixedIPsOrCIDRs(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		for index := range ipSet {
 			_, _ = ip.FastInRangeMixedIPsOrCIDRs(ipSet[index].mixedIPsOrNetIPs, ipSet[index].ip)
 		}
@@ -347,8 +334,8 @@ func BenchmarkFastInRangeMixedIPsOrCIDRsProd(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		for index := range ipSet {
 			_, _ = ip.FastInRangeMixedIPsOrCIDRs(ipSet[index].mixedIPsOrNetIPs, ipSet[index].ip)
 		}
@@ -383,8 +370,8 @@ func BenchmarkInRangeMixedIPsOrCIDRs(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		for index := range ipSet {
 			_, _ = ip.InRangeMixedIPsOrCIDRs(ipSet[index].mixedIPsOrNetIPs, ipSet[index].ip)
 		}

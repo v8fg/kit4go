@@ -296,7 +296,7 @@ func Test_FileWriter_StartDaemon_SpillResume_PushSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pre spiller: %v", err)
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !pre.Push(&Record{level: INFO, time: "t", file: "f", msg: "resumed"}) {
 			t.Fatalf("pre Push %d failed", i)
 		}
@@ -356,7 +356,7 @@ func Test_FileWriter_StartDaemon_SpillResume_PushFails(t *testing.T) {
 		t.Fatalf("pre spiller: %v", err)
 	}
 	const n = 2000
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if !pre.Push(&Record{level: INFO, time: "t", file: "f", msg: "resume-drop-payload-to-force-overflow"}) {
 			t.Fatalf("pre Push %d failed", i)
 		}
@@ -572,14 +572,12 @@ func Test_FileWriter_DrainSpill_Reinject(t *testing.T) {
 	const workers = 4
 	const per = 500
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < per; i++ {
+	for range workers {
+		wg.Go(func() {
+			for range per {
 				_ = fw.Write(&Record{level: INFO, time: "t", file: "f", msg: "spill reinject"})
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	// Give the daemon time to run drainSpill (ticker at 20ms) which re-injects

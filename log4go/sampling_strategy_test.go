@@ -81,7 +81,7 @@ func TestSampling_Distribution(t *testing.T) {
 	s := TraceIDRatioBased{Ratio: 0.1}
 	const n = 5000
 	kept := 0
-	for i := 0; i < n; i++ {
+	for range n {
 		// 32-hex-digit trace_id (W3C shape).
 		var buf [32]byte
 		for j := range buf {
@@ -497,10 +497,10 @@ func TestMetrics_Funnel(t *testing.T) {
 	root.Register(cw)
 	root.SetLevel(INFO) // DEBUG filtered
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		root.Info("info %d", i)
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		root.Debug("filtered %d", i) // dropped by level
 	}
 	root.Close() // drain → Written counted in bootstrap
@@ -556,8 +556,8 @@ func Benchmark_DeliverPipeline_SampledActive(b *testing.B) {
 	ctx := context.WithValue(context.Background(), "trace_id", "abcdef0123456789abcdef0123456789")
 	lgCtx := lg.WithContext(ctx) // sampleDrop pre-computed (keep)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		lgCtx.Info("x")
 	}
 }
@@ -573,8 +573,8 @@ func Benchmark_DeliverPipeline_SampledOut(b *testing.B) {
 	ctx := context.WithValue(context.Background(), "trace_id", "abcdef0123456789abcdef0123456789")
 	lgCtx := lg.WithContext(ctx) // sampleDrop = true (dropped)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		lgCtx.Info("x")
 	}
 }

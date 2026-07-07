@@ -30,7 +30,7 @@ func Test_RuntimeStats_Sane(t *testing.T) {
 func Test_RuntimeStats_StableAcrossCalls(t *testing.T) {
 	a := RuntimeStats()
 	// force some allocation + a GC so the second snapshot can differ sensibly
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		_ = make([]byte, 1024)
 	}
 	b := RuntimeStats()

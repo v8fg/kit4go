@@ -11,8 +11,8 @@ const benchSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" // base32, 20 bytes decod
 // time-step counter).
 func BenchmarkTOTPCode(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = TOTPCode(benchSecret)
 	}
 }
@@ -21,8 +21,8 @@ func BenchmarkTOTPCode(b *testing.B) {
 func BenchmarkTOTPCodeCustom(b *testing.B) {
 	t := time.Unix(1_700_000_000, 0)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = TOTPCodeCustom(benchSecret, t, nil)
 	}
 }
@@ -30,8 +30,8 @@ func BenchmarkTOTPCodeCustom(b *testing.B) {
 // BenchmarkHOTPCode measures counter-based OTP generation.
 func BenchmarkHOTPCode(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = HOTPCode(benchSecret, 42)
 	}
 }
@@ -44,8 +44,8 @@ func BenchmarkVerifyTOTP(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if !VerifyTOTP(code, benchSecret) {
 			b.Fatal("VerifyTOTP failed")
 		}

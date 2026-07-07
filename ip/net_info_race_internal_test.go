@@ -46,10 +46,10 @@ func TestLocalIPCacheConcurrentReads(t *testing.T) {
 	const goroutines = 64
 	const iters = 200
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iters; j++ {
+			for range iters {
 				_ = LocalIP()
 				runtime.Gosched()
 			}
@@ -81,20 +81,20 @@ func TestLocalIPCacheConcurrentReadWrite(t *testing.T) {
 	const iters = 200
 
 	wg.Add(readers)
-	for i := 0; i < readers; i++ {
+	for range readers {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iters; j++ {
+			for range iters {
 				_ = LocalIP()
 			}
 		}()
 	}
 
 	wg.Add(writers)
-	for i := 0; i < writers; i++ {
+	for i := range writers {
 		go func(n int) {
 			defer wg.Done()
-			for j := 0; j < iters; j++ {
+			for range iters {
 				// Direct write via the atomic pointer: publish a fresh,
 				// already-expired snapshot so concurrent readers keep hitting
 				// the refresh branch. This is exactly the field set that raced
@@ -125,20 +125,18 @@ func TestLocalIPCacheSnapshotImmutable(t *testing.T) {
 	cacheLocalIP.Store(first)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 1000; i++ {
+	wg.Go(func() {
+		for range 1000 {
 			cacheLocalIP.Store(&localIP{
 				IP:         net.ParseIP("172.16.0.2"),
 				LatestTime: time.Now(),
 				TTL:        time.Hour,
 			})
 		}
-	}()
+	})
 
 	// first.IP must stay "172.16.0.1" regardless of concurrent Stores.
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		if got := first.IP.String(); got != "172.16.0.1" {
 			t.Fatalf("snapshot mutated in place: got %s, want 172.16.0.1 (i=%d)", got, i)
 		}

@@ -96,14 +96,12 @@ func TestGet_Populated(t *testing.T) {
 	}
 	// Concurrent readers never block and all observe a consistent value.
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			if got := b.Get(); got != "only" {
 				t.Errorf("Get = %q, want %q", got, "only")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -154,12 +152,10 @@ func TestReload_ConcurrentSerialized(t *testing.T) {
 
 	var wg sync.WaitGroup
 	const goroutines = 20
-	for i := 0; i < goroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range goroutines {
+		wg.Go(func() {
 			_ = b.Reload()
-		}()
+		})
 	}
 	wg.Wait()
 

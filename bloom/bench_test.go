@@ -14,7 +14,7 @@ func benchFilter() *Filter {
 
 // preFill inserts n keys so Test benchmarks probe a populated filter.
 func preFill(f *Filter, n int) {
-	for i := 0; i < n; i++ {
+	for i := range n {
 		f.AddString(fmt.Sprintf("item-%d", i))
 	}
 }
@@ -22,7 +22,7 @@ func preFill(f *Filter, n int) {
 // BenchmarkNew measures filter construction (sizing math + backing alloc).
 func BenchmarkNew(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = New(100_000, 0.01)
 	}
 }
@@ -32,8 +32,8 @@ func BenchmarkAdd(b *testing.B) {
 	f := benchFilter()
 	data := []byte("benchmark-key")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		f.Add(data)
 	}
 }
@@ -42,8 +42,8 @@ func BenchmarkAdd(b *testing.B) {
 func BenchmarkAddString(b *testing.B) {
 	f := benchFilter()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		f.AddString("benchmark-key")
 	}
 }
@@ -54,8 +54,8 @@ func BenchmarkTestHit(b *testing.B) {
 	preFill(f, 50_000)
 	data := []byte("item-42")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = f.Test(data)
 	}
 }
@@ -67,8 +67,8 @@ func BenchmarkTestMiss(b *testing.B) {
 	preFill(f, 50_000)
 	data := []byte("never-added")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = f.Test(data)
 	}
 }
@@ -79,8 +79,8 @@ func BenchmarkTestAndAdd(b *testing.B) {
 	f := benchFilter()
 	data := []byte("benchmark-key")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = f.TestAndAdd(data)
 	}
 }
@@ -92,8 +92,8 @@ func BenchmarkIndices(b *testing.B) {
 	f := benchFilter()
 	data := []byte("benchmark-key")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		idxp := f.indices(data)
 		f.ipool.Put(idxp)
 	}
@@ -106,8 +106,8 @@ func BenchmarkAddTestMixed(b *testing.B) {
 	f := benchFilter()
 	preFill(f, 50_000)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		key := []byte("item-42")
 		_ = f.Test(key)
 		f.Add(key)

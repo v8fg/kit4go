@@ -8,7 +8,7 @@ import (
 func BenchmarkTryAcquire_Release(b *testing.B) {
 	g := New(1 << 30) // effectively unlimited
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		g.TryAcquire()
 		g.Release()
 	}

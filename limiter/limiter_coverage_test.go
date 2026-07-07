@@ -388,9 +388,7 @@ func TestTokenBucket_Acquire_DeterministicCASLoss(t *testing.T) {
 	tb := newTokenBucket(100, 5)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -400,9 +398,9 @@ func TestTokenBucket_Acquire_DeterministicCASLoss(t *testing.T) {
 				tb.tokens.Store(math.Float64bits(1.0))
 			}
 		}
-	}()
+	})
 	// Hammer acquire; many calls should lose the CAS twice and deny.
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		tb.acquire(1)
 	}
 	close(stop)
@@ -420,9 +418,7 @@ func TestLeakyBucket_Acquire_DeterministicCASLoss(t *testing.T) {
 	lb := newLeakyBucket(100, 5)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -431,8 +427,8 @@ func TestLeakyBucket_Acquire_DeterministicCASLoss(t *testing.T) {
 				lb.water.Store(math.Float64bits(1.0))
 			}
 		}
-	}()
-	for i := 0; i < 1000; i++ {
+	})
+	for range 1000 {
 		lb.acquire(1)
 	}
 	close(stop)
@@ -448,9 +444,7 @@ func TestGCRA_Acquire_DeterministicCASLoss(t *testing.T) {
 	g := newGCRA(100, 5)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -459,8 +453,8 @@ func TestGCRA_Acquire_DeterministicCASLoss(t *testing.T) {
 				g.tat.Store(time.Now().UnixNano())
 			}
 		}
-	}()
-	for i := 0; i < 1000; i++ {
+	})
+	for range 1000 {
 		g.acquire(1)
 	}
 	close(stop)
@@ -481,9 +475,7 @@ func TestFixedWindow_Acquire_DeterministicCASLoss(t *testing.T) {
 	fw.count.Store(1)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -492,8 +484,8 @@ func TestFixedWindow_Acquire_DeterministicCASLoss(t *testing.T) {
 				fw.count.Store(2) // at/over cap → deny branch on rate check
 			}
 		}
-	}()
-	for i := 0; i < 1000; i++ {
+	})
+	for range 1000 {
 		fw.acquire(1)
 	}
 	close(stop)
@@ -512,9 +504,7 @@ func TestFixedWindow_Acquire_WindowAdvanceCASLoss(t *testing.T) {
 	fw.windowStart.Store(time.Now().Add(-2 * time.Second).UnixNano())
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -524,8 +514,8 @@ func TestFixedWindow_Acquire_WindowAdvanceCASLoss(t *testing.T) {
 				fw.windowStart.Store(time.Now().Add(-1 * time.Second).UnixNano())
 			}
 		}
-	}()
-	for i := 0; i < 1000; i++ {
+	})
+	for range 1000 {
 		fw.acquire(1)
 	}
 	close(stop)

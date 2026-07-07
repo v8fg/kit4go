@@ -8,14 +8,14 @@ import (
 )
 
 func BenchmarkMax(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		bit.Max(1, 2)
 		bit.Max(1, 1024)
 	}
 }
 
 func BenchmarkMathMax(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		math.Max(1, 2)
 		math.Max(1, 1024)
 	}

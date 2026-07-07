@@ -5,12 +5,12 @@ import "testing"
 // BenchmarkGet measures a cache hit (promotes the entry, write lock).
 func BenchmarkGet(b *testing.B) {
 	c := New[string, int](WithMaxSize[string, int](1024))
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		c.Set(key(i), i)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = c.Get("500")
 	}
 }
@@ -18,7 +18,7 @@ func BenchmarkGet(b *testing.B) {
 // BenchmarkGetParallel measures Get under contention.
 func BenchmarkGetParallel(b *testing.B) {
 	c := New[string, int](WithMaxSize[string, int](1024))
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		c.Set(key(i), i)
 	}
 	b.ReportAllocs()
@@ -35,12 +35,12 @@ func BenchmarkGetParallel(b *testing.B) {
 // BenchmarkPeek measures a non-promoting read.
 func BenchmarkPeek(b *testing.B) {
 	c := New[string, int](WithMaxSize[string, int](1024))
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		c.Set(key(i), i)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = c.Peek("500")
 	}
 }
@@ -59,7 +59,7 @@ func BenchmarkSet(b *testing.B) {
 // the LRU entry (the steady-state eviction path).
 func BenchmarkSetEvict(b *testing.B) {
 	c := New[string, int](WithMaxSize[string, int](1024))
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		c.Set(key(i), i)
 	}
 	b.ReportAllocs()

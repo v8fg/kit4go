@@ -10,8 +10,8 @@ import "testing"
 func BenchmarkTryAcquireRejected(b *testing.B) {
 	g := New(0) // always full
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		g.TryAcquire()
 	}
 }
@@ -21,8 +21,8 @@ func BenchmarkCurrent(b *testing.B) {
 	g := New(1 << 20)
 	g.TryAcquire()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = g.Current()
 	}
 }

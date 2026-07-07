@@ -10,8 +10,8 @@ import "testing"
 func BenchmarkNext(b *testing.B) {
 	s := NewIDShortener(Alphabet, 1<<40)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = s.Next()
 	}
 }
@@ -33,8 +33,8 @@ func BenchmarkDecode(b *testing.B) {
 	s := NewIDShortener(Alphabet, 0)
 	code := s.Encode(1 << 40)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = s.Decode(code)
 	}
 }

@@ -253,10 +253,10 @@ func TestTokenBucket_Acquire_CASRetryAndDeny(t *testing.T) {
 	const perG = 200
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < perG; j++ {
+			for range perG {
 				_ = tb.Allow()
 			}
 		}()
@@ -437,7 +437,7 @@ func TestTokenBucket_Refill_FakeClock(t *testing.T) {
 	tb.lastTime.Store(clk.now().UnixNano())
 
 	// Drain the full burst.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !tb.Allow() {
 			t.Fatalf("burst %d denied", i)
 		}

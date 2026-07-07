@@ -169,8 +169,8 @@ func Benchmark_KafkaCodec_JSON(b *testing.B) {
 	w := NewKafkaWriter(KafkaWriterOptions{ProducerTopic: "t", BufferSize: 16})
 	r := &Record{level: INFO, msg: "bid served ad_id=123 price=0.5", file: "bidder.go:42", unixNano: 1782563343536622000, seq: 42}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = w.buildPayload(r)
 	}
 }
@@ -180,8 +180,8 @@ func Benchmark_KafkaCodec_Proto(b *testing.B) {
 	w.SetKafkaCodec(KafkaCodecProto{})
 	r := &Record{level: INFO, msg: "bid served ad_id=123 price=0.5", file: "bidder.go:42", unixNano: 1782563343536622000, seq: 42}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = w.buildPayload(r)
 	}
 }

@@ -476,7 +476,7 @@ func TestRetryDelay_DoublingLoopTerminatesAtMax(t *testing.T) {
 	maxW := 2 * time.Second
 	// Run many samples to cover the jitter range; all must be <= maxW and
 	// >= 0.5*minW (the floor of the first jitter band once clamped).
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		d := retryDelay(10, minW, maxW)
 		if d > maxW {
 			t.Fatalf("delay %v > max %v", d, maxW)

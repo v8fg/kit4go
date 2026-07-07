@@ -162,10 +162,8 @@ func FuzzEnabledConcurrent(f *testing.F) {
 		stop := make(chan struct{})
 
 		// Readers.
-		for r := 0; r < 4; r++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 4 {
+			wg.Go(func() {
 				for {
 					select {
 					case <-stop:
@@ -175,14 +173,12 @@ func FuzzEnabledConcurrent(f *testing.F) {
 						_ = flag.Enabled("vip")
 					}
 				}
-			}()
+			})
 		}
 
 		// Writers mutating every guarded field.
-		for w := 0; w < 2; w++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 2 {
+			wg.Go(func() {
 				for i := 0; ; i++ {
 					select {
 					case <-stop:
@@ -202,7 +198,7 @@ func FuzzEnabledConcurrent(f *testing.F) {
 						}
 					}
 				}
-			}()
+			})
 		}
 
 		// Brief burst under -race; bounded so the fuzz corpus stays tractable.

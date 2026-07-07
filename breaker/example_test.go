@@ -70,7 +70,7 @@ func ExampleBreaker_State() {
 	fmt.Println(b.State()) // closed at startup
 
 	// Drive the failure rate past the threshold to trip the breaker.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_, _ = b.Execute(context.Background(), func(ctx context.Context) (int, error) {
 			return 0, errors.New("boom")
 		})

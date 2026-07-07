@@ -60,8 +60,8 @@ func BenchmarkReset(b *testing.B) {
 	bf := New(WithMaxAttempts(0))
 	bf.Next()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		bf.Reset()
 	}
 }
@@ -72,8 +72,8 @@ func BenchmarkWaitZero(b *testing.B) {
 	bf := New(WithBase(0), WithMax(0), WithJitter(JitterNone), WithMaxAttempts(0))
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = bf.Wait(ctx)
 	}
 }

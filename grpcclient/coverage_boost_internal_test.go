@@ -167,7 +167,7 @@ func TestRetryDelay(t *testing.T) {
 		minW, maxW := 10*time.Millisecond, 100*time.Millisecond
 		// attempt large enough that minW*2^attempt would blow past maxW; the
 		// result must land in [0.5*maxW, maxW) after jitter.
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			got := retryDelay(20, minW, maxW)
 			if got < 50*time.Millisecond || got >= 100*time.Millisecond {
 				t.Fatalf("retryDelay(capped) = %v, want within [50ms, 100ms)", got)
@@ -201,7 +201,7 @@ func TestRetryDelay(t *testing.T) {
 		// attempt=0 → backoff = minW (no doubling yet); jitter lands in
 		// [0.5*minW, minW).
 		minW, maxW := 20*time.Millisecond, time.Second
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			got := retryDelay(0, minW, maxW)
 			if got < 10*time.Millisecond || got >= 20*time.Millisecond {
 				t.Fatalf("retryDelay(0) = %v, want within [10ms, 20ms)", got)

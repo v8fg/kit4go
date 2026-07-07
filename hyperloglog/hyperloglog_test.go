@@ -32,7 +32,7 @@ func TestDistinctCountAccuracy(t *testing.T) {
 	const n = 50000
 	for _, p := range []uint8{12, 14} {
 		h, _ := New(p)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			h.AddString(fmt.Sprintf("user-%d", i))
 		}
 		est := h.Estimate()
@@ -45,7 +45,7 @@ func TestDistinctCountAccuracy(t *testing.T) {
 // Adding the SAME element many times must not move the estimate.
 func TestDuplicatesDoNotInflate(t *testing.T) {
 	h, _ := New(14)
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		h.AddString("same-user")
 	}
 	require.Less(t, h.Estimate(), 10.0) // ~1 distinct
@@ -53,7 +53,7 @@ func TestDuplicatesDoNotInflate(t *testing.T) {
 
 func TestReset(t *testing.T) {
 	h, _ := New(14)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		h.AddString(fmt.Sprintf("k%d", i))
 	}
 	require.Greater(t, h.Estimate(), 0.0)
@@ -65,7 +65,7 @@ func TestMerge(t *testing.T) {
 	const half = 20000
 	a, _ := New(14)
 	b, _ := New(14)
-	for i := 0; i < half; i++ {
+	for i := range half {
 		a.AddString(fmt.Sprintf("u-%d", i))
 		b.AddString(fmt.Sprintf("u-%d", half+i)) // disjoint
 	}
@@ -82,7 +82,7 @@ func TestMerge(t *testing.T) {
 func TestDeterministic(t *testing.T) {
 	h1, _ := New(14)
 	h2, _ := New(14)
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		s := fmt.Sprintf("x-%d", i)
 		h1.AddString(s)
 		h2.AddString(s)
@@ -104,7 +104,7 @@ func TestLowPrecisionEstimates(t *testing.T) {
 	for _, p := range []uint8{4, 5, 6} {
 		h, _ := New(p)
 		const n = 200
-		for i := 0; i < n; i++ {
+		for i := range n {
 			h.AddString(fmt.Sprintf("k-%d", i))
 		}
 		// Low precision = high error; just assert it is positive and in a loose
@@ -170,11 +170,11 @@ func TestConcurrency_ShardedMerge(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	wg.Add(g)
-	for i := 0; i < g; i++ {
+	for i := range g {
 		i := i
 		go func() {
 			defer wg.Done()
-			for j := 0; j < per; j++ {
+			for j := range per {
 				shards[i].AddString(fmt.Sprintf("u-%d", i*per+j))
 			}
 		}()

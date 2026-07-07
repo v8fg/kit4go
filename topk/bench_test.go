@@ -13,7 +13,7 @@ func benchKey(i int) string { return strconv.Itoa(i) }
 // empty counts map and a zero-length itemHeap slice; it should be allocation-light.
 func BenchmarkNew(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = New(10)
 	}
 }
@@ -39,12 +39,12 @@ func BenchmarkTouchIncrement(b *testing.B) {
 	const k = 10
 	tr := New(k)
 	// Fill the set so "hot" is already admitted.
-	for i := 0; i < k; i++ {
+	for i := range k {
 		tr.TouchN(benchKey(i), int64(k-i)) // distinct counts
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		tr.Touch("hot")
 	}
 }
@@ -59,7 +59,7 @@ func BenchmarkTouchEvict(b *testing.B) {
 		b.StopTimer()
 		tr := New(k)
 		// Pre-fill with low counts so each subsequent touch evicts the min.
-		for j := 0; j < k; j++ {
+		for j := range k {
 			tr.TouchN(benchKey(j), 1)
 		}
 		b.StartTimer()
@@ -89,12 +89,12 @@ func BenchmarkTouchHighCardinality(b *testing.B) {
 func BenchmarkTouchN(b *testing.B) {
 	const k = 10
 	tr := New(k)
-	for i := 0; i < k; i++ {
+	for i := range k {
 		tr.TouchN(benchKey(i), 1)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		tr.TouchN("hot", 1)
 	}
 }
@@ -104,12 +104,12 @@ func BenchmarkTouchN(b *testing.B) {
 func BenchmarkTop(b *testing.B) {
 	const k = 10
 	tr := New(k)
-	for i := 0; i < k; i++ {
+	for i := range k {
 		tr.TouchN(benchKey(i), int64(k-i))
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = tr.Top()
 	}
 }
@@ -120,8 +120,8 @@ func BenchmarkCount(b *testing.B) {
 	tr := New(k)
 	tr.TouchN("hot", 42)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = tr.Count("hot")
 	}
 }
@@ -131,10 +131,10 @@ func BenchmarkCount(b *testing.B) {
 func BenchmarkTopK100(b *testing.B) {
 	const k = 100
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		b.StopTimer()
 		tr := New(k)
-		for j := 0; j < k; j++ {
+		for j := range k {
 			tr.TouchN(benchKey(j), int64(j))
 		}
 		b.StartTimer()

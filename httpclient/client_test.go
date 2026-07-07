@@ -354,7 +354,7 @@ func TestClient_Metrics_Accumulate(t *testing.T) {
 	defer srv.Close()
 
 	c := httpclient.NewClient(fastOpts())
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if _, err := c.Get(context.Background(), srv.URL, nil); err != nil {
 			t.Fatalf("Get[%d]: %v", i, err)
 		}
@@ -430,7 +430,7 @@ func TestClient_Concurrent_RaceSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(n)
 	errCh := make(chan error, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
 			resp, err := c.Get(context.Background(), srv.URL, nil)

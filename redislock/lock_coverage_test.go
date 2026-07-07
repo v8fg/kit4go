@@ -75,7 +75,7 @@ func TestLock_SelectsContextDone(t *testing.T) {
 	require.NoError(t, err)
 
 	var sawCanceled, sawNotAcquired atomic.Int64
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		lk := redislock.New(client, redislock.WithRetryInterval(time.Millisecond))
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // already cancelled before Lock starts
@@ -107,7 +107,7 @@ func TestLock_SelectsContextDone(t *testing.T) {
 // <-ctx.Done() and <-ticker.C at random once two are ready), so it may still
 // miss occasionally; that is inherent to the design and not a test defect.
 func TestHandleLoss_StopClosedDuringLoss(t *testing.T) {
-	for i := 0; i < 120; i++ {
+	for i := range 120 {
 		client, mr := newClient(t)
 		var fired atomic.Int64
 		lk := redislock.New(client,

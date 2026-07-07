@@ -12,8 +12,8 @@ func BenchmarkDoSuccess(b *testing.B) {
 	ctx := context.Background()
 	fn := func(context.Context) (int, error) { return 1, nil }
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		r := Do(ctx, fn, WithMaxAttempts(3))
 		if r.Err != nil {
 			b.Fatal(r.Err)
@@ -28,8 +28,8 @@ func BenchmarkDoRetryableFail(b *testing.B) {
 	fail := errors.New("transient")
 	fn := func(context.Context) (int, error) { return 0, fail }
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = Do(ctx, fn, WithMaxAttempts(3), WithBackoff(NoBackoff()))
 	}
 }
@@ -41,8 +41,8 @@ func BenchmarkDoPermanentFail(b *testing.B) {
 	fail := errors.New("permanent")
 	fn := func(context.Context) (int, error) { return 0, fail }
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = Do(ctx, fn, WithMaxAttempts(3), WithRetryable(func(error) bool { return false }))
 	}
 }

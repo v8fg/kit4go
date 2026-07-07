@@ -14,7 +14,7 @@ func ExampleNew() {
 	pool := workerpool.New[int](2, workerpool.WithQueueSize[int](8))
 	ctx := context.Background()
 
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		i := i
 		_ = pool.Submit(ctx, func(_ context.Context) (int, error) {
 			fmt.Println("processed", i)

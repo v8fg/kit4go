@@ -88,12 +88,12 @@ func TestCore_defaultLogger_CASRaceLoser(t *testing.T) {
 	// rounds that the loser path is hit at least once under any scheduler.
 	const rounds = 120
 	const perRound = 16
-	for r := 0; r < rounds; r++ {
+	for range rounds {
 		loggerDefault.Store((*Logger)(nil))
 		var wg sync.WaitGroup
 		start := make(chan struct{})
 		wg.Add(perRound)
-		for i := 0; i < perRound; i++ {
+		for range perRound {
 			go func() {
 				defer wg.Done()
 				<-start
@@ -277,7 +277,7 @@ func TestCore_WebhookAlertSink_SendDroppedOnFull(t *testing.T) {
 	sink := NewWebhookAlertSink(srv.URL, 1, LarkTextFormatter("u"))
 	defer sink.Close()
 	// flood far beyond the queue size: many will be dropped via the default branch
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		sink.Send(AlertError, "overflow", "msg")
 	}
 }

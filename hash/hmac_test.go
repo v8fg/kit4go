@@ -74,10 +74,10 @@ func TestHMAC_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan string, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				if HMACSHA256Hex([]byte("k"), []byte("d")) != want {
 					errs <- "mismatch"
 					return

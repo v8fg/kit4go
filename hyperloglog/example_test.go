@@ -10,7 +10,7 @@ import (
 // deterministic Output assertion — it shows the usage, not a checked result.
 func ExampleHyperLogLog() {
 	h, _ := hyperloglog.New(14) // precision 14: ~16 KB registers, ~0.8% error
-	for i := 0; i < 100_000; i++ {
+	for i := range 100_000 {
 		h.AddString(fmt.Sprintf("user-%d", i))
 	}
 	fmt.Printf("estimated distinct users: %.0f\n", h.Estimate())

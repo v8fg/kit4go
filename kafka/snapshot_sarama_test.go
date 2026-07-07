@@ -31,7 +31,7 @@ func TestProducer_SnapshotHistory(t *testing.T) {
 	p := asyncMockProducer(t, 3)
 	defer p.Close()
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		s := p.Snapshot()
 		if s.Timestamp.IsZero() {
 			t.Fatal("Snapshot.Timestamp is zero")

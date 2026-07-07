@@ -77,7 +77,7 @@ func TestAddRecurring(t *testing.T) {
 	clock := useClock(w, timer, 20*time.Millisecond)
 	// Advance past several intervals; the recurring reschedule reads the same
 	// injected clock, so each tick is deterministic.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		clock.advance(20 * time.Millisecond)
 		w.wake()
 		fireSync()
@@ -142,7 +142,7 @@ func TestManyTimers(t *testing.T) {
 	defer w.Close()
 	var fired atomic.Int64
 	const n = 100
-	for i := 0; i < n; i++ {
+	for i := range n {
 		w.Add(time.Duration(i+1)*time.Millisecond, func() { fired.Add(1) })
 	}
 	time.Sleep(200 * time.Millisecond)

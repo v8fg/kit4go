@@ -73,7 +73,7 @@ func TestBootstrap_LegacyRecordsClose(t *testing.T) {
 	records2 := make(chan *Record, 512)
 	l2 := newLoggerWithRecords(records2)
 	l2.Register(drainSlowWriter{})
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		records2 <- &Record{level: INFO, msg: "backlog"}
 	}
 	time.Sleep(20 * time.Millisecond) // let the bootstrap drain some (slowly)

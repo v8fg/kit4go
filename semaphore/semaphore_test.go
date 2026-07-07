@@ -133,7 +133,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	var wg sync.WaitGroup
 	const workers = 20
 	wg.Add(workers)
-	for i := 0; i < workers; i++ {
+	for range workers {
 		go func() {
 			defer wg.Done()
 			require.NoError(t, s.Acquire(context.Background(), 1))
@@ -218,7 +218,7 @@ func TestReleaseAfterCloseIsNoop(t *testing.T) {
 // (the second select also has a closed case). Run many iterations to exercise
 // both resolutions under the race detector.
 func TestAcquireUnitAfterClose(t *testing.T) {
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		s := New(1)
 		require.NoError(t, s.Acquire(context.Background(), 1)) // drain the only permit
 		s.Close()

@@ -61,7 +61,7 @@ func TestWriter_PauseDrops(t *testing.T) {
 	r := &Record{level: INFO, msg: "hi", time: "t"}
 
 	w.Pause()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_ = w.Write(r)
 	}
 	if buf.Len() != 0 {
@@ -136,7 +136,7 @@ func TestWriter_PauseResume_Concurrent(t *testing.T) {
 
 	var stop atomic.Bool
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

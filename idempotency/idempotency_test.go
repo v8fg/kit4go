@@ -29,7 +29,7 @@ func TestDo_RunsOnceSequentialRepeat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 42, v)
 	// Repeats within TTL serve from cache (no new call).
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		v, err = c.Do(context.Background(), "k", slow)
 		require.NoError(t, err)
 		require.Equal(t, 42, v)
@@ -63,7 +63,7 @@ func TestDo_ConcurrentCoalescing_RunsOnce(t *testing.T) {
 	errs := make([]error, n)
 	start := make(chan struct{})
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		i := i
 		go func() {
 			defer wg.Done()

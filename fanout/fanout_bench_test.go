@@ -49,12 +49,12 @@ func BenchmarkPublishBlocking(b *testing.B) {
 // BenchmarkSubscribers measures the subscriber-count accessor (read lock).
 func BenchmarkSubscribers(b *testing.B) {
 	f := New[int]()
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		f.Subscribe()
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = f.Subscribers()
 	}
 }

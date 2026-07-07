@@ -39,12 +39,12 @@ func BenchmarkTryPushTryPopParallel(b *testing.B) {
 // BenchmarkLen measures the Len accessor (acquires the mutex).
 func BenchmarkLen(b *testing.B) {
 	rb := New[int](16)
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		rb.TryPush(i)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = rb.Len()
 	}
 }

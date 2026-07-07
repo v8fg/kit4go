@@ -613,7 +613,7 @@ func Test_KafkaWriter_Start_ResumeSpillFullChannel(t *testing.T) {
 		var hdr [4]byte
 		oneRec, _ := ProducerMsgCodec.Encode(spillerMsg("t", "seeded"))
 		binary.BigEndian.PutUint32(hdr[:], uint32(len(oneRec)))
-		for i := 0; i < 8; i++ { // 8 records, BufferSize=2 -> channel fills fast
+		for range 8 { // 8 records, BufferSize=2 -> channel fills fast
 			_, _ = fh.Write(hdr[:])
 			_, _ = fh.Write(oneRec)
 		}
@@ -655,7 +655,7 @@ func Test_KafkaWriter_Start_ResumeSpillFullChannel(t *testing.T) {
 		oneRec, _ := ProducerMsgCodec.Encode(spillerMsg("t", "seeded"))
 		binary.BigEndian.PutUint32(hdr[:], uint32(len(oneRec)))
 		// Write many records into the seeded spill.log.
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			_, _ = fh.Write(hdr[:])
 			_, _ = fh.Write(oneRec)
 		}

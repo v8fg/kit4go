@@ -142,7 +142,7 @@ func TestResizeDisableEviction(t *testing.T) {
 
 func TestDefaultMaxSize1024(t *testing.T) {
 	c := New[int, int]()
-	for i := 0; i < 1100; i++ {
+	for i := range 1100 {
 		c.Set(i, i)
 	}
 	require.Equal(t, 1024, c.Len())
@@ -231,20 +231,20 @@ func TestConcurrency(t *testing.T) {
 	const goroutines = 32
 	wg.Add(goroutines * 2)
 	// writers
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		i := i
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 500; j++ {
+			for j := range 500 {
 				c.Set(i*1000+j, j)
 			}
 		}()
 	}
 	// readers
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 500; j++ {
+			for j := range 500 {
 				c.Get(j)
 				c.Peek(j % 10)
 				c.Len()

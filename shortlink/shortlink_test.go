@@ -46,7 +46,7 @@ func TestShortener_CollisionRetry(t *testing.T) {
 	// Generate 100 codes — with length 2 (62^2 = 3844 space), collisions are
 	// rare but the retry logic must handle them if they occur.
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		code, err := s.Generate("https://example.com")
 		if err != nil {
 			t.Fatalf("generate %d: %v", i, err)
@@ -100,13 +100,13 @@ func TestMemoryStore_ConcurrentSafe(t *testing.T) {
 	done := make(chan struct{})
 	// Writer
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_ = store.Save("c", "url")
 		}
 		close(done)
 	}()
 	// Reader
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, _ = store.Load("c")
 	}
 	<-done

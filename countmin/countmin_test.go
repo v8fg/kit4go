@@ -30,13 +30,13 @@ func TestAddSingleDefault(t *testing.T) {
 func TestHeavyHitterStandsOut(t *testing.T) {
 	c := New(4096, 6)
 	// A heavy key (10000) among 1000 rare keys (~3 each).
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		k := fmt.Sprintf("rare-%d", i)
 		c.AddString(k)
 		c.AddString(k)
 		c.AddString(k)
 	}
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		c.AddString("heavy")
 	}
 	est := c.EstimateString("heavy")
@@ -91,7 +91,7 @@ func TestDefaults(t *testing.T) {
 
 func TestDeterministic(t *testing.T) {
 	a, b := New(2048, 5), New(2048, 5)
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		s := fmt.Sprintf("k-%d", i)
 		a.AddString(s)
 		b.AddString(s)
@@ -109,11 +109,11 @@ func TestConcurrency_ShardedMerge(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	wg.Add(g)
-	for i := 0; i < g; i++ {
+	for i := range g {
 		i := i
 		go func() {
 			defer wg.Done()
-			for j := 0; j < per; j++ {
+			for j := range per {
 				shards[i].AddString(fmt.Sprintf("k-%d", i*per+j))
 			}
 		}()

@@ -391,7 +391,7 @@ func TestClient_PoolReuse(t *testing.T) {
 	// Three sequential Sends (write-only) against a persistent echo: the pooled
 	// connection is returned after each Send and reused by the next, so the
 	// server should accept exactly one connection.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := c.Send(context.Background(), []byte("reuse")); err != nil {
 			t.Fatalf("Send[%d]: %v", i, err)
 		}
@@ -444,7 +444,7 @@ func TestClient_PoolExhaustion_DialsExtra(t *testing.T) {
 	wg.Add(n)
 	errCh := make(chan error, n)
 	start := make(chan struct{})
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
 			<-start
@@ -630,7 +630,7 @@ func TestClient_Metrics_Accumulate(t *testing.T) {
 	c := tcpclient.NewClient(opts)
 	defer c.Close()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if _, err := c.SendReceive(context.Background(), []byte("m")); err != nil {
 			t.Fatalf("SendReceive[%d]: %v", i, err)
 		}
@@ -663,7 +663,7 @@ func TestClient_Concurrent_RaceSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(n)
 	errCh := make(chan error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			payload := []byte(fmt.Sprintf("g-%d", i))
@@ -901,7 +901,7 @@ func hasString(xs []string, s string) bool {
 // as soon as the write is flushed, before the server goroutine has run its
 // increment). Polling makes the pool/eviction assertions deterministic.
 func waitForConns(counter *uint64, want uint64) bool {
-	for i := 0; i < 40; i++ {
+	for range 40 {
 		if atomic.LoadUint64(counter) >= want {
 			return true
 		}

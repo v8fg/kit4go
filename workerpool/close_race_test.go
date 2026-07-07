@@ -13,14 +13,12 @@ import (
 func TestPool_ConcurrentSubmitClose_NoPanic(t *testing.T) {
 	p := New[int](4, WithQueueSize[int](4))
 	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 2000; j++ {
+	for range 16 {
+		wg.Go(func() {
+			for j := range 2000 {
 				_ = p.Submit(context.Background(), func(context.Context) (int, error) { return j, nil })
 			}
-		}()
+		})
 	}
 	p.Close() // racing the 16 submitters
 	wg.Wait()
@@ -30,7 +28,7 @@ func TestPool_ConcurrentSubmitClose_NoPanic(t *testing.T) {
 // the fix, workers blocked on `results <-` and Close's wg.Wait never returned.
 func TestPool_CloseWithUndrainedResults_NoDeadlock(t *testing.T) {
 	p := New[int](2, WithResults[int](1)) // results buffer 1, deliberately not drained
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		_ = p.TrySubmit(context.Background(), func(context.Context) (int, error) { return i, nil })
 	}
 	done := make(chan struct{})

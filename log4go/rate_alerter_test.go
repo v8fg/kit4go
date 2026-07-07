@@ -10,7 +10,7 @@ import (
 // Test_RateAlerter_BelowThreshold: events under the threshold never fire.
 func Test_RateAlerter_BelowThreshold(t *testing.T) {
 	a := NewRateAlerter(time.Minute, 5)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if a.Allow() {
 			t.Fatalf("fired at event %d below threshold 5", i+1)
 		}
@@ -25,7 +25,7 @@ func Test_RateAlerter_BelowThreshold(t *testing.T) {
 func Test_RateAlerter_AtThreshold(t *testing.T) {
 	a := NewRateAlerter(time.Minute, 3)
 	var fires int
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		if a.Allow() {
 			fires++
 		}
@@ -41,7 +41,7 @@ func Test_RateAlerter_CooldownAllowsRefire(t *testing.T) {
 	a := NewRateAlerter(time.Minute, 3)
 	a.SetCooldown(0) // no cooldown: every qualifying event fires
 	var fires int
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		if a.Allow() {
 			fires++
 		}
@@ -57,7 +57,7 @@ func Test_RateAlerter_CooldownAllowsRefire(t *testing.T) {
 func Test_RateAlerter_WindowExpiry(t *testing.T) {
 	a := newRateAlerterAt(time.Minute, 3, time.Unix(1_000_000, 0))
 	// fill to threshold at t0
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		a.allowAt(time.Unix(1_000_000, 0))
 	}
 	// jump forward past the window; advance+allow should see an empty window
@@ -76,18 +76,16 @@ func Test_RateAlerter_Concurrent(t *testing.T) {
 	a := NewRateAlerter(2*time.Second, 100)
 	var wg sync.WaitGroup
 	var fires int64
-	for g := 0; g < 16; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 16 {
+		wg.Go(func() {
 			var local int64
-			for i := 0; i < 1000; i++ {
+			for range 1000 {
 				if a.Allow() {
 					local++
 				}
 			}
 			atomic.AddInt64(&fires, local)
-		}()
+		})
 	}
 	wg.Wait()
 	// 16*1000 = 16000 events over a 2s window; threshold 100 with 2s cooldown
@@ -108,10 +106,10 @@ func Test_RateAlerter_Concurrent_NoLoss(t *testing.T) {
 	const perG = 1000
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for g := 0; g < goroutines; g++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < perG; i++ {
+			for range perG {
 				a.Allow()
 			}
 		}()

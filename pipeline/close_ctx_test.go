@@ -14,7 +14,7 @@ func TestPipeline_CloseWithoutDrainingOut_NoDeadlock(t *testing.T) {
 		return n * 2, true, nil
 	})
 	// Fill the output buffer and wedge workers on the out-send (no consumer).
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		go func(i int) { _ = p.Send(context.Background(), i) }(i)
 	}
 	time.Sleep(50 * time.Millisecond) // let workers produce + block on full out

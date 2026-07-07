@@ -42,7 +42,7 @@ func FuzzGenerateUnique(f *testing.F) {
 		s := New(WithCodeLength(codeLen))
 		seen := make(map[string]struct{}, n)
 
-		for i := 0; i < n; i++ {
+		for i := range n {
 			code, err := s.Generate("https://example.com/u")
 			if err != nil {
 				// A non-recoverable store error is a real failure; the default
@@ -101,7 +101,7 @@ func FuzzIDShortener(f *testing.F) {
 		s := NewIDShortener(Alphabet, startID)
 
 		seen := make(map[string]uint64, count)
-		for i := uint64(0); i < count; i++ {
+		for i := range count {
 			id := startID + i
 
 			// 1. Determinism: re-encoding the same ID must be stable.

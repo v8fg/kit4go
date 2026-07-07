@@ -157,7 +157,7 @@ func Test_AddContextExtractor_Concurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	// writers: keep registering extractors
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -167,14 +167,12 @@ func Test_AddContextExtractor_Concurrent(t *testing.T) {
 		}(i)
 	}
 	// readers: keep building WithContext children (reads the snapshot)
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 50; j++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 50 {
 				_ = root.WithContext(context.Background())
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

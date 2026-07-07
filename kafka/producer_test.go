@@ -23,7 +23,7 @@ func mockAsyncCfg() *sarama.Config {
 func TestProducer_Async_SendSuccess(t *testing.T) {
 	mp := mocks.NewAsyncProducer(t, mockAsyncCfg())
 	const n = 5
-	for i := 0; i < n; i++ {
+	for range n {
 		mp.ExpectInputAndSucceed()
 	}
 	p, err := newSaramaProducer(Options{Brokers: []string{"x"}, Topic: "t"}.withDefaults(),
@@ -31,7 +31,7 @@ func TestProducer_Async_SendSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if err := p.Send(context.Background(), Message{Value: []byte("hi")}); err != nil {
 			t.Fatalf("Send[%d]: %v", i, err)
 		}

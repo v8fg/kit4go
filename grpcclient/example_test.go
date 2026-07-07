@@ -93,7 +93,7 @@ func ExampleMiddleware_Metrics() {
 	conn := dialBufconn(fakeT{}, dialer, mw)
 	defer conn.Close()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if _, err := echoUnary(context.Background(), conn, wrapperspb.String("ping")); err != nil {
 			fmt.Println("error:", err)
 			return

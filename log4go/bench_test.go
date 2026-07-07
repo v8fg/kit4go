@@ -41,7 +41,7 @@ func Test_MemSustained_1M(t *testing.T) {
 	runtime.ReadMemStats(&before)
 
 	const n = 1_000_000
-	for i := 0; i < n; i++ {
+	for range n {
 		lg.Info("x")
 	}
 	lg.Close()
@@ -87,7 +87,7 @@ func Test_LoggerDeliversRecords(t *testing.T) {
 	lg.Register(cw)
 
 	const n = 100
-	for i := 0; i < n; i++ {
+	for i := range n {
 		lg.Info("record %d", i)
 	}
 	lg.Close()
@@ -121,8 +121,8 @@ func Benchmark_LoggerInfoNoCaller(b *testing.B) {
 	lg.Register(discardWriter{})
 	defer lg.Close()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		lg.Info("x")
 	}
 }

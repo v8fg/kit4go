@@ -159,11 +159,9 @@ func TestRun_NoSignal(t *testing.T) {
 	m.Add("svc", func(context.Context) error { rec.record("start"); return nil }, func(context.Context) error { rec.record("stop"); return nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_ = m.Run(ctx)
-	}()
+	})
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	wg.Wait()

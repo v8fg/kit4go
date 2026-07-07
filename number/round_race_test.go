@@ -42,10 +42,10 @@ func TestSetRegForNumberNoDataRace(t *testing.T) {
 
 	// Swappers: flip between reg6 and reg7 for the whole test duration.
 	wg.Add(swappers)
-	for i := 0; i < swappers; i++ {
+	for i := range swappers {
 		go func(use7 bool) {
 			defer wg.Done()
-			for j := 0; j < 2000; j++ {
+			for range 2000 {
 				number.SetRegForNumber(use7)
 				use7 = !use7
 			}
@@ -55,10 +55,10 @@ func TestSetRegForNumberNoDataRace(t *testing.T) {
 	// Readers: hammer the read sites (Round -> RestoreToRealNumberStr and
 	// regSplitNormalNumber) while the regex is being swapped underneath.
 	wg.Add(readers)
-	for r := 0; r < readers; r++ {
+	for range readers {
 		go func() {
 			defer wg.Done()
-			for n := 0; n < 4000; n++ {
+			for n := range 4000 {
 				for _, f := range inputsF64 {
 					_ = number.RoundTrunc(f, precisions[n%len(precisions)])
 					_ = number.RestoreToRealNumberStr(f)

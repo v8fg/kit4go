@@ -27,7 +27,7 @@ func TestCap(t *testing.T) {
 
 func TestNeverExceedsK(t *testing.T) {
 	s := New[int](3)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		s.Offer(i)
 	}
 	require.Equal(t, 10000, s.Count())
@@ -52,7 +52,7 @@ func TestUniformDistribution(t *testing.T) {
 	const k = 10
 	const runs = 5000
 	freq := make([]int, n+1) // freq[item]
-	for run := uint64(0); run < runs; run++ {
+	for run := range uint64(runs) {
 		s := NewWithOpts[int](k, WithSeed[int](run, run+1))
 		for i := 1; i <= n; i++ {
 			s.Offer(i)
@@ -73,7 +73,7 @@ func TestUniformDistribution(t *testing.T) {
 func TestDeterministicWithSeed(t *testing.T) {
 	s1 := NewWithOpts[int](5, WithSeed[int](42, 43))
 	s2 := NewWithOpts[int](5, WithSeed[int](42, 43))
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		s1.Offer(i)
 		s2.Offer(i)
 	}
@@ -85,7 +85,7 @@ func TestConcurrentOffer(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			s.Offer(i)
 		}
 	}()

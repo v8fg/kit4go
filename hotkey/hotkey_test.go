@@ -22,10 +22,10 @@ func TestTopReturnsHeaviestFirst(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1000, 0)}
 	d := New(time.Second, 3, WithClock(clk.now))
 	// "hot" gets 10 hits, "warm" gets 3, "cold" gets 1.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		d.Touch("hot")
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		d.Touch("warm")
 	}
 	d.Touch("cold")
@@ -42,7 +42,7 @@ func TestTopReturnsHeaviestFirst(t *testing.T) {
 
 func TestTopLimitedToK(t *testing.T) {
 	d := New(time.Second, 2)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		d.Touch("a")
 		d.Touch("b")
 		d.Touch("c") // c will be excluded (only top 2)
@@ -150,7 +150,7 @@ func TestWithMaxKeysZeroIsUnbounded(t *testing.T) {
 	// for cap reasons (idle pruning still applies within the window).
 	clk := &fakeClock{t: time.Unix(7000, 0)}
 	d2 := New(time.Hour, 100, WithMaxKeys(0), WithClock(clk.now))
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		clk.t = clk.t.Add(time.Millisecond)
 		d2.Touch(fmt.Sprintf("k%d", i))
 	}
@@ -224,14 +224,14 @@ func TestConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	const g = 16
 	wg.Add(g)
-	for i := 0; i < g; i++ {
+	for i := range g {
 		key := "hot"
 		if i%3 == 0 {
 			key = "warm"
 		}
 		go func(k string) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				d.Touch(k)
 			}
 		}(key)

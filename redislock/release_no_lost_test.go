@@ -17,7 +17,7 @@ import (
 // only on a real loss" contract and aborting critical sections on graceful
 // shutdown.
 func TestAutoRenew_ReleaseDoesNotFireOnLost(t *testing.T) {
-	for i := 0; i < 5; i++ { // repeat to catch the Release-vs-renew race
+	for i := range 5 { // repeat to catch the Release-vs-renew race
 		client, _ := newClient(t)
 		var lostCount atomic.Int64
 		lk := redislock.New(client,

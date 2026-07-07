@@ -77,7 +77,7 @@ func TestSubmitAfterClose(t *testing.T) {
 func TestCloseDrainsQueue(t *testing.T) {
 	p := New[int](1, WithQueueSize[int](5))
 	var processed atomic.Int64
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		require.NoError(t, p.Submit(context.Background(), func(ctx context.Context) (int, error) {
 			processed.Add(1)
 			return 0, nil
@@ -99,10 +99,8 @@ func TestConcurrencyLimit(t *testing.T) {
 	var concurrent atomic.Int64
 	var maxConcurrent atomic.Int64
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			p.Submit(context.Background(), func(ctx context.Context) (int, error) {
 				c := concurrent.Add(1)
 				for {
@@ -115,7 +113,7 @@ func TestConcurrencyLimit(t *testing.T) {
 				concurrent.Add(-1)
 				return 0, nil
 			})
-		}()
+		})
 	}
 	wg.Wait()
 	p.Close()

@@ -23,10 +23,10 @@ func breakerTestConfig() breakerConfig {
 // the breaker trips to open. Returns the time at which it opened.
 func driveOpen(t *testing.T, b *kafkaBreaker, sends, errs int) time.Time {
 	t.Helper()
-	for i := 0; i < sends; i++ {
+	for range sends {
 		b.recordSend()
 	}
-	for i := 0; i < errs; i++ {
+	for range errs {
 		b.recordError()
 	}
 	opened := breakerBaseTime.Add(time.Second)
@@ -43,10 +43,10 @@ func TestBreaker_OpensOnHighErrorRate(t *testing.T) {
 		t.Fatal("new breaker should be closed")
 	}
 	// 4 sends, 3 errors → 75% >= 50%, but window not elapsed yet → still closed.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		b.recordSend()
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		b.recordError()
 	}
 	if b.isOpen() {
@@ -60,7 +60,7 @@ func TestBreaker_OpensOnHighErrorRate(t *testing.T) {
 
 func TestBreaker_StaysClosedOnLowErrorRate(t *testing.T) {
 	b := newKafkaBreaker(breakerTestConfig(), breakerBaseTime)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		b.recordSend()
 	}
 	b.recordError() // 25% < 50%
@@ -73,7 +73,7 @@ func TestBreaker_StaysClosedOnLowErrorRate(t *testing.T) {
 func TestBreaker_MinSamplesGuard(t *testing.T) {
 	b := newKafkaBreaker(breakerTestConfig(), breakerBaseTime)
 	// 3 sends, 3 errors → 100% but below minSamples (4) → don't trust it.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		b.recordSend()
 		b.recordError()
 	}
@@ -106,7 +106,7 @@ func TestBreaker_HalfOpenClosesOnRecovery(t *testing.T) {
 	b.evaluate(halfOpenAt) // → half-open
 
 	// Clean probe window: sends, no errors.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		b.recordSend()
 	}
 	b.evaluate(halfOpenAt.Add(time.Second)) // window elapsed
@@ -122,10 +122,10 @@ func TestBreaker_HalfOpenReopensOnContinuedErrors(t *testing.T) {
 	b.evaluate(halfOpenAt) // → half-open
 
 	// Still-bad probe window.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		b.recordSend()
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		b.recordError()
 	}
 	b.evaluate(halfOpenAt.Add(time.Second))
@@ -159,7 +159,7 @@ func TestBreaker_NoTransitionNoHook(t *testing.T) {
 	b := newKafkaBreaker(breakerTestConfig(), breakerBaseTime)
 	b.onTransition = func(string, string) { calls++ }
 	// Low error rate: closed -> closed (no real transition).
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		b.recordSend()
 	}
 	b.evaluate(breakerBaseTime.Add(time.Second))

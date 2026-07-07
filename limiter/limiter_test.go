@@ -112,7 +112,7 @@ func TestTokenBucket_BurstCapacity(t *testing.T) {
 	defer lm.Close()
 
 	got := 0
-	for i := 0; i < burst; i++ {
+	for range burst {
 		if lm.Allow() {
 			got++
 		}
@@ -196,7 +196,7 @@ func TestSlidingWindow_WithinAndOverRate(t *testing.T) {
 	defer lm.Close()
 
 	allowed := 0
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if lm.Allow() {
 			allowed++
 		}
@@ -244,10 +244,10 @@ func TestConcurrentAllow_TokenBucket(t *testing.T) {
 	var total atomic.Uint64
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < perG; j++ {
+			for range perG {
 				if lm.Allow() {
 					total.Add(1)
 				}
@@ -274,10 +274,10 @@ func TestConcurrentAllow_SlidingWindow(t *testing.T) {
 	const perG = 50
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < perG; j++ {
+			for range perG {
 				lm.Allow()
 			}
 		}()
@@ -317,7 +317,7 @@ func TestMetrics_Accurate_TokenBucket(t *testing.T) {
 	defer lm.Close()
 
 	// 3 should succeed (burst), 2 should fail.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if !lm.Allow() {
 			t.Fatalf("Allow %d failed", i)
 		}

@@ -134,7 +134,7 @@ func TestConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	const g = 16
 	wg.Add(g * 2)
-	for i := 0; i < g; i++ {
+	for i := range g {
 		i := i
 		go func() {
 			defer wg.Done()

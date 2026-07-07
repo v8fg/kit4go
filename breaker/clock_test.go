@@ -53,7 +53,7 @@ func newFakeBreaker(opts BreakerOptions) (*Breaker[int], *fakeClock) {
 // trips. Mirrors the breaker_test.failNTrips helper but operates on the
 // unexported *Breaker[int] so it can be used from this internal package.
 func failNTrips(b *Breaker[int], failErr error, max int) int {
-	for i := 0; i < max; i++ {
+	for i := range max {
 		_, err := b.Execute(context.Background(), func(context.Context) (int, error) {
 			return 0, failErr
 		})
@@ -172,7 +172,7 @@ func TestFakeClock_MetricsAccuracy(t *testing.T) {
 	}
 	b, clock := newFakeBreaker(opts)
 
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_, _ = b.Execute(context.Background(), func(context.Context) (int, error) { return 0, errCov })
 	}
 	if m := b.Metrics(); m.Total != 4 || m.Failures != 4 || m.Success != 0 || m.ConsecutiveFail != 4 {
@@ -210,7 +210,7 @@ func TestFakeClock_RepeatedTripRecover(t *testing.T) {
 		MinRequests:  4,
 	}
 	b, clock := newFakeBreaker(opts)
-	for cycle := 0; cycle < 3; cycle++ {
+	for cycle := range 3 {
 		failNTrips(b, errCov, 10)
 		if got := b.State(); got != StateOpen {
 			t.Fatalf("cycle %d: state=%s want open", cycle, got)
@@ -272,7 +272,7 @@ func TestFakeClock_SlidingWindowExpires(t *testing.T) {
 
 	_, _ = b.Execute(context.Background(), func(context.Context) (int, error) { return 0, errCov })
 	clock.add(1100 * time.Millisecond) // > 1s window: the failure expires
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, err := b.Execute(context.Background(), func(context.Context) (int, error) {
 			return 0, errCov
 		})
@@ -298,13 +298,13 @@ func TestFakeClock_WindowFullExpiryClearsStaleCounts(t *testing.T) {
 		MinRequests:  4,
 	}
 	b, clock := newFakeBreaker(opts)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, _ = b.Execute(context.Background(), func(context.Context) (int, error) {
 			return 0, errCov
 		})
 	}
 	clock.add(1100 * time.Millisecond) // full window expiry
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_, err := b.Execute(context.Background(), func(context.Context) (int, error) {
 			return 0, errCov
 		})

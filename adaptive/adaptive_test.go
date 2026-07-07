@@ -205,7 +205,7 @@ func TestSubmit_MultipleJobsDrained(t *testing.T) {
 	require.NoError(t, err)
 	defer p.Close()
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		require.NoError(t, p.Submit(context.Background(), i))
 	}
 	require.Eventually(t, func() bool { return ran.Load() == 20 }, time.Second, time.Millisecond)
@@ -303,7 +303,7 @@ func TestAutoscale_GrowsOnLowCPUAndBacklog(t *testing.T) {
 	defer func() { close(gate); p.Close() }()
 
 	// Submit enough jobs to keep a backlog while workers are gated.
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		trySubmit(t, p, i)
 	}
 	// Should grow up to MaxWorkers=4.
@@ -350,7 +350,7 @@ func TestAutoscale_ShrinksOnHighCPU(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		trySubmit(t, p, i)
 	}
 	require.Eventually(t, func() bool { return p.Workers() == 4 },
@@ -385,7 +385,7 @@ func TestAutoscale_HoldsAtMinOnHighCPU(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { close(gate); p.Close() }()
 
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		trySubmit(t, p, i)
 	}
 	time.Sleep(80 * time.Millisecond)
@@ -404,7 +404,7 @@ func TestAutoscale_RespectsMaxWorkers(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { close(gate); p.Close() }()
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		trySubmit(t, p, i)
 	}
 	require.Eventually(t, func() bool { return p.Workers() == 3 },
@@ -526,7 +526,7 @@ func TestClose_DrainsQueuedJobs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		require.NoError(t, p.Submit(context.Background(), i))
 	}
 	require.NoError(t, p.Close())
@@ -553,7 +553,7 @@ func TestClose_Bounded_NewSubmitsRejected(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, p.Close())
 	// Every post-close submit is rejected; no enqueue, no growth.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.ErrorIs(t, p.Submit(context.Background(), i), ErrClosed)
 	}
 }
@@ -584,7 +584,7 @@ func TestShrink_FinishesInFlightJob(t *testing.T) {
 	require.NoError(t, err)
 
 	// Grow to 2 first via backlog.
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		trySubmit(t, p, i)
 	}
 	require.Eventually(t, func() bool { return p.Workers() == 2 },
@@ -624,16 +624,14 @@ func TestWorkers_AtomicSnapshot(t *testing.T) {
 
 	var stop atomic.Bool
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 4 {
+		wg.Go(func() {
 			for !stop.Load() {
 				if w := p.Workers(); w < 1 || w > 4 {
 					t.Errorf("workers out of bounds: %d", w)
 				}
 			}
-		}()
+		})
 	}
 	time.Sleep(50 * time.Millisecond)
 	stop.Store(true)
@@ -696,7 +694,7 @@ func TestSubmit_ConcurrentCloseReturnsErrClosed(t *testing.T) {
 	// Race Submit against Close: a Submit in flight when done closes must hit
 	// the `case <-p.done: return ErrClosed` branch. Run many iterations under
 	// -race to surface any data race.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		p, err := New[int](func(int) {}, WithLoadMonitor[int](newFake(0.5)))
 		require.NoError(t, err)
 		go p.Close()
@@ -709,7 +707,7 @@ func TestSubmit_ConcurrentCloseReturnsErrClosed(t *testing.T) {
 
 func TestTrySubmit_ConcurrentCloseReturnsErrClosed(t *testing.T) {
 	// Same race coverage for TrySubmit's `case <-p.done` branch.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		p, err := New[int](func(int) {}, WithLoadMonitor[int](newFake(0.5)))
 		require.NoError(t, err)
 		go p.Close()

@@ -21,7 +21,7 @@ import (
 // send-on-closed panic). Run under -race -count=5 to catch flakiness.
 func Test_FileWriter_Async_SpillOverflowRecovery(t *testing.T) {
 	spillDir := t.TempDir()
-	for iter := 0; iter < 5; iter++ {
+	for iter := range 5 {
 		fw, dir := newAsyncFileWriter(t, FileWriterOptions{
 			AsyncBufferSize: 4, // deliberately tiny -> overflows into the spiller
 			OverflowPolicy:  "spill",
@@ -41,14 +41,12 @@ func Test_FileWriter_Async_SpillOverflowRecovery(t *testing.T) {
 		const perWorker = 5000
 		const workers = 4
 		var wg sync.WaitGroup
-		for w := 0; w < workers; w++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for i := 0; i < perWorker; i++ {
+		for range workers {
+			wg.Go(func() {
+				for range perWorker {
 					_ = fw.Write(&Record{level: INFO, time: "t", file: "f", msg: "spill stress"})
 				}
-			}()
+			})
 		}
 		wg.Wait()
 		// Do NOT sleep — we want the spiller hot at Stop to exercise the race.

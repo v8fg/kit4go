@@ -84,7 +84,7 @@ func TestShardHistogram_EmptySnapshot(t *testing.T) {
 // every sample is 0, the window sum is 0 and Mean stays 0.
 func TestShardHistogram_AllZeroSamples(t *testing.T) {
 	s := NewShardHistogram(4, Options{})
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		s.Observe(0)
 	}
 	st := s.Snapshot()

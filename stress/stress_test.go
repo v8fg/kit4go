@@ -421,7 +421,7 @@ func runConcurrent(n, concurrency int, fn func(i int) error) {
 	var wg sync.WaitGroup
 	wg.Add(n)
 	var failures atomic.Int64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		sem <- struct{}{}
 		go func(idx int) {
 			defer wg.Done()

@@ -25,7 +25,7 @@ func TestGetDeterministic(t *testing.T) {
 	a, ok := m.Get("auction-1")
 	require.True(t, ok)
 	// Same key + same membership => same node, always.
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		got, _ := m.Get("auction-1")
 		require.Equal(t, a, got)
 	}
@@ -34,7 +34,7 @@ func TestGetDeterministic(t *testing.T) {
 func TestStableOnAdd(t *testing.T) {
 	m := New[string](strID, WithNodes("n1", "n2", "n3", "n4"))
 	owners := make(map[string]string)
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		k := "k" + strconv.Itoa(i)
 		owners[k], _ = m.Get(k)
 	}
@@ -56,7 +56,7 @@ func TestStableOnAdd(t *testing.T) {
 func TestStableOnRemove(t *testing.T) {
 	m := New[string](strID, WithNodes("n1", "n2", "n3", "n4"))
 	owners := make(map[string]string)
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		k := "k" + strconv.Itoa(i)
 		owners[k], _ = m.Get(k)
 	}
@@ -93,7 +93,7 @@ func TestBalance(t *testing.T) {
 	m := New[string](strID, WithNodes("n1", "n2", "n3", "n4"))
 	counts := make(map[string]int)
 	const N = 40000
-	for i := 0; i < N; i++ {
+	for i := range N {
 		got, _ := m.Get(strconv.Itoa(i))
 		counts[got]++
 	}
@@ -145,11 +145,11 @@ func TestConcurrency(t *testing.T) {
 	var bad atomic.Int64
 	const g = 16
 	wg.Add(g * 2)
-	for i := 0; i < g; i++ {
+	for i := range g {
 		i := i
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 500; j++ {
+			for j := range 500 {
 				m.Add(100 + i*10 + (j % 5)) // churn
 				if _, ok := m.Get("k"); !ok && m.Len() > 0 {
 					bad.Add(1)
@@ -158,7 +158,7 @@ func TestConcurrency(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 500; j++ {
+			for range 500 {
 				m.GetN("k", 3)
 				m.Len()
 			}
@@ -216,12 +216,12 @@ func TestHashInputUnchanged(t *testing.T) {
 	// Snapshot ownership, then re-query many times; pool reuse + buffer
 	// recycling across sizes must yield identical selections every time.
 	first := make(map[string]string, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		k := strconv.Itoa(i)
 		first[k], _ = m.Get(k)
 	}
-	for rep := 0; rep < 10; rep++ {
-		for i := 0; i < N; i++ {
+	for rep := range 10 {
+		for i := range N {
 			k := strconv.Itoa(i)
 			got, ok := m.Get(k)
 			require.True(t, ok)

@@ -15,7 +15,7 @@ func Test_KafkaWriter_EndToEndMockProducer(t *testing.T) {
 	mp := newMockKafkaProducer()
 
 	const n = 200
-	for i := 0; i < n; i++ {
+	for range n {
 	}
 
 	var sentEvents int64
@@ -34,7 +34,7 @@ func Test_KafkaWriter_EndToEndMockProducer(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(50 * time.Millisecond) // let daemon + mock consumer schedule
-	for i := 0; i < n; i++ {
+	for range n {
 		if err := w.Write(&Record{level: INFO, msg: "x"}); err != nil {
 			t.Fatal(err)
 		}
@@ -77,7 +77,7 @@ func Test_KafkaWriter_MockProducerErrors(t *testing.T) {
 	}
 	// let the daemon + mock consumer goroutines schedule
 	time.Sleep(50 * time.Millisecond)
-	for i := 0; i < n; i++ {
+	for range n {
 		_ = w.Write(&Record{level: INFO, msg: "x"})
 	}
 	// wait for the async daemon to drain (mock consumer is timing-sensitive)

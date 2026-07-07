@@ -57,7 +57,7 @@ func Example_fileWriter() {
 	})
 	defer log4go.Close()
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		log4go.Info("request %d handled", i)
 	}
 }
@@ -74,7 +74,7 @@ func Example_shardLogger() {
 		Enable: true, Color: true, Level: log4go.LevelFlagInfo,
 	}))
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		sl.Info("shard line %d", i)
 	}
 	time.Sleep(100 * time.Millisecond) // let bootstrap goroutines drain
@@ -158,7 +158,7 @@ func Example_sampling() {
 	defer log4go.Close()
 
 	sampled := log4go.WithSampling(10, 100)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		sampled.Info("high-frequency event %d", i)
 	}
 }

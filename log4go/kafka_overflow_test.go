@@ -40,7 +40,7 @@ func Test_RingSpiller_PushDrain(t *testing.T) {
 // Test_RingSpiller_BoundedMemory verifies the ring never grows beyond capacity.
 func Test_RingSpiller_BoundedMemory(t *testing.T) {
 	r := NewRingSpiller[kafka.Message](16)
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		r.Push(spillerMsg("t", "x"))
 	}
 	if r.Len() != 16 {
@@ -93,7 +93,7 @@ func Test_FileSpiller_MaxBytes(t *testing.T) {
 	}
 	defer f.Close()
 	pushed := 0
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if f.Push(spillerMsg("t", "0123456789")) {
 			pushed++
 		}
@@ -136,8 +136,8 @@ func Benchmark_RingSpiller_Push(b *testing.B) {
 	r := NewRingSpiller[kafka.Message](1024)
 	m := spillerMsg("t", "x")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		r.Push(m)
 	}
 }
@@ -151,8 +151,8 @@ func Benchmark_FileSpiller_Push(b *testing.B) {
 	defer f.Close()
 	m := spillerMsg("t", "0123456789")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		f.Push(m)
 	}
 }

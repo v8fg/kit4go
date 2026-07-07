@@ -42,7 +42,7 @@ func ExampleNew() {
 		return
 	}
 
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		_ = pool.Submit(context.Background(), i)
 	}
 	pool.Close() // graceful: drains queued jobs and waits for workers

@@ -33,7 +33,7 @@ func TestRuntimeConfig_ConcurrentHotUpdateNoRace(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Hot mutators: rapidly change runtime config from several goroutines.
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -47,11 +47,11 @@ func TestRuntimeConfig_ConcurrentHotUpdateNoRace(t *testing.T) {
 	}
 
 	// Loggers: hammer the delivery path while config mutates underneath.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < 5000; j++ {
+			for j := range 5000 {
 				Info("concurrent hot-update %d/%d", i, j)
 			}
 		}(i)

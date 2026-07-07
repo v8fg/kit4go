@@ -198,7 +198,7 @@ func Test_Sampler_Policy(t *testing.T) {
 	s := newSampler(5, 10)
 	const total = 95
 	emitted := 0
-	for i := 0; i < total; i++ {
+	for range total {
 		if s.allow(INFO) {
 			emitted++
 		}
@@ -216,7 +216,7 @@ func Test_Sampler_Policy(t *testing.T) {
 func Test_Sampler_PerLevel(t *testing.T) {
 	s := newSampler(0, 100) // emit 1-in-100 from the start
 	// flood DEBUG
-	for i := 0; i < 500; i++ {
+	for range 500 {
 		s.allow(DEBUG)
 	}
 	// ERROR counter must be untouched by the DEBUG flood.
@@ -272,7 +272,7 @@ func Test_LoggerWithSampling_EndToEnd(t *testing.T) {
 	root.Register(cw)
 
 	child := root.WithSampling(10, 100)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		child.Info("sampled line %d", i)
 	}
 
@@ -414,12 +414,12 @@ func Test_LoggerClone_ConcurrentSafe(t *testing.T) {
 	root.SetLevel(DEBUG)
 
 	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
+	for g := range 8 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 			cl := root.With("g", id)
-			for i := 0; i < 100; i++ {
+			for i := range 100 {
 				cl.With("i", i).Info("concurrent %d/%d", id, i)
 			}
 		}(g)

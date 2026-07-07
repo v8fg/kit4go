@@ -35,7 +35,7 @@ func TestAllowBurst(t *testing.T) {
 	limit := rate.PerSecond(5, 5) // 5/sec, burst 5
 
 	// The first 5 (burst) are allowed.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		r, err := l.Allow(context.Background(), "k", limit)
 		require.NoError(t, err)
 		require.True(t, r.Allowed, "burst token %d should be allowed", i)
@@ -53,7 +53,7 @@ func TestAllowRecoversAfterInterval(t *testing.T) {
 	limit := rate.PerSecond(2, 2) // emission = 500ms
 
 	// Exhaust the burst.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, err := l.Allow(context.Background(), "k", limit)
 		require.NoError(t, err)
 	}
@@ -109,7 +109,7 @@ func TestCostExceedingBurstDenied(t *testing.T) {
 func TestRemainingNeverNegative(t *testing.T) {
 	l, _ := newLimiter(t, nil)
 	limit := rate.PerSecond(1, 1)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		r, _ := l.Allow(context.Background(), "k", limit)
 		require.GreaterOrEqual(t, r.Remaining, 0)
 	}
@@ -168,7 +168,7 @@ func TestRemainingClampedToBurst(t *testing.T) {
 	// Consume the full burst, then advance the clock well beyond the key's
 	// TTL so the stored TAT is stale; the next allow re-seeds tat=now and
 	// remaining must never exceed burst.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, err := l.Allow(context.Background(), "k", limit)
 		require.NoError(t, err)
 	}

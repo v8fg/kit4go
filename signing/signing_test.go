@@ -237,10 +237,10 @@ func TestVerify_Concurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	bad := make(chan bool, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				if !Verify(recv, testSecret, sig, WithNow(fixedNow)) {
 					bad <- true
 					return

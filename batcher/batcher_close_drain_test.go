@@ -22,7 +22,7 @@ func TestClose_FinalDrainHit(t *testing.T) {
 	const iterations = 200
 	var drainHit atomic.Int64
 
-	for iter := 0; iter < iterations; iter++ {
+	for iter := range iterations {
 		var flushedN atomic.Int64
 		// A flush callback that briefly sleeps on the FIRST call to widen the
 		// window between the collector's drain and Close's write-lock acquisition.

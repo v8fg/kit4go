@@ -20,7 +20,7 @@ func TestEmpty(t *testing.T) {
 func TestRoundRobin(t *testing.T) {
 	b := New(strID, []Entry[string]{{"a", 0}, {"b", 0}, {"c", 0}}, WithStrategy[string](StrategyRoundRobin))
 	got := make([]string, 0, 7)
-	for i := 0; i < 7; i++ {
+	for range 7 {
 		v, ok := b.Next()
 		require.True(t, ok)
 		got = append(got, v)
@@ -34,7 +34,7 @@ func TestRoundRobin(t *testing.T) {
 func TestSWRR_CanonicalDistribution(t *testing.T) {
 	b := New(strID, []Entry[string]{{"a", 5}, {"b", 1}, {"c", 1}})
 	var seq []string
-	for i := 0; i < 7; i++ {
+	for range 7 {
 		v, _ := b.Next()
 		seq = append(seq, v)
 	}
@@ -66,7 +66,7 @@ func TestSWRR_CanonicalDistribution(t *testing.T) {
 func TestSWRR_LongRunProportional(t *testing.T) {
 	b := New(strID, []Entry[string]{{"x", 3}, {"y", 1}})
 	counts := map[string]int{}
-	for i := 0; i < 8000; i++ {
+	for range 8000 {
 		v, _ := b.Next()
 		counts[v]++
 	}
@@ -80,7 +80,7 @@ func TestRandomDistribution(t *testing.T) {
 		WithStrategy[string](StrategyRandom))
 	counts := map[string]int{}
 	const N = 40000
-	for i := 0; i < N; i++ {
+	for range N {
 		v, _ := b.Next()
 		counts[v]++
 	}
@@ -95,7 +95,7 @@ func TestWeightedRandomDistribution(t *testing.T) {
 		WithStrategy[string](StrategyWeightedRandom))
 	counts := map[string]int{}
 	const N = 40000
-	for i := 0; i < N; i++ {
+	for range N {
 		v, _ := b.Next()
 		counts[v]++
 	}
@@ -125,7 +125,7 @@ func TestRemove(t *testing.T) {
 	b.Remove("b")
 	require.Equal(t, 2, b.Len())
 	// Remaining still selectable; b never appears.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		v, ok := b.Next()
 		require.True(t, ok)
 		require.NotEqual(t, "b", v)
@@ -153,10 +153,10 @@ func TestConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	const g = 16
 	wg.Add(g)
-	for i := 0; i < g; i++ {
+	for range g {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 500; j++ {
+			for range 500 {
 				_, ok := b.Next()
 				_ = ok
 			}
@@ -199,7 +199,7 @@ func TestWeightedRandomLastEntryReachable(t *testing.T) {
 	b := New(strID, []Entry[string]{{"a", 1}, {"b", 1}, {"c", 1}},
 		WithStrategy[string](StrategyWeightedRandom))
 	seen := map[string]bool{}
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		v, ok := b.Next()
 		require.True(t, ok)
 		seen[v] = true

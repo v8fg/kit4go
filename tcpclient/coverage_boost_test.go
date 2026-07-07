@@ -192,7 +192,7 @@ func TestRetryDelay_AllBranches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Run a few times because of jitter; assert within [minWant, maxWant].
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				d := retryDelay(tc.attempt, tc.minWait, tc.maxWait)
 				if tc.zeroWant {
 					if d != 0 {
@@ -870,7 +870,7 @@ func TestRetryDelay_OverflowGuard(t *testing.T) {
 	minWait := time.Duration(int64(1) << 60) // 1<<60, positive, large
 	maxWait := time.Duration(maxInt64)       // huge cap so the loop runs to overflow
 	// attempt >= 3 so the doubling loop iterates enough to overflow.
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		d := retryDelay(3, minWait, maxWait)
 		// After the overflow clamp backoff == maxWait; factor [0.5,1.0) yields
 		// [0.5*maxWait, maxWait). Any result in that range proves the guard ran.

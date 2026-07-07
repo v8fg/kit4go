@@ -13,8 +13,8 @@ func BenchmarkAcquireRelease(b *testing.B) {
 	s := New(1024)
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := s.Acquire(ctx, 1); err != nil {
 			b.Fatal(err)
 		}
@@ -43,8 +43,8 @@ func BenchmarkAcquireReleaseParallel(b *testing.B) {
 func BenchmarkTryAcquire(b *testing.B) {
 	s := New(1024)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if !s.TryAcquire(1) {
 			b.Fatal("TryAcquire failed")
 		}

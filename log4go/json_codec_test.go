@@ -81,8 +81,8 @@ func Benchmark_Record_JSON_Goccy(b *testing.B) {
 		fields: []field{fld("trace_id", "abc"), fld("user", 42), fld("route", "/api/v1")},
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = r.JSON()
 	}
 }
@@ -96,8 +96,8 @@ func Benchmark_Record_JSON_Std(b *testing.B) {
 		fields: []field{fld("trace_id", "abc"), fld("user", 42), fld("route", "/api/v1")},
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = r.JSON()
 	}
 }
@@ -111,8 +111,8 @@ func Benchmark_Record_JSON_Sonic(b *testing.B) {
 		fields: []field{fld("trace_id", "abc"), fld("user", 42), fld("route", "/api/v1")},
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = r.JSON()
 	}
 }
@@ -123,8 +123,8 @@ func Benchmark_Record_JSON_NoFields(b *testing.B) {
 	SetJSONCodec(JSONCodecGoccy)
 	r := &Record{level: INFO, time: "2026-06-25T15:04:05.000+0800", file: "svc.go:42", msg: "benchmark json payload"}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = r.JSON()
 	}
 }

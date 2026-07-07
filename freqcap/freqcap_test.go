@@ -114,7 +114,7 @@ func TestDefaultMaxKeysEvictsOverCeiling(t *testing.T) {
 
 	// Fill to the ceiling; each Allow triggers a prune of idle keys, so the
 	// map size never exceeds the cap while events are all in-window.
-	for i := 0; i < DefaultMaxKeys; i++ {
+	for i := range DefaultMaxKeys {
 		c.Allow(stringKey(i))
 	}
 	require.Equal(t, DefaultMaxKeys, c.Len())
@@ -134,7 +134,7 @@ func TestUnboundedNoEviction(t *testing.T) {
 		clk := &fakeClock{t: time.Unix(0, 0)}
 		c := New(time.Hour, 1, WithMaxKeys(0), WithClock(clk.now))
 		const n = 50
-		for i := 0; i < n; i++ {
+		for i := range n {
 			c.Allow(stringKey(i))
 		}
 		require.Equal(t, n, c.Len(), "unbounded map must not prune over the cap")
@@ -143,7 +143,7 @@ func TestUnboundedNoEviction(t *testing.T) {
 		clk := &fakeClock{t: time.Unix(0, 0)}
 		c := New(time.Hour, 1, WithMaxKeys(-1), WithClock(clk.now))
 		const n = 50
-		for i := 0; i < n; i++ {
+		for i := range n {
 			c.Allow(stringKey(i))
 		}
 		require.Equal(t, n, c.Len(), "negative maxKeys is unbounded after normalisation")
@@ -177,7 +177,7 @@ func TestConcurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	var allowed atomic.Int64
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		i := i
 		go func() {
 			defer wg.Done()
@@ -185,7 +185,7 @@ func TestConcurrency(t *testing.T) {
 			if i%2 == 0 {
 				key = "k2"
 			}
-			for j := 0; j < perG; j++ {
+			for range perG {
 				if c.Allow(key) {
 					allowed.Add(1)
 				}

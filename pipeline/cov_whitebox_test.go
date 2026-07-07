@@ -49,7 +49,7 @@ func TestProcess_DoneBranchWhileBlockedOnOut(t *testing.T) {
 
 	// Enqueue several items; senders block on the small input buffer until the
 	// worker drains them, but the output buffer (size 1) fills immediately.
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		go func(i int) { _ = p.Send(context.Background(), i) }(i)
 	}
 

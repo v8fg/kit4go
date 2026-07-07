@@ -146,7 +146,7 @@ func TestBeforeCall_HalfOpen_RaceLoser_Deterministic(t *testing.T) {
 	const contenders = 1024 // >> maxReq so a large batch of Add(1)s overflow
 	const rounds = 50
 
-	for round := 0; round < rounds; round++ {
+	for round := range rounds {
 		rb := NewBreaker[int](BreakerOptions{
 			MaxRequests:  uint32(maxReq),
 			Interval:     1 * time.Second,
@@ -163,7 +163,7 @@ func TestBeforeCall_HalfOpen_RaceLoser_Deterministic(t *testing.T) {
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		wg.Add(contenders)
-		for i := 0; i < contenders; i++ {
+		for range contenders {
 			go func() {
 				defer wg.Done()
 				<-start

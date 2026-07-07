@@ -32,7 +32,7 @@ var errSentinel = errors.New("boom")
 // failNTrips drives a freshly-built breaker to StateOpen by running failing fns
 // until it trips, returning the index of the trip call (1-based) or -1.
 func failNTrips[T any](b *breaker.Breaker[T], failErr error, max int) int {
-	for i := 0; i < max; i++ {
+	for i := range max {
 		_, err := b.Execute(context.Background(), func(ctx context.Context) (T, error) {
 			var zero T
 			return zero, failErr
@@ -110,7 +110,7 @@ func TestBreaker_MinRequestsThreshold(t *testing.T) {
 // failures out of four (>= 0.5) trip the breaker on the 4th call.
 func TestBreaker_FailRateThreshold(t *testing.T) {
 	b := breaker.NewBreaker[int](fastOpts()) // FailRate=0.5, MinRequests=4
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
 			return 0, errSentinel
 		})
@@ -136,7 +136,7 @@ func TestBreaker_DoesNotTripBelowFailRate(t *testing.T) {
 	}); !errors.Is(err, errSentinel) {
 		t.Fatalf("first-call err=%v want sentinel", err)
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
 			return i, nil
 		})
@@ -186,7 +186,7 @@ func TestBreaker_RejectsBeforeExpiry(t *testing.T) {
 	opts.OpenDuration = 1 * time.Hour // long: never expires during the test
 	b := breaker.NewBreaker[int](opts)
 	failNTrips(b, errSentinel, 10)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
 			t.Fatalf("fn must not run while open & unexpired")
 			return 1, nil
@@ -267,11 +267,11 @@ func TestBreaker_Concurrent(t *testing.T) {
 	const perG = 200
 	var wg sync.WaitGroup
 	var failCount int64
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		wg.Add(1)
 		go func(seed int) {
 			defer wg.Done()
-			for i := 0; i < perG; i++ {
+			for i := range perG {
 				fail := (i+seed)%2 == 0
 				_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
 					if fail {
@@ -347,7 +347,7 @@ func TestBreaker_FailRateZeroTripsOnAnyFailure(t *testing.T) {
 	opts.FailRate = -1
 	b := breaker.NewBreaker[int](opts)
 	// Three successes (no failures yet) must not trip.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
 			return i, nil
 		})
@@ -373,7 +373,7 @@ func TestBreaker_FailRateAboveOneNeverTrips(t *testing.T) {
 	opts := fastOpts()
 	opts.FailRate = 2.0
 	b := breaker.NewBreaker[int](opts)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
 			return 0, errSentinel
 		})
@@ -403,7 +403,7 @@ func TestOptions_OverridesApplied(t *testing.T) {
 		FailRate:    1.0,
 		Interval:    time.Second,
 	})
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		_, err := b.Execute(context.Background(), func(ctx context.Context) (int, error) {
 			return 0, errSentinel
 		})

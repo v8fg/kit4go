@@ -47,7 +47,7 @@ func TestClient_LatencyObserver_Fires(t *testing.T) {
 		Latency:        obs,
 		RequestTimeout: 5 * time.Second,
 	})
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		resp, err := c.Get(context.Background(), srv.URL, nil)
 		if err != nil {
 			t.Fatalf("get: %v", err)
@@ -78,7 +78,7 @@ func TestClient_LatencyObserver_RealHistogram(t *testing.T) {
 		RequestTimeout: 5 * time.Second,
 	})
 	const n = 10
-	for i := 0; i < n; i++ {
+	for range n {
 		resp, err := c.Get(context.Background(), srv.URL, nil)
 		if err != nil {
 			t.Fatalf("get: %v", err)

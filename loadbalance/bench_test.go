@@ -21,8 +21,8 @@ func benchEntries() []Entry[string] {
 func BenchmarkNew(b *testing.B) {
 	entries := benchEntries()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		New(strID, entries)
 	}
 }
@@ -32,8 +32,8 @@ func BenchmarkNew(b *testing.B) {
 func BenchmarkNextSWRR(b *testing.B) {
 	bal := New(strID, benchEntries())
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = bal.Next()
 	}
 }
@@ -41,8 +41,8 @@ func BenchmarkNextSWRR(b *testing.B) {
 func BenchmarkNextRoundRobin(b *testing.B) {
 	bal := New(strID, benchEntries(), WithStrategy[string](StrategyRoundRobin))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = bal.Next()
 	}
 }
@@ -50,8 +50,8 @@ func BenchmarkNextRoundRobin(b *testing.B) {
 func BenchmarkNextRandom(b *testing.B) {
 	bal := New(strID, benchEntries(), WithStrategy[string](StrategyRandom))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = bal.Next()
 	}
 }
@@ -59,8 +59,8 @@ func BenchmarkNextRandom(b *testing.B) {
 func BenchmarkNextWeightedRandom(b *testing.B) {
 	bal := New(strID, benchEntries(), WithStrategy[string](StrategyWeightedRandom))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_, _ = bal.Next()
 	}
 }
@@ -71,7 +71,7 @@ func BenchmarkNextWeightedRandom(b *testing.B) {
 // standard idiom for destructive ops) rather than StopTimer/StartTimer churn.
 func BenchmarkAdd(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		bal := New[string](strID, nil)
 		bal.Add(Entry[string]{Value: "h:8080", Weight: 1})
 	}
@@ -84,7 +84,7 @@ func BenchmarkAdd(b *testing.B) {
 // BenchmarkRemoveHot below.
 func BenchmarkRemove(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		bal := New(strID, benchEntries())
 		bal.Remove("b:8080")
 	}
@@ -96,15 +96,15 @@ func BenchmarkRemoveHot(b *testing.B) {
 	const rebuildEvery = 64
 	b.ReportAllocs()
 	bal := New(strID, make([]Entry[string], 0, rebuildEvery+8))
-	for i := 0; i < rebuildEvery; i++ {
+	for i := range rebuildEvery {
 		bal.Add(Entry[string]{Value: fmt.Sprintf("h-%d", i), Weight: 1})
 	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if bal.Len() == 0 {
 			b.StopTimer()
 			bal = New(strID, make([]Entry[string], 0, rebuildEvery+8))
-			for j := 0; j < rebuildEvery; j++ {
+			for j := range rebuildEvery {
 				bal.Add(Entry[string]{Value: fmt.Sprintf("h-%d", j), Weight: 1})
 			}
 			b.StartTimer()

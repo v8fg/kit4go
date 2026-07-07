@@ -15,8 +15,8 @@ func Benchmark_WebhookWriter_PassThrough(b *testing.B) {
 	})
 	r := &Record{level: ERROR, msg: "payment failed", file: "svc.go:1"}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = w.Write(r)
 	}
 }
@@ -26,8 +26,8 @@ func Benchmark_WebhookWriter_LevelSkip(b *testing.B) {
 	w := NewWebhookWriter(sink, WebhookWriterOptions{Level: "error"})
 	r := &Record{level: INFO, msg: "info line"} // below ERROR -> skipped fast
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = w.Write(r)
 	}
 }

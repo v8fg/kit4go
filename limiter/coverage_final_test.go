@@ -66,7 +66,7 @@ func runAcquireUnderContention(t *testing.T, perturbFn func(), acquireFn func())
 	const perturbers = 8
 	var wg sync.WaitGroup
 	wg.Add(perturbers)
-	for i := 0; i < perturbers; i++ {
+	for range perturbers {
 		go func() {
 			defer wg.Done()
 			for {
@@ -83,7 +83,7 @@ func runAcquireUnderContention(t *testing.T, perturbFn func(), acquireFn func())
 		}()
 	}
 	const calls = 4000
-	for i := 0; i < calls; i++ {
+	for range calls {
 		acquireFn()
 		// Yield on EVERY iteration (not just every 1024th) so the perturbers get
 		// frequent scheduling slots between an acquire's Load and its CAS. Without
@@ -275,7 +275,7 @@ func TestGCRA_Wait_CtxCancelledInTimer(t *testing.T) {
 	// deadline coincidentally lands in the tiny window between timer-fire and the
 	// next loop-top select.
 	covered := false
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		// Reset TAT each iteration (Allow below is a no-op since closed-ish, but
 		// nextDelay must keep returning the full 1ms).
 		g.tat.Store(time.Now().Add(1 * time.Hour).UnixNano())
@@ -309,7 +309,7 @@ func TestFixedWindow_Wait_CtxDeadlineInTimer(t *testing.T) {
 	}
 	// Keep the window from rolling over so the loop keeps spinning on the 1ms timer.
 	fw.windowStart.Store(time.Now().UnixNano())
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		fw.windowStart.Store(time.Now().UnixNano()) // prevent rollover mid-iteration
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Millisecond)
 		err := fw.Wait(ctx)
@@ -332,7 +332,7 @@ func TestLeakyBucket_Wait_CtxDeadlineInTimer(t *testing.T) {
 	}
 	// Pin lastTime so the bucket never drains (Allow keeps failing), forcing Wait
 	// to spin on its nextDrainDelay-sized (~1ms) timer.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		lb.lastTime.Store(time.Now().UnixNano()) // prevent drain mid-iteration
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Millisecond)
 		err := lb.Wait(ctx)
@@ -352,7 +352,7 @@ func TestTokenBucket_Wait_CtxDeadlineInTimer(t *testing.T) {
 	if !tb.Allow() { // drain so the fast-path Allow fails
 		t.Fatal("setup Allow failed")
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Millisecond)
 		err := tb.Wait(ctx)
 		cancel()

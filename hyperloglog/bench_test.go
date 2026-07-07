@@ -12,8 +12,8 @@ func BenchmarkAdd(b *testing.B) {
 	h, _ := New(14)
 	data := []byte("user-id-0123456789abcdef")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		h.Add(data)
 	}
 }
@@ -34,15 +34,15 @@ func BenchmarkAddString(b *testing.B) {
 	h, _ := New(14)
 	s := "user-id-0123456789abcdef"
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		h.AddString(s)
 	}
 }
 
 func BenchmarkEstimate(b *testing.B) {
 	h, _ := New(14)
-	for i := 0; i < 100_000; i++ {
+	for i := range 100_000 {
 		var buf bytes.Buffer
 		buf.WriteString("id-")
 		// avoid fmt in the setup loop cost by direct byte variation
@@ -50,8 +50,8 @@ func BenchmarkEstimate(b *testing.B) {
 		h.Add(buf.Bytes())
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = h.Estimate()
 	}
 }

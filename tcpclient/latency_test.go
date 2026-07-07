@@ -43,7 +43,7 @@ func TestClient_LatencyObserver_Fires(t *testing.T) {
 	defer c.Close()
 
 	const n = 5
-	for i := 0; i < n; i++ {
+	for range n {
 		if err := c.Send(context.Background(), []byte("x")); err != nil {
 			t.Fatalf("send: %v", err)
 		}

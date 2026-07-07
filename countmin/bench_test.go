@@ -9,8 +9,8 @@ func BenchmarkAdd(b *testing.B) {
 	c := New(2048, 5)
 	data := []byte("creative-id-0123456789abcdef")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		c.Add(data, 1)
 	}
 }
@@ -18,12 +18,12 @@ func BenchmarkAdd(b *testing.B) {
 func BenchmarkEstimate(b *testing.B) {
 	c := New(2048, 5)
 	data := []byte("creative-id-0123456789abcdef")
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		c.Add(data, 1)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = c.Estimate(data)
 	}
 }

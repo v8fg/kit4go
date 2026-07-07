@@ -8,8 +8,8 @@ func Benchmark_Field_FloatJSON(b *testing.B) {
 	f := floatField("rate", 1.5)
 	buf := make([]byte, 0, 32)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = appendFieldJSON(buf[:0], f)
 	}
 }
@@ -19,8 +19,8 @@ func Benchmark_Field_IntJSON(b *testing.B) {
 	f := intField("count", 42)
 	buf := make([]byte, 0, 32)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = appendFieldJSON(buf[:0], f)
 	}
 }

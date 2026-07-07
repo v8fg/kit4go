@@ -83,7 +83,7 @@ func TestResetHookNilSafe(t *testing.T) {
 func TestStatsAllFields(t *testing.T) {
 	p := New(func() *bytes.Buffer { return &bytes.Buffer{} })
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		b := p.Get()
 		b.WriteByte(byte('a' + i))
 		p.Put(b)
@@ -137,10 +137,10 @@ func TestConcurrentGetPut(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iters; j++ {
+			for range iters {
 				b := p.Get()
 				b.WriteString("x")
 				p.Put(b)

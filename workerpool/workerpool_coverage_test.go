@@ -66,7 +66,7 @@ func TestSubmit_DoneBranchDeterministic(t *testing.T) {
 func TestSubmit_DoneBranchViaRace(t *testing.T) {
 	p := New[int](4, WithQueueSize[int](2))
 	slow := make(chan struct{})
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_ = p.Submit(context.Background(), func(context.Context) (int, error) {
 			<-slow
 			return 0, nil
@@ -76,7 +76,7 @@ func TestSubmit_DoneBranchViaRace(t *testing.T) {
 	errs := make(chan error, 64)
 	go func() {
 		defer close(errs)
-		for i := 0; i < 64; i++ {
+		for range 64 {
 			errs <- p.Submit(context.Background(), func(context.Context) (int, error) { return 0, nil })
 		}
 	}()
@@ -134,7 +134,7 @@ func TestTrySubmit_DoneBranchDeterministic(t *testing.T) {
 func TestTrySubmit_DoneBranchViaRace(t *testing.T) {
 	p := New[int](2, WithQueueSize[int](1))
 	slow := make(chan struct{})
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_ = p.Submit(context.Background(), func(context.Context) (int, error) {
 			<-slow
 			return 0, nil
@@ -147,7 +147,7 @@ func TestTrySubmit_DoneBranchViaRace(t *testing.T) {
 		p.Close()
 		close(closeDone)
 	}()
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		_ = p.TrySubmit(context.Background(), func(context.Context) (int, error) { return 0, nil })
 	}
 	close(slow)
@@ -171,7 +171,7 @@ func TestWorker_DrainsOnDone(t *testing.T) {
 	var processed atomic.Int64
 	// Submit several jobs, then Close while some are still queued — Close must
 	// drain them (worker hits the `case <-p.done` arm and runs drainQueue).
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		require.NoError(t, p.Submit(context.Background(), func(context.Context) (int, error) {
 			processed.Add(1)
 			return 0, nil

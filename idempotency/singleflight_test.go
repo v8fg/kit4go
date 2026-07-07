@@ -27,17 +27,15 @@ func TestCache_SingleflightHoldsAcrossExpiry(t *testing.T) {
 	const n = 20
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			<-start
 			_, _ = c.Do(context.Background(), "k", func(context.Context) (int, error) {
 				calls.Add(1)
 				time.Sleep(30 * time.Millisecond) // slow leader so followers stack up
 				return 1, nil
 			})
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

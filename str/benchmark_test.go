@@ -7,9 +7,9 @@ import (
 )
 
 func BenchmarkStringToBytes(b *testing.B) {
-	b.ResetTimer()
+
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		str.StringToBytes("Go")
 	}
 }
@@ -19,18 +19,18 @@ func stringToBytesNormal(s string) []byte {
 }
 
 func BenchmarkStringToBytesNormal(b *testing.B) {
-	b.ResetTimer()
+
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		stringToBytesNormal("Go")
 	}
 }
 
 func BenchmarkBytesToString(b *testing.B) {
 	data := []byte{71, 111}
-	b.ResetTimer()
+
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		str.BytesToString(data)
 	}
 }
@@ -40,9 +40,9 @@ func byteSliceToStringNormal(bytes []byte) string {
 }
 func BenchmarkBytesToStringNormal(b *testing.B) {
 	data := []byte{71, 111}
-	b.ResetTimer()
+
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = byteSliceToStringNormal(data)
 	}
 }

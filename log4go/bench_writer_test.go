@@ -74,8 +74,8 @@ func Benchmark_ConsoleWriter_Write(b *testing.B) {
 	cw := NewConsoleWriterWithOptions(ConsoleWriterOptions{Level: LevelFlagInfo})
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := cw.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -90,8 +90,8 @@ func Benchmark_ConsoleWriter_WriteColor(b *testing.B) {
 	cw := NewConsoleWriterWithOptions(ConsoleWriterOptions{Level: LevelFlagInfo, Color: true})
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = cw.Write(rec)
 	}
 }
@@ -110,8 +110,8 @@ func Benchmark_ConsoleWriter_WriteBuffered(b *testing.B) {
 	defer func() { _ = cw.Flush() }()
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := cw.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -136,8 +136,8 @@ func Benchmark_FileWriter_Write(b *testing.B) {
 	defer func() { _ = f.Flush() }()
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := f.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -165,8 +165,8 @@ func Benchmark_FileWriter_AsyncDrop(b *testing.B) {
 	defer f.Stop()
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := f.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -194,8 +194,8 @@ func Benchmark_FileWriter_AsyncSpill(b *testing.B) {
 	defer f.Stop()
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := f.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -227,8 +227,8 @@ func Benchmark_KafkaWriter_WriteMock(b *testing.B) {
 
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := w.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -337,8 +337,8 @@ func Benchmark_NetWriter_WriteTCP(b *testing.B) {
 
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := nw.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -359,8 +359,8 @@ func Benchmark_IOWriter_WriteBytesBuffer(b *testing.B) {
 	w := NewIOWriter(&buf, INFO)
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := w.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -373,8 +373,8 @@ func Benchmark_IOWriter_WriteDiscard(b *testing.B) {
 	w := NewIOWriter(io.Discard, INFO)
 	rec := benchRecord()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		if err := w.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -393,8 +393,8 @@ func Benchmark_IOWriter_WriteDiscard(b *testing.B) {
 func Benchmark_Record_JSON_TextBaseline(b *testing.B) {
 	r := benchRecordWithFields()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = r.String()
 	}
 }
@@ -427,8 +427,8 @@ func Benchmark_DeliverPipeline_NoCaller(b *testing.B) {
 	lg.Register(discardWriter{})
 	defer lg.Close()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		lg.Info("x")
 	}
 }
@@ -597,7 +597,7 @@ func Test_MemPerWriter(k *testing.T) {
 			runtime.ReadMemStats(&before)
 
 			rec := benchRecord()
-			for i := 0; i < n; i++ {
+			for range n {
 				_ = w.Write(rec)
 			}
 			// Drain async writers (stop the daemon + flush) before the second GC
