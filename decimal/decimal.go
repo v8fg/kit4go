@@ -27,6 +27,12 @@ var (
 	ErrParse = errors.New("decimal: parse error")
 	// ErrScaleMismatch is returned by operations on decimals with different scales.
 	ErrScaleMismatch = errors.New("decimal: scale mismatch")
+	// ErrNegativeScale is returned (by Parse) or panicked (by New) when a scale
+	// is negative. A negative scale makes String() produce an invalid result, so
+	// it is rejected at construction rather than rendered.
+	ErrNegativeScale = errors.New("decimal: negative scale")
+	// ErrDivideByZero is returned by Div when the divisor is 0.
+	ErrDivideByZero = errors.New("decimal: divide by zero")
 )
 
 var (
@@ -50,8 +56,14 @@ func pow10(n int) *big.Int {
 }
 
 // New creates a Decimal from an unscaled int64 value and a scale. For example,
-// New(12345, 3) = 12.345.
+// New(12345, 3) = 12.345. It panics if scale is negative, since a negative scale
+// has no valid decimal rendering (String() would slice out of range). Use a
+// non-negative scale; this matches the kit4go constructor convention of
+// rejecting structurally invalid parameters up front.
 func New(unscaled int64, scale int) Decimal {
+	if scale < 0 {
+		panic(fmt.Errorf("%w: scale %d (unscaled %d)", ErrNegativeScale, scale, unscaled))
+	}
 	return Decimal{value: big.NewInt(unscaled), scale: scale}
 }
 
@@ -69,8 +81,12 @@ func MustParse(s string, scale int) Decimal {
 
 // Parse parses a decimal string (e.g. "12.345", "-0.05") into a Decimal with
 // the given scale. The input is rescaled: if the input has fewer decimal places
-// than scale, trailing zeros are added; if more, it is an error.
+// than scale, trailing zeros are added; if more, it is an error. It returns an
+// error wrapping ErrNegativeScale if scale is negative.
 func Parse(s string, scale int) (Decimal, error) {
+	if scale < 0 {
+		return Decimal{}, fmt.Errorf("%w: %d", ErrNegativeScale, scale)
+	}
 	if s == "" {
 		return Decimal{}, fmt.Errorf("%w: empty string", ErrParse)
 	}
@@ -104,6 +120,8 @@ func Parse(s string, scale int) (Decimal, error) {
 }
 
 // String renders the decimal as a string with exactly scale decimal places.
+// It is defensive against a non-positive scale: scale <= 0 renders the unscaled
+// value as a whole number, so a malformed Decimal can never panic here.
 func (d Decimal) String() string {
 	if d.value == nil {
 		return "0"
@@ -112,7 +130,7 @@ func (d Decimal) String() string {
 	neg := v.Sign() < 0
 	abs := new(big.Int).Abs(v)
 	str := abs.String()
-	if d.scale == 0 {
+	if d.scale <= 0 {
 		if neg {
 			return "-" + str
 		}
@@ -129,12 +147,15 @@ func (d Decimal) String() string {
 	return result
 }
 
-// Unscaled returns the unscaled big.Int value.
+// Unscaled returns a copy of the unscaled big.Int value. The returned value is
+// independent of d's internal state: mutating it does not affect d (or any value
+// d was derived from), honoring Decimal's Immutable contract. A zero-value
+// Decimal{} returns a fresh big.Int(0).
 func (d Decimal) Unscaled() *big.Int {
 	if d.value == nil {
 		return big.NewInt(0)
 	}
-	return d.value
+	return new(big.Int).Set(d.value)
 }
 
 // Scale returns the decimal scale.
@@ -151,78 +172,104 @@ func (d Decimal) Sign() int {
 // IsZero reports whether d is zero.
 func (d Decimal) IsZero() bool { return d.Sign() == 0 }
 
-// Add returns d + other (must share the same scale).
+// valueOrZero returns d.value, treating a nil (zero-value Decimal{}) receiver as
+// big.Int(0). This keeps the arithmetic methods nil-safe: a struct/map zero value
+// behaves identically to FromInt(0). The returned pointer is never mutated by the
+// caller in these methods (each builds a fresh big.Int for the result), so sharing
+// the package-level zero is safe and allocation-free on the zero-value path.
+func (d Decimal) valueOrZero() *big.Int {
+	if d.value != nil {
+		return d.value
+	}
+	return big.NewInt(0)
+}
+
+// Add returns d + other (must share the same scale). A zero-value Decimal{}
+// operand is treated as 0.
 func (d Decimal) Add(other Decimal) (Decimal, error) {
 	if d.scale != other.scale {
 		return Decimal{}, fmt.Errorf("%w: %d vs %d", ErrScaleMismatch, d.scale, other.scale)
 	}
-	return Decimal{value: new(big.Int).Add(d.value, other.value), scale: d.scale}, nil
+	return Decimal{value: new(big.Int).Add(d.valueOrZero(), other.valueOrZero()), scale: d.scale}, nil
 }
 
-// Sub returns d - other (must share the same scale).
+// Sub returns d - other (must share the same scale). A zero-value Decimal{}
+// operand is treated as 0.
 func (d Decimal) Sub(other Decimal) (Decimal, error) {
 	if d.scale != other.scale {
 		return Decimal{}, fmt.Errorf("%w: %d vs %d", ErrScaleMismatch, d.scale, other.scale)
 	}
-	return Decimal{value: new(big.Int).Sub(d.value, other.value), scale: d.scale}, nil
+	return Decimal{value: new(big.Int).Sub(d.valueOrZero(), other.valueOrZero()), scale: d.scale}, nil
 }
 
-// Mul multiplies by an integer factor. The result preserves d's scale.
+// Mul multiplies by an integer factor. The result preserves d's scale. A zero-value
+// Decimal{} receiver is treated as 0.
 func (d Decimal) Mul(factor int64) Decimal {
-	return Decimal{value: new(big.Int).Mul(d.value, big.NewInt(factor)), scale: d.scale}
+	return Decimal{value: new(big.Int).Mul(d.valueOrZero(), big.NewInt(factor)), scale: d.scale}
 }
 
-// MulDecimal returns d * other. Result scale = d.scale + other.scale.
+// MulDecimal returns d * other. Result scale = d.scale + other.scale. A zero-value
+// Decimal{} operand is treated as 0.
 func (d Decimal) MulDecimal(other Decimal) Decimal {
 	return Decimal{
-		value: new(big.Int).Mul(d.value, other.value),
+		value: new(big.Int).Mul(d.valueOrZero(), other.valueOrZero()),
 		scale: d.scale + other.scale,
 	}
 }
 
-// Div divides d by divisor, truncating to the original scale.
+// Div divides d by divisor, truncating to the original scale. It returns
+// ErrDivideByZero (matchable via errors.Is) when divisor is 0. A zero-value
+// Decimal{} receiver is treated as 0.
 func (d Decimal) Div(divisor int64) (Decimal, error) {
 	if divisor == 0 {
-		return Decimal{}, errors.New("decimal: divide by zero")
+		return Decimal{}, ErrDivideByZero
 	}
 	// big.Int division truncates toward zero, which matches the scale-preserving
 	// integer division of unscaled values.
-	q := new(big.Int).Quo(d.value, big.NewInt(divisor))
+	q := new(big.Int).Quo(d.valueOrZero(), big.NewInt(divisor))
 	return Decimal{value: q, scale: d.scale}, nil
 }
 
-// Cmp compares d and other (must share the same scale). Returns -1, 0, +1.
+// Cmp compares d and other (must share the same scale). Returns -1, 0, +1. A
+// zero-value Decimal{} operand is treated as 0.
 func (d Decimal) Cmp(other Decimal) (int, error) {
 	if d.scale != other.scale {
 		return 0, fmt.Errorf("%w: %d vs %d", ErrScaleMismatch, d.scale, other.scale)
 	}
-	return d.value.Cmp(other.value), nil
+	return d.valueOrZero().Cmp(other.valueOrZero()), nil
 }
 
-// Negate returns -d.
+// Negate returns -d. A zero-value Decimal{} receiver is treated as 0.
 func (d Decimal) Negate() Decimal {
-	return Decimal{value: new(big.Int).Neg(d.value), scale: d.scale}
+	return Decimal{value: new(big.Int).Neg(d.valueOrZero()), scale: d.scale}
 }
 
-// Abs returns |d|.
+// Abs returns |d|. A zero-value Decimal{} receiver is treated as 0.
 func (d Decimal) Abs() Decimal {
-	if d.value.Sign() < 0 {
-		return Decimal{value: new(big.Int).Abs(d.value), scale: d.scale}
+	if d.valueOrZero().Sign() < 0 {
+		return Decimal{value: new(big.Int).Abs(d.valueOrZero()), scale: d.scale}
+	}
+	if d.value == nil {
+		// Avoid returning the nil-value receiver; yield a real zero at d's scale.
+		return Decimal{value: big.NewInt(0), scale: d.scale}
 	}
 	return d
 }
 
 // Rescale changes the scale of d to newScale. If newScale > d.scale, trailing
 // zeros are appended (multiply by 10^(newScale-d.scale)). If newScale < d.scale,
-// the value is truncated (divide by 10^(d.scale-newScale)).
+// the value is truncated (divide by 10^(d.scale-newScale)). A negative newScale is
+// a no-op: it is returned unchanged (d), since a negative scale has no valid
+// decimal rendering. A zero-value Decimal{} receiver is treated as 0.
 func (d Decimal) Rescale(newScale int) Decimal {
-	if newScale == d.scale {
+	if newScale < 0 || newScale == d.scale {
 		return d
 	}
+	v := d.valueOrZero()
 	if newScale > d.scale {
 		diff := newScale - d.scale
-		return Decimal{value: new(big.Int).Mul(d.value, pow10(diff)), scale: newScale}
+		return Decimal{value: new(big.Int).Mul(v, pow10(diff)), scale: newScale}
 	}
 	diff := d.scale - newScale
-	return Decimal{value: new(big.Int).Quo(d.value, pow10(diff)), scale: newScale}
+	return Decimal{value: new(big.Int).Quo(v, pow10(diff)), scale: newScale}
 }

@@ -17,15 +17,29 @@ import (
 	"sync"
 )
 
+// candidateFactor bounds how many non-admitted candidate counts are retained
+// alongside the K in-heap entries. The counts map holds at most
+// k + (candidateFactor-1)*k == candidateFactor*k entries, i.e. memory stays
+// O(K) regardless of stream cardinality. Candidates let a late heavy-hitter
+// arriving incrementally via Touch accumulate and eventually displace an
+// incumbent; once the cap is reached the smallest-count candidate is dropped.
+const candidateFactor = 4
+
 // Tracker maintains the top-K items by frequency.
 //
 // Concurrency: safe for concurrent use. Every method (Touch, TouchN, Top, Count,
 // Len, K, Reset) acquires an internal sync.Mutex, so concurrent callers are
 // serialised — correct, but a single Tracker contends under high write rates.
 // For more throughput, shard by key and merge the per-shard Top results.
+//
+// Memory bound: O(K). The count map holds the K in-heap keys plus a bounded set
+// of at most (candidateFactor-1)*K candidate keys that are accumulating but not
+// yet in the top-K set. A key that is neither in the heap nor a tracked
+// candidate reports Count 0.
 type Tracker struct {
 	mu      sync.Mutex
 	k       int
+	cap     int // max entries in counts (== candidateFactor*k)
 	counts  map[string]int64
 	minHeap *itemHeap
 }
@@ -69,6 +83,7 @@ func New(k int) *Tracker {
 	}
 	return &Tracker{
 		k:       k,
+		cap:     candidateFactor * k,
 		counts:  make(map[string]int64),
 		minHeap: &itemHeap{},
 	}
@@ -81,11 +96,15 @@ func (t *Tracker) Touch(key string) {
 
 // TouchN increments the count for key by n and updates the top-K set.
 //
-// To keep memory bounded at O(K), only keys currently in the top-K set are
-// retained in the count map. A key that has never entered the set, or that has
-// been evicted, is not tracked — its accumulated count is discarded and Count()
-// reports 0 for it. This trades exact per-key counts for non-top-K keys (which
-// a leaderboard cannot surface anyway) for a hard O(K) memory bound.
+// Memory stays bounded at O(K): the count map holds the K in-heap keys plus at
+// most (candidateFactor-1)*K candidate keys that are accumulating but have not
+// yet beaten the heap minimum. A non-admitted key retains its accumulated count
+// across TouchN calls so a late heavy-hitter arriving incrementally (one event
+// at a time) can build up and eventually displace an incumbent. Once the
+// candidate cap is reached the smallest-count candidate is dropped, so a key
+// that is neither in the heap nor among the tracked candidates reports Count 0.
+//
+// n <= 0 is a no-op.
 func (t *Tracker) TouchN(key string, n int64) {
 	if n <= 0 {
 		return
@@ -103,8 +122,8 @@ func (t *Tracker) TouchN(key string, n int64) {
 		}
 	}
 
-	// Key not in the set. Compute the count it would have if admitted, counting
-	// only what we still track (0 once a key has been evicted).
+	// Key not in the set. Accumulate its candidate count (retained across calls
+	// so incremental Touch on a late heavy-hitter can build up).
 	newCount := t.counts[key] + n
 
 	if t.minHeap.Len() < t.k {
@@ -117,13 +136,51 @@ func (t *Tracker) TouchN(key string, n int64) {
 	// Set is full: admit only if this key beats the current minimum.
 	minItem := (*t.minHeap)[0]
 	if newCount > minItem.count {
+		// Promote the candidate; demote the heap minimum into the candidate set.
 		heap.Pop(t.minHeap)
-		// Drop the evicted key's count so counts stays bounded at ~K.
-		delete(t.counts, minItem.key)
+		// minItem's count stays in counts — it is now a candidate again and can
+		// re-accumulate if it is touched later.
 		t.counts[key] = newCount
 		heap.Push(t.minHeap, &item{key: key, count: newCount})
+	} else {
+		// Not competitive yet — record the accumulated count as a candidate so a
+		// future Touch can build on it, then enforce the memory cap.
+		t.counts[key] = newCount
 	}
-	// else: key not competitive — do not store it, keeping counts bounded.
+	t.evictCandidates()
+}
+
+// evictCandidates drops the smallest-count non-heap entry (or entries) until the
+// counts map is back within cap. Called on every touch that adds/updates a
+// candidate. The heap keys are never evicted. Cost is O(len(counts)) and only
+// incurred when the cap is exceeded.
+func (t *Tracker) evictCandidates() {
+	for len(t.counts) > t.cap {
+		// Build the set of in-heap keys so we never evict a leaderboard member.
+		inHeap := make(map[string]struct{}, t.minHeap.Len())
+		for _, it := range *t.minHeap {
+			inHeap[it.key] = struct{}{}
+		}
+		// Find the smallest-count candidate (non-heap key). Ties broken by key
+		// for determinism.
+		var dropKey string
+		var dropCount int64
+		first := true
+		for k, c := range t.counts {
+			if _, ok := inHeap[k]; ok {
+				continue
+			}
+			if first || c < dropCount || (c == dropCount && k < dropKey) {
+				first = false
+				dropKey = k
+				dropCount = c
+			}
+		}
+		if first {
+			return // nothing to drop (only in-heap keys present)
+		}
+		delete(t.counts, dropKey)
+	}
 }
 
 // Entry is one ranked item returned by Top.
@@ -144,9 +201,9 @@ func (t *Tracker) Top() []Entry {
 	return entries
 }
 
-// Count returns the current count for key, or 0 if the key is unseen or has
-// fallen out of the top-K set (evicted keys are no longer tracked, so their
-// count is reported as 0 once they leave the leaderboard).
+// Count returns the current count for key, or 0 if the key is unseen, has been
+// evicted from the candidate set, or has fallen out of the top-K set without
+// being tracked as a candidate.
 func (t *Tracker) Count(key string) int64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()

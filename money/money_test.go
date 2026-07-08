@@ -253,7 +253,9 @@ func TestDivModes(t *testing.T) {
 }
 
 func TestFromMajorNegative(t *testing.T) {
-	neg, err := FromMajor(-12, 34, "USD")
+	// whole and frac must share a sign; the valid negative form is -12, -34.
+	// (Mixed signs like -12, +34 are now rejected — see TestR12_FromMajor_MixedSign.)
+	neg, err := FromMajor(-12, -34, "USD")
 	require.NoError(t, err)
 	require.Equal(t, int64(-1234), neg.Amount())
 }

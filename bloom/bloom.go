@@ -201,7 +201,16 @@ var ErrIncompatible = errors.New("bloom: filters have incompatible m or k")
 
 // Merge unions another filter into this one (both must have the same m and k).
 // Counts are summed.
+//
+// Passing the same filter (other == f) is a no-op and returns nil immediately:
+// unioning a set with itself leaves membership unchanged, and the early return
+// avoids a write-lock-then-read-lock on the same non-reentrant RWMutex, which
+// would otherwise deadlock permanently.
 func (f *Filter) Merge(other *Filter) error {
+	if f == other {
+		// Self-merge is a no-op; also guards against reentrant locking.
+		return nil
+	}
 	if f.m != other.m || f.k != other.k {
 		return ErrIncompatible
 	}

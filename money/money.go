@@ -71,10 +71,18 @@ type Money struct {
 }
 
 // FromMinor builds a Money from an int64 already in minor units (e.g. cents).
+//
+// math.MinInt64 is rejected: it has no symmetric positive counterpart, so Abs,
+// Negate, and String all misbehave on it (Abs stays negative, String emits a
+// double-negated magnitude). Realistic fiat amounts are far inside the int64
+// range, so rejecting this single boundary value is lossless in practice.
 func FromMinor(minor int64, code string) (Money, error) {
 	c, ok := Lookup(code)
 	if !ok {
 		return Money{}, fmt.Errorf("%w: %s", ErrUnknownCurrency, code)
+	}
+	if minor == math.MinInt64 {
+		return Money{}, fmt.Errorf("%w: minor amount out of range", ErrOverflow)
 	}
 	return Money{amount: minor, cur: c}, nil
 }
@@ -102,7 +110,16 @@ func FromMajor(whole, frac int, code string) (Money, error) {
 		if frac != 0 {
 			return Money{}, fmt.Errorf("%w: fractional part for 0-decimal currency", ErrInvalidAmount)
 		}
+		if int64(whole) == math.MinInt64 {
+			return Money{}, fmt.Errorf("%w: minor amount out of range", ErrOverflow)
+		}
 		return Money{amount: int64(whole), cur: c}, nil
+	}
+	// whole and frac must share a sign (frac==0 is sign-neutral). A mixed sign
+	// like FromMajor(12, -34) is ambiguous and was previously swallowed,
+	// silently producing whole*10^dec - frac (e.g. 1166) instead of an error.
+	if (whole < 0) != (frac < 0) && whole != 0 && frac != 0 {
+		return Money{}, fmt.Errorf("%w: whole and fractional parts have mismatched signs", ErrInvalidAmount)
 	}
 	fracStr := strconv.Itoa(absInt(frac))
 	if len(fracStr) > c.Decimals {
@@ -124,6 +141,9 @@ func FromMajor(whole, frac int, code string) (Money, error) {
 		minor -= scaledFrac
 	} else {
 		minor += scaledFrac
+	}
+	if minor == math.MinInt64 {
+		return Money{}, fmt.Errorf("%w: minor amount out of range", ErrOverflow)
 	}
 	return Money{amount: minor, cur: c}, nil
 }
@@ -174,6 +194,9 @@ func Parse(code, amount string) (Money, error) {
 	minor += frac
 	if neg {
 		minor = -minor
+	}
+	if minor == math.MinInt64 {
+		return Money{}, fmt.Errorf("%w: minor amount out of range", ErrOverflow)
 	}
 	return Money{amount: minor, cur: c}, nil
 }
@@ -231,7 +254,10 @@ func (m Money) Sub(other Money) (Money, error) {
 	if err := m.same(other); err != nil {
 		return Money{}, err
 	}
-	diff, err := addChecked(m.amount, -other.amount)
+	// Subtract without pre-negating other.amount: -math.MinInt64 overflows to
+	// math.MinInt64, so a naive addChecked(m.amount, -other.amount) would wrap
+	// silently and miss the overflow (e.g. MaxInt64 - MinInt64).
+	diff, err := subChecked(m.amount, other.amount)
 	if err != nil {
 		return Money{}, err
 	}
@@ -262,14 +288,25 @@ func (m Money) Scale(ratio float64, mode Rounding) (Money, error) {
 }
 
 // Div divides the amount by an integer divisor, rounding the remainder.
+//
+// Integer division truncates toward zero, so the rounding decision operates on
+// the absolute remainder. When a step away from the truncation is required the
+// adjustment is sign-aware: it moves the quotient away from zero (q-- for a
+// negative true result, q++ otherwise), never toward zero.
 func (m Money) Div(divisor int64, mode Rounding) (Money, error) {
 	if divisor == 0 {
 		return Money{}, ErrDivideByZero
 	}
 	q := m.amount / divisor
 	r := m.amount % divisor
-	if shouldRoundUp(r, divisor, mode) {
-		q++
+	negative := (m.amount < 0) != (divisor < 0) // sign of the true (non-truncated) result
+	switch roundDir(r, divisor, mode, q) {
+	case roundAway:
+		if negative {
+			q--
+		} else {
+			q++
+		}
 	}
 	return Money{amount: q, cur: m.cur}, nil
 }
@@ -379,6 +416,18 @@ func addChecked(a, b int64) (int64, error) {
 	return s, nil
 }
 
+// subChecked computes a-b with overflow detection that does NOT rely on
+// negating b (avoiding the math.MinInt64 wrap-around trap).
+func subChecked(a, b int64) (int64, error) {
+	d := a - b
+	// Overflow occurred iff a and b have opposite signs AND the result's sign
+	// disagrees with a's sign. Formally: (a^b)&(a^d) sign-bit set.
+	if (a^b)&(a^d) < 0 {
+		return 0, ErrOverflow
+	}
+	return d, nil
+}
+
 func mulChecked(a, b int64) (int64, error) {
 	if a == 0 || b == 0 {
 		return 0, nil
@@ -409,29 +458,72 @@ func roundFloatToInt64(f float64, mode Rounding) (int64, error) {
 	}
 }
 
-// shouldRoundUp reports whether an integer division remainder rounds the
-// quotient up by one.
-func shouldRoundUp(rem, divisor int64, mode Rounding) bool {
+// roundDir reports whether the quotient of an integer division should move one
+// step away from zero to honor the rounding mode. The truncated quotient q is
+// required so that RoundHalfEven can resolve an exact half toward the nearest
+// EVEN quotient (banker's rounding): if absRem*2 == absDiv and q is odd, the
+// result rounds away from zero to make it even; if q is already even it stays.
+//
+// The remainder/divisor signs don't affect the decision because truncation
+// toward zero makes the magnitude behavior uniform — absRem and absDiv carry
+// the relevant information. Callers apply the direction in the away-from-zero
+// sense themselves (they know the sign of the true result).
+type roundDirection int
+
+const (
+	roundStay roundDirection = iota
+	roundAway
+)
+
+func roundDir(rem, divisor int64, mode Rounding, q int64) roundDirection {
 	if rem == 0 {
-		return false
+		return roundStay
 	}
 	absRem := absI64(rem)
 	absDiv := absI64(divisor)
 	switch mode {
 	case RoundDown:
-		return false
+		return roundStay
 	case RoundUp:
-		return true
+		return roundAway
 	case RoundHalfEven:
 		if absRem*2 != absDiv {
-			return absRem*2 > absDiv
+			return boolRoundDir(absRem*2 > absDiv)
 		}
-		// exact half: round to even quotient
-		// (q parity unknown here; fall back to half-up for exact halves)
-		return true
+		// Exact half: round to the nearest even quotient. q is the truncated
+		// (toward-zero) quotient; moving away from zero toggles its parity.
+		// Round away only when q is currently odd, which makes the result even.
+		if q%2 != 0 {
+			return roundAway
+		}
+		return roundStay
 	default: // RoundHalfUp
-		return absRem*2 >= absDiv
+		return boolRoundDir(absRem*2 >= absDiv)
 	}
+}
+
+func boolRoundDir(b bool) roundDirection {
+	if b {
+		return roundAway
+	}
+	return roundStay
+}
+
+// shouldRoundUp reports whether an integer division remainder rounds the
+// quotient away from zero. It is the legacy parity-unaware view used by helpers
+// that don't have the truncated quotient: for RoundHalfEven at an exact half it
+// returns true (the half-up fallback), since the true banker's-rounding answer
+// depends on q's parity (see roundDir). New code should call roundDir instead.
+func shouldRoundUp(rem, divisor int64, mode Rounding) bool {
+	if mode == RoundHalfEven {
+		if rem == 0 {
+			return false
+		}
+		if absI64(rem)*2 == absI64(divisor) {
+			return true // exact half: legacy half-up fallback (parity unknown)
+		}
+	}
+	return roundDir(rem, divisor, mode, 0) == roundAway
 }
 
 func absI64(x int64) int64 {

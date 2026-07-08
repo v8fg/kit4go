@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -89,6 +90,67 @@ func TestMergeIncompatible(t *testing.T) {
 	a := NewFromParams(1024, 4)
 	b := NewFromParams(2048, 4)
 	require.ErrorIs(t, a.Merge(b), ErrIncompatible)
+}
+
+// TestMergeSelfNoDeadlock is the regression test for the R12 self-merge
+// deadlock. Merge acquires f.mu.Lock() then other.mu.RLock(); when other == f
+// that is write-then-read on the same non-reentrant RWMutex and deadlocks
+// forever. The guard `if f == other { return nil }` makes self-merge a no-op
+// (unioning a set with itself leaves membership unchanged).
+//
+// This test FAILS on the unpatched code: f.Merge(f) never returns, the
+// watchdog fires, and t.Fatal marks the run failed. On the patched code the
+// call returns immediately and all membership assertions hold.
+func TestMergeSelfNoDeadlock(t *testing.T) {
+	cases := []struct {
+		name string
+		m    uint
+		k    uint
+	}{
+		{"small", 256, 3},
+		{"medium", 4096, 6},
+		{"large", 1 << 16, 7},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := NewFromParams(tc.m, tc.k)
+			// Seed a mix of items so the bit array is non-trivial.
+			for i := range 50 {
+				f.AddString(fmt.Sprintf("item-%d", i))
+			}
+			preN := f.N()
+			// Snapshot membership of every inserted key before the self-merge.
+			keys := make([]string, 50)
+			for i := range 50 {
+				keys[i] = fmt.Sprintf("item-%d", i)
+			}
+			prePresent := make([]bool, len(keys))
+			for i, k := range keys {
+				prePresent[i] = f.TestString(k)
+			}
+
+			// The deadlock guard must make this return at once. The watchdog
+			// turns a hang into a deterministic test failure.
+			done := make(chan error, 1)
+			go func() { done <- f.Merge(f) }()
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(2 * time.Second):
+				t.Fatal("f.Merge(f) deadlocked: self-merge did not return within 2s")
+			}
+
+			// Membership is unchanged: unioning a set with itself is a no-op.
+			require.Equal(t, preN, f.N(), "self-merge must not change N")
+			for i, k := range keys {
+				require.Equal(t, prePresent[i], f.TestString(k), "membership changed for %q", k)
+			}
+			// A fresh key still tests true for all inserted items (no false neg).
+			for _, k := range keys {
+				require.True(t, f.TestString(k))
+			}
+		})
+	}
 }
 
 func TestReset(t *testing.T) {
