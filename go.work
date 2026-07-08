@@ -4,6 +4,7 @@ use (
 	.
 	./adaptive
 	./clickhouse
+	./etcd
 	./email
 	./grpcclient
 	./grpcserver

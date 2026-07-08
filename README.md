@@ -127,6 +127,7 @@ graph TB
 | [kafka](kafka) | producer + consumer (sync/async, group, partition; sarama/franz-go unified) | IBM/sarama |
 | [postgres](postgres) | pgx pool wrapper | jackc/pgx/v5 |
 | [clickhouse](clickhouse) | ClickHouse OLAP client wrapper (native protocol, PrepareBatch pass-through) | ClickHouse/clickhouse-go |
+| [etcd](etcd) | etcd distributed-KV wrapper (service registration + discovery: KV/Lease/Watch) | etcd-io/etcd |
 | [minio](minio) | S3/MinIO object-store client wrapper (Put/Get/Stat/Remove/List/Presign) | minio/minio-go |
 | [redis](redis) | Redis client wrapper | redis/go-redis |
 | [redislock](redislock) | distributed lock (token-guarded Lua, auto-renew, onLost) | redis/go-redis |

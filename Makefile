@@ -11,7 +11,7 @@ GCFLAGS_ESCAPE ?= "-gcflags=-m -l"
 ESCAPE_PATH ?= ""
 
 # Sub-modules with their own go.mod — build/test/lint iterates these too.
-SUBMODULES := adaptive clickhouse email grpcclient grpcserver kafka log4go minio metrics postgres rate redis redislock tracing
+SUBMODULES := adaptive clickhouse etcd email grpcclient grpcserver kafka log4go minio metrics postgres rate redis redislock tracing
 
 .PHONY: check
 check: fmt-check misspell-check golangci cover
