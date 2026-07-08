@@ -11,6 +11,39 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-08
+
+Four new isolated sub-modules — the data-store / coordination client stack is now
+comprehensive (relational → postgres; KV → redis/etcd/aerospike; document → mongo;
+columnar → clickhouse; object → minio; messaging → kafka). Each is a thin
+component wrapper (scope rule: wrap a client lib, no domain types) with functional
+options, a fail-fast construction ping, a local-interface mock seam, atomic Metrics
++ SetOnEvent (zero-overhead when nil), an escape hatch to the underlying client,
+and an env-gated integration test. All ≥96% coverage, -race + golangci-lint v2
+clean. Scope is demand-driven from a scan of 109 local ad-tech/finance Go projects.
+
+### Added
+
+- **minio** — S3/MinIO object-store wrapper (`minio-go/v7` v7.2.1; speaks both
+  backends). Put/Get/Stat/Remove/BucketExists/MakeBucket/ListObjects/PresignedGetObject.
+  No Close (minio.Client is stateless HTTP).
+- **etcd** — distributed-KV wrapper (`etcd client/v3` v3.6.13) for service
+  registration (Put+Lease) and discovery (Get/Watch). KV/Lease/Watch scope (0/11
+  local projects use Lock/Election — skipped).
+- **mongo** — MongoDB document-store wrapper (`mongo-driver` v1.17.3). Two-type
+  design (Client owns Connect/Ping/Disconnect + shared metrics; Collection wraps
+  *mongo.Collection). Find/Insert/Update/Delete scope (CRUD; Count/Aggregate/
+  BulkWrite via Collection()).
+- **aerospike** — high-throughput KV wrapper (`aerospike-client-go/v8` v8.7.0).
+  Put/Get/Delete/BatchGet. Wraps aerospike's `as.Error` (interface with unexported
+  methods — mocked via a sentinel from a public aerospike function).
+
+### Changed
+
+- **go.work / Makefile / pr.yml / README** — wired all four new sub-modules into
+  the workspace, per-module CI loops (build/vet/test/lint/coverage), and the
+  sub-modules table. The repo is now 17 sub-modules + root.
+
 ## [0.4.0] — 2026-07-07
 
 Build-out of the primitive library, a full-repo quality-review pass, a
