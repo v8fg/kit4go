@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -150,6 +151,71 @@ func TestListObjects_SurfacesEmbeddedError(t *testing.T) {
 	require.ErrorIs(t, err, errTest)
 	assert.Len(t, out, 1) // the good item before the error
 	assert.Equal(t, uint64(1), c.Metrics().Errors)
+}
+
+// TestPutObject_StreamingSizeNotCounted: objectSize=-1 (streaming) makes
+// minio-go return UploadInfo.Size=-1. The wrapper must NOT convert that to
+// uint64 (which wraps to ~1.8e19 and corrupts BytesUploaded); it should leave
+// BytesUploaded at 0 while still reporting a successful upload.
+func TestPutObject_StreamingSizeNotCounted(t *testing.T) {
+	m := &mockAPI{putFn: func(context.Context, string, string, io.Reader, int64, minio.PutObjectOptions) (minio.UploadInfo, error) {
+		return minio.UploadInfo{Bucket: "b", Key: "o", Size: -1}, nil // streaming marker
+	}}
+	c := newWithAPI(m)
+	info, err := c.PutObject(context.Background(), "b", "o", nil, -1, minio.PutObjectOptions{})
+	require.NoError(t, err)               // op still succeeds
+	assert.Equal(t, int64(-1), info.Size) // the -1 marker passes through unchanged
+	mm := c.Metrics()
+	assert.Equal(t, uint64(1), mm.Puts)
+	assert.Equal(t, uint64(0), mm.Errors)
+	// The crux: no uint64 wraparound — BytesUploaded stays 0, not 18446744073709551615.
+	assert.Equal(t, uint64(0), mm.BytesUploaded)
+}
+
+// TestListObjects_DrainsChannelOnEmbeddedError: on the first ObjectInfo with a
+// non-nil Err the wrapper must still drain minio-go's producer channel before
+// returning, or the producer goroutine leaks (it blocks on send). Here the mock
+// producer behaves like minio-go: a background goroutine feeds a buffered channel
+// an error item followed by more queued items, then signals done. If the wrapper
+// returns early without draining, the producer's final sends block and the done
+// signal never fires (test hangs / leak detected). After the call, the producer
+// must have completed AND all queued items must have been consumed.
+func TestListObjects_DrainsChannelOnEmbeddedError(t *testing.T) {
+	const queued = 4 // items sent AFTER the error; producer must be able to push them all
+	producerDone := make(chan struct{})
+	var sentCount int32
+
+	m := &mockAPI{listObjectsFn: func(context.Context, string, minio.ListObjectsOptions) <-chan minio.ObjectInfo {
+		// Buffer only the good+error items; the trailing items force a producer
+		// goroutine that would block on send if the wrapper exits early.
+		ch := make(chan minio.ObjectInfo, 2)
+		go func() {
+			defer close(ch)
+			defer close(producerDone)
+			ch <- minio.ObjectInfo{Key: "good"}
+			ch <- minio.ObjectInfo{Err: errTest}
+			for i := 0; i < queued; i++ {
+				ch <- minio.ObjectInfo{Key: "tail"}
+				atomic.AddInt32(&sentCount, 1)
+			}
+		}()
+		return ch
+	}}
+	c := newWithAPI(m)
+	out, err := c.ListObjects(context.Background(), "b", minio.ListObjectsOptions{})
+	require.ErrorIs(t, err, errTest)
+	assert.Len(t, out, 1) // only the item before the error is returned
+
+	// Producer goroutine must have finished — proves it never blocked on send,
+	// i.e. the wrapper drained the channel instead of leaking it.
+	select {
+	case <-producerDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("producer goroutine leaked: channel was not drained on the error path")
+	}
+	// All trailing items were consumed (sent and drained), none stuck behind a
+	// blocking send.
+	assert.Equal(t, int32(queued), atomic.LoadInt32(&sentCount))
 }
 
 func TestPresignedGetObject_SuccessAndError(t *testing.T) {

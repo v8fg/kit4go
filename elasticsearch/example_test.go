@@ -1,6 +1,7 @@
 package elasticsearch_test
 
 import (
+	"context"
 	"log"
 	"strings"
 
@@ -16,18 +17,19 @@ import (
 // v8.19 options are methods on the named func types: esapi.Index(nil).WithXxx(v)
 // builds an option func(*IndexRequest) without invoking the (nil) receiver.
 func ExampleNew() {
-	c, err := elasticsearch.New(elasticsearch.WithAddresses("http://localhost:9200"))
+	ctx := context.Background()
+	c, err := elasticsearch.New(ctx, elasticsearch.WithAddresses("http://localhost:9200"))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if _, err := c.Index("creatives", strings.NewReader(`{"name":"banner-1"}`),
+	if _, err := c.Index(ctx, "creatives", strings.NewReader(`{"name":"banner-1"}`),
 		esapi.Index(nil).WithDocumentID("1"),
 	); err != nil {
 		log.Fatal(err)
 	}
 
-	res, err := c.Search(
+	res, err := c.Search(ctx,
 		esapi.Search(nil).WithIndex("creatives"),
 		esapi.Search(nil).WithBody(strings.NewReader(`{"query":{"match_all":{}}}`)),
 	)

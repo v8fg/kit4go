@@ -65,6 +65,7 @@ type Client struct {
 
 	inserts, finds, updates, deletes, errors atomic.Uint64
 	onEvent                                  atomic.Pointer[func(Event)]
+	closed                                   atomic.Bool // guards raw.Disconnect for owning clients (mongo-driver Disconnect is not idempotent)
 }
 
 // connector connects to MongoDB. New uses mongo.Connect; tests inject a fake.
@@ -129,9 +130,17 @@ func (c *Client) Collection(db, coll string) *Collection {
 	return c.newCollection(raw, db, coll)
 }
 
-// Disconnect releases the underlying connection. No-op for a wrapped client.
+// Disconnect releases the underlying connection. No-op for a wrapped or
+// mock-injected client, and safe to call any number of times: mongo-driver's
+// Client.Disconnect is not itself idempotent (a second call returns "client is
+// disconnected"), so for an owning client only the first call reaches raw.Disconnect.
 func (c *Client) Disconnect(ctx context.Context) error {
 	if !c.own {
+		return nil
+	}
+	// CompareAndSwap guarantees exactly one caller proceeds even under concurrent
+	// Disconnect calls; subsequent calls (including the documented second call) are no-ops.
+	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}
 	return c.raw.Disconnect(ctx)

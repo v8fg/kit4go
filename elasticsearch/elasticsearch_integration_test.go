@@ -8,6 +8,7 @@ package elasticsearch
 //	ELASTICSEARCH_ADDR=http://127.0.0.1:9200 go test -run Integration -v ./elasticsearch/
 
 import (
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -25,18 +26,19 @@ func TestIntegration_CRUDRoundTrip(t *testing.T) {
 		t.Skip("ELASTICSEARCH_ADDR not set")
 	}
 
-	c, err := New(WithAddresses(addr))
+	ctx := context.Background()
+	c, err := New(ctx, WithAddresses(addr))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	if _, err := c.Index("kit4go-it", strings.NewReader(`{"k":"v1"}`),
+	if _, err := c.Index(ctx, "kit4go-it", strings.NewReader(`{"k":"v1"}`),
 		esapi.Index(nil).WithDocumentID("1"),
 	); err != nil {
 		t.Fatalf("Index: %v", err)
 	}
 
-	res, err := c.Get("kit4go-it", "1")
+	res, err := c.Get(ctx, "kit4go-it", "1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -46,11 +48,11 @@ func TestIntegration_CRUDRoundTrip(t *testing.T) {
 		t.Fatalf("Get body = %s, want to contain v1", body)
 	}
 
-	if _, err := c.Search(esapi.Search(nil).WithIndex("kit4go-it")); err != nil {
+	if _, err := c.Search(ctx, esapi.Search(nil).WithIndex("kit4go-it")); err != nil {
 		t.Fatalf("Search: %v", err)
 	}
 
-	if _, err := c.Delete("kit4go-it", "1"); err != nil {
+	if _, err := c.Delete(ctx, "kit4go-it", "1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 

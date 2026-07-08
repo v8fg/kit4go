@@ -132,7 +132,11 @@ func (c *Client) PutObject(ctx context.Context, bucket, object string, reader io
 		c.fireEvent(Event{Kind: KindPut, Outcome: OutcomeError})
 		return minio.UploadInfo{}, err
 	}
-	c.bytesUploaded.Add(uint64(info.Size))
+	// Streaming uploads (objectSize=-1) report UploadInfo.Size=-1; converting
+	// that to uint64 wraps to ~1.8e19. Only credit positive sizes.
+	if info.Size > 0 {
+		c.bytesUploaded.Add(uint64(info.Size))
+	}
 	c.fireEvent(Event{Kind: KindPut, Outcome: OutcomeSuccess})
 	return info, nil
 }
@@ -204,14 +208,20 @@ func (c *Client) MakeBucket(ctx context.Context, bucket string, opts minio.MakeB
 }
 
 // ListObjects lists objects in a bucket matching opts (Prefix, Recursive, ...).
-// It fully drains minio-go's result channel (required — an undrained channel
-// leaks the producer goroutine) and surfaces any error embedded in the final
-// ObjectInfo.Err.
+// It fully drains minio-go's result channel — required, because an undrained
+// channel blocks minio-go's producer goroutine forever — and surfaces any error
+// embedded in an ObjectInfo.Err. On an embedded error it returns the items seen
+// so far plus the error, but still drains the rest of the channel first so the
+// producer unblocks.
 func (c *Client) ListObjects(ctx context.Context, bucket string, opts minio.ListObjectsOptions) ([]minio.ObjectInfo, error) {
 	ch := c.api.ListObjects(ctx, bucket, opts)
 	var out []minio.ObjectInfo
 	for info := range ch {
 		if info.Err != nil {
+			// Drain the rest so minio-go's producer goroutine is not leaked; it
+			// blocks on send if the channel is full and we return early.
+			for range ch {
+			}
 			c.errors.Add(1)
 			c.fireEvent(Event{Kind: KindList, Outcome: OutcomeError})
 			return out, info.Err

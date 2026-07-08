@@ -38,13 +38,13 @@ func newMockClient() *Client {
 // --- New error paths ---
 
 func TestNew_NoAddresses(t *testing.T) {
-	_, err := newClient(nil, defaultOpener)
+	_, err := newClient(context.Background(), nil, defaultOpener)
 	require.ErrorIs(t, err, ErrNoAddresses)
 }
 
 func TestNew_OpenError(t *testing.T) {
 	open := func(elasticsearch.Config) (*elasticsearch.Client, error) { return nil, errTest }
-	_, err := newClient([]Option{WithAddresses("http://x")}, open)
+	_, err := newClient(context.Background(), []Option{WithAddresses("http://x")}, open)
 	require.ErrorIs(t, err, errTest)
 }
 
@@ -55,7 +55,10 @@ func TestNew_ConstructionError(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, err := newClient([]Option{WithAddresses("http://127.0.0.1:1")}, defaultOpener)
+		// Short ctx so the Ping does not wait for the 10s fallback.
+		pingCtx, cancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel2()
+		_, err := newClient(pingCtx, []Option{WithAddresses("http://127.0.0.1:1")}, defaultOpener)
 		_ = err // non-nil expected
 	}()
 	select {
@@ -69,7 +72,7 @@ func TestNew_ConstructionError(t *testing.T) {
 
 func TestIndex_SuccessAndError(t *testing.T) {
 	c := newMockClient()
-	resp, err := c.Index("idx", strings.NewReader(`{}`))
+	resp, err := c.Index(context.Background(), "idx", strings.NewReader(`{}`))
 	require.NoError(t, err)
 	require.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, uint64(1), c.Metrics().Indexes)
@@ -77,42 +80,42 @@ func TestIndex_SuccessAndError(t *testing.T) {
 	c.index = func(string, io.Reader, ...func(*esapi.IndexRequest)) (*esapi.Response, error) {
 		return nil, errTest
 	}
-	_, err = c.Index("idx", strings.NewReader(`{}`))
+	_, err = c.Index(context.Background(), "idx", strings.NewReader(`{}`))
 	require.ErrorIs(t, err, errTest)
 	assert.Equal(t, uint64(1), c.Metrics().Errors)
 }
 
 func TestSearch_SuccessAndError(t *testing.T) {
 	c := newMockClient()
-	resp, err := c.Search()
+	resp, err := c.Search(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, uint64(1), c.Metrics().Searches)
 
 	c.search = func(...func(*esapi.SearchRequest)) (*esapi.Response, error) { return nil, errTest }
-	_, err = c.Search()
+	_, err = c.Search(context.Background())
 	require.ErrorIs(t, err, errTest)
 }
 
 func TestGet_SuccessAndError(t *testing.T) {
 	c := newMockClient()
-	_, err := c.Get("idx", "1")
+	_, err := c.Get(context.Background(), "idx", "1")
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1), c.Metrics().Gets)
 
 	c.get = func(string, string, ...func(*esapi.GetRequest)) (*esapi.Response, error) { return nil, errTest }
-	_, err = c.Get("idx", "1")
+	_, err = c.Get(context.Background(), "idx", "1")
 	require.ErrorIs(t, err, errTest)
 }
 
 func TestDelete_SuccessAndError(t *testing.T) {
 	c := newMockClient()
-	_, err := c.Delete("idx", "1")
+	_, err := c.Delete(context.Background(), "idx", "1")
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1), c.Metrics().Deletes)
 
 	c.delete = func(string, string, ...func(*esapi.DeleteRequest)) (*esapi.Response, error) { return nil, errTest }
-	_, err = c.Delete("idx", "1")
+	_, err = c.Delete(context.Background(), "idx", "1")
 	require.ErrorIs(t, err, errTest)
 }
 
@@ -125,7 +128,7 @@ func TestClient_NilWhenMockInjected(t *testing.T) {
 func TestPingFailFast_ErrorPath(t *testing.T) {
 	c := newMockClient()
 	c.ping = func(...func(*esapi.PingRequest)) (*esapi.Response, error) { return nil, errTest }
-	require.ErrorIs(t, c.pingFailFast(), errTest)
+	require.ErrorIs(t, c.pingFailFast(context.Background()), errTest)
 }
 
 func TestPingFailFast_NonSuccessStatus(t *testing.T) {
@@ -133,13 +136,34 @@ func TestPingFailFast_NonSuccessStatus(t *testing.T) {
 	c.ping = func(...func(*esapi.PingRequest)) (*esapi.Response, error) {
 		return &esapi.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader(""))}, nil
 	}
-	require.Error(t, c.pingFailFast())
+	// Returns a sentinel-wrapped error so callers can errors.Is it.
+	require.ErrorIs(t, c.pingFailFast(context.Background()), ErrPingFailed)
 }
 
 func TestPingFailFast_Success(t *testing.T) {
 	c := newMockClient() // default ping -> 200
-	require.NoError(t, c.pingFailFast())
+	require.NoError(t, c.pingFailFast(context.Background()))
 }
+
+// F4 regression: pingFailFast must close the response Body on EVERY path
+// (success, non-success status), not leak it.
+func TestPingFailFast_ClosesBodyOnAllPaths(t *testing.T) {
+	for _, status := range []int{200, 503, 401} {
+		c := newMockClient()
+		body := &trackingBody{closed: new(bool)}
+		c.ping = func(...func(*esapi.PingRequest)) (*esapi.Response, error) {
+			return &esapi.Response{StatusCode: status, Body: body}, nil
+		}
+		_ = c.pingFailFast(context.Background())
+		assert.True(t, *body.closed, "pingFailFast must close the response Body for status %d", status)
+	}
+}
+
+// trackingBody is an io.ReadCloser whose Close flips *closed (Read returns EOF).
+type trackingBody struct{ closed *bool }
+
+func (b *trackingBody) Read(p []byte) (int, error) { return 0, io.EOF }
+func (b *trackingBody) Close() error               { *b.closed = true; return nil }
 
 func TestOptions_ReturnsResolved(t *testing.T) {
 	c := newMockClient()
@@ -163,7 +187,10 @@ func TestNew_DelegatesAndErrors(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := New(WithAddresses("http://127.0.0.1:1")) // defaultOpener: lazy client + Ping fails
+		// Short ctx so the Ping does not wait for the 10s fallback.
+		pingCtx, cancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel2()
+		_, err := New(pingCtx, WithAddresses("http://127.0.0.1:1")) // defaultOpener: lazy client + Ping fails
 		done <- err
 	}()
 	select {
@@ -181,11 +208,11 @@ func TestSetOnEvent_FiresOnSuccessAndError(t *testing.T) {
 	var got []Event
 	c.SetOnEvent(func(e Event) { got = append(got, e) })
 
-	_, _ = c.Index("idx", strings.NewReader(`{}`)) // success
+	_, _ = c.Index(context.Background(), "idx", strings.NewReader(`{}`)) // success
 	c.index = func(string, io.Reader, ...func(*esapi.IndexRequest)) (*esapi.Response, error) {
 		return nil, errTest
 	}
-	_, _ = c.Index("idx", strings.NewReader(`{}`)) // error
+	_, _ = c.Index(context.Background(), "idx", strings.NewReader(`{}`)) // error
 
 	require.Len(t, got, 2)
 	assert.Equal(t, KindIndex, got[0].Kind)

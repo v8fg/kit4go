@@ -3,6 +3,7 @@ package etcd
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -195,6 +196,46 @@ func TestClose_OwnedClosesRaw(t *testing.T) {
 	require.NoError(t, err)
 	c := &Client{raw: raw, own: true}
 	assert.NoError(t, c.Close())
+}
+
+// Regression for the godoc contract "Close is idempotent". clientv3.Client.Close
+// is NOT idempotent (a second call returns "context canceled"); the wrapper must
+// shield callers from that. A counting fake closeFn stands in for raw.Close so the
+// second call can be observed to be a no-op without driving a real client to the
+// error path.
+func TestClose_OwnedIsIdempotent(t *testing.T) {
+	var closes atomic.Int32
+	c := &Client{
+		api:     &mockAPI{},
+		own:     true,
+		closeFn: func() error { closes.Add(1); return nil },
+	}
+
+	require.NoError(t, c.Close()) // first call closes
+	require.NoError(t, c.Close()) // second call must be a no-op, not an error
+	require.NoError(t, c.Close()) // and so must any further call
+	assert.Equal(t, int32(1), closes.Load(), "underlying close must run exactly once")
+}
+
+// Concurrent Close calls on an owning client must also collapse to a single
+// underlying close (the CAS guard is the concurrency safety claim in the godoc).
+func TestClose_OwnedConcurrentSingleClose(t *testing.T) {
+	var closes atomic.Int32
+	c := &Client{
+		api:     &mockAPI{},
+		own:     true,
+		closeFn: func() error { closes.Add(1); return nil },
+	}
+
+	const n = 16
+	done := make(chan error, n)
+	for range n {
+		go func() { done <- c.Close() }()
+	}
+	for range n {
+		assert.NoError(t, <-done)
+	}
+	assert.Equal(t, int32(1), closes.Load(), "concurrent Close must reach underlying close exactly once")
 }
 
 func TestNew_DelegatesAndErrors(t *testing.T) {

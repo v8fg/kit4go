@@ -210,6 +210,22 @@ func TestDisconnect_OwnedDisconnectsRaw(t *testing.T) {
 	assert.NoError(t, cli.Disconnect(context.Background()))
 }
 
+// Regression: Disconnect on an owning client must be idempotent. The upstream
+// mongo-driver Disconnect returns "client is disconnected" on a second call; the
+// wrapper's closed guard must short-circuit before touching raw so the second
+// call is a no-op (returns nil). Built over a real lazy mongo.Connect client
+// (no server) since Disconnect goes through c.raw, which the mock-backed path
+// does not exercise.
+func TestDisconnect_OwnedIsIdempotent(t *testing.T) {
+	raw, err := mongo.Connect(context.Background(), options.Client().ApplyURI("mongodb://127.0.0.1:1"))
+	require.NoError(t, err)
+	cli := &Client{raw: raw, own: true} // white-box owning client
+
+	assert.NoError(t, cli.Disconnect(context.Background())) // first call closes raw
+	assert.NoError(t, cli.Disconnect(context.Background())) // second call -> no-op, not "client is disconnected"
+	assert.True(t, cli.closed.Load())
+}
+
 // --- Wrap / Disconnect / Client() / Collection() ---
 
 func TestWrap_ClientAndDisconnect(t *testing.T) {

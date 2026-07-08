@@ -53,6 +53,12 @@ type Client struct {
 
 	puts, gets, deletes, grants, watches, errors atomic.Uint64
 	onEvent                                      atomic.Pointer[func(Event)]
+	closed                                       atomic.Bool // guards raw.Close for owning clients (clientv3.Client.Close is not idempotent)
+
+	// closeFn is the underlying close invoked by Close for owning clients; nil
+	// in production (Close falls back to c.raw.Close). Tests inject a counted
+	// fake so idempotency can be asserted without a real *clientv3.Client.
+	closeFn func() error
 }
 
 // opener opens a *clientv3.Client from a clientv3.Config. New uses the real
@@ -221,10 +227,20 @@ func (c *Client) Client() *clientv3.Client { return c.raw }
 func (c *Client) Options() Options { return c.opts }
 
 // Close releases the underlying gRPC connection. No-op for a wrapped or
-// mock-injected client.
+// mock-injected client, and safe to call any number of times: clientv3.Client.Close
+// is not itself idempotent (a second close returns "context canceled"), so for an
+// owning client only the first call reaches the underlying close.
 func (c *Client) Close() error {
 	if !c.own {
 		return nil
+	}
+	// CompareAndSwap guarantees exactly one caller proceeds even under concurrent
+	// Close calls; subsequent calls (including the documented second close) are no-ops.
+	if !c.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	if c.closeFn != nil {
+		return c.closeFn()
 	}
 	return c.raw.Close()
 }
