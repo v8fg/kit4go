@@ -129,6 +129,7 @@ graph TB
 | [clickhouse](clickhouse) | ClickHouse OLAP client wrapper (native protocol, PrepareBatch pass-through) | ClickHouse/clickhouse-go |
 | [etcd](etcd) | etcd distributed-KV wrapper (service registration + discovery: KV/Lease/Watch) | etcd-io/etcd |
 | [minio](minio) | S3/MinIO object-store client wrapper (Put/Get/Stat/Remove/List/Presign) | minio/minio-go |
+| [mongo](mongo) | MongoDB document-store wrapper (Collection CRUD: Find/Insert/Update/Delete) | mongodb/mongo-go-driver |
 | [redis](redis) | Redis client wrapper | redis/go-redis |
 | [redislock](redislock) | distributed lock (token-guarded Lua, auto-renew, onLost) | redis/go-redis |
 | [rate](rate) | Redis-backed GCRA rate limiter | redis/go-redis |

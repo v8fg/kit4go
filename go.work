@@ -12,6 +12,7 @@ use (
 	./log4go
 	./minio
 	./metrics
+	./mongo
 	./postgres
 	./rate
 	./redis
