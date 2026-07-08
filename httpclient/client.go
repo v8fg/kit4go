@@ -3,6 +3,7 @@ package httpclient
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,6 +27,13 @@ var bufPool = sync.Pool{
 var respPool = sync.Pool{
 	New: func() any { return new(Response) },
 }
+
+// ErrResponseTooLarge is returned by Do when the server's response body exceeds
+// [ClientOptions.MaxResponseBodyBytes]. The body is NOT materialised past the
+// cap and the underlying connection is left for the transport to close (the
+// response could not be read to completion, so the connection is not safe to
+// reuse). Compare with errors.Is to detect this specific failure.
+var ErrResponseTooLarge = errors.New("httpclient: response body exceeds MaxResponseBodyBytes")
 
 // Response is the fully-materialised result of an HTTP call. The body is read
 // into memory (and the underlying [http.Response.Body] closed) before this
@@ -289,7 +297,10 @@ func (c *Client) Do(ctx context.Context, method, url string, body []byte, header
 	// Read the body fully into memory and close it so the connection can be
 	// returned to the pool. This must happen before the deferred cancel above
 	// fires, hence the body-read lives inside Do rather than after it returns.
-	respBody, readErr := drainBody(raw)
+	// The cap (opts.MaxResponseBodyBytes) protects against a malicious/buggy
+	// server returning an enormous body: drainBody returns ErrResponseTooLarge
+	// at the cap instead of materialising gigabytes.
+	respBody, readErr := drainBody(raw, c.opts.MaxResponseBodyBytes)
 	if readErr != nil {
 		c.failed.Add(1)
 		c.fireEvent("failed", method, url, raw.StatusCode, 0)
@@ -457,19 +468,40 @@ func (c *Client) buildRequest(ctx context.Context, method, url string, body []by
 	return req, nil
 }
 
-// drainBody reads b.Body fully into a []byte and closes it. Uses a pooled
-// buffer to avoid allocating a new bytes.Buffer on every call.
-func drainBody(b *http.Response) ([]byte, error) {
+// drainBody reads b.Body into a []byte and closes it. Uses a pooled buffer to
+// avoid allocating a new bytes.Buffer on every call.
+//
+// max caps the number of bytes materialised: when max > 0 the body is read
+// through an io.LimitReader of size max+1, and if the body contains MORE than
+// max bytes drainBody returns [ErrResponseTooLarge] without materialising the
+// rest. max <= 0 disables the cap (unlimited) for back-compat. On oversize the
+// body is closed without being fully drained, so the transport discards the
+// connection rather than returning a half-read conn to the pool.
+func drainBody(b *http.Response, max int) ([]byte, error) {
 	if b == nil || b.Body == nil {
 		return nil, nil
 	}
 	defer func() { _ = b.Body.Close() }()
+
+	body := b.Body
+	if max > 0 {
+		// Read at most max+1 bytes: if we get max+1, the body exceeded the cap.
+		// The +1 keeps the bound tight (worst-case allocation is max+1 bytes).
+		body = io.NopCloser(io.LimitReader(b.Body, int64(max)+1))
+	}
+
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer bufPool.Put(buf)
-	_, err := buf.ReadFrom(b.Body)
+	_, err := buf.ReadFrom(body)
 	if err != nil {
 		return nil, err
+	}
+	if max > 0 && buf.Len() > max {
+		// Body exceeded the cap. Discard the partial read and leave the
+		// connection for the transport to close (it is not safe to reuse a
+		// connection whose body was not fully drained).
+		return nil, ErrResponseTooLarge
 	}
 	if buf.Len() == 0 {
 		return nil, nil

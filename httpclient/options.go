@@ -110,21 +110,56 @@ type ClientOptions struct {
 	// (including retries and body read). nil (the default) disables latency
 	// observation.
 	Latency LatencyObserver `json:"-"`
+
+	// MaxResponseBodyBytes caps the number of bytes read from a response body
+	// before it is materialised into memory. The cap protects callers from a
+	// malicious or buggy server that returns an enormous body (e.g. 256MB),
+	// which would otherwise drive the process toward OOM: drainBody reads the
+	// whole body into a pooled bytes.Buffer with no inherent limit.
+	//
+	// Default 10MB (defaultMaxResponseBodyBytes) — sensible for the ad-tech /
+	// finance JSON APIs this client is built around, and small enough that no
+	// single response can starve the process. A value of 0 disables the cap
+	// (unlimited, for back-compat with callers that stream large payloads and
+	// opt in explicitly via [ClientOptions.WithMaxResponseBodyBytes](0)). When a
+	// response exceeds the cap, the call fails fast with [ErrResponseTooLarge]
+	// and the connection is left for the transport to close rather than
+	// materialising the rest.
+	//
+	// Because 0 is itself a meaningful value (unlimited), the default is applied
+	// only when the field was not explicitly set — see MaxResponseBodyBytesSet.
+	MaxResponseBodyBytes int `json:"max_response_body_bytes" mapstructure:"max_response_body_bytes"`
+
+	// MaxResponseBodyBytesSet records whether MaxResponseBodyBytes was
+	// explicitly set. When false, withDefaults applies the protective 10MB
+	// default. When true, the explicit value is honoured as-is — including 0,
+	// which means "unlimited" (the documented opt-out). Populated by config
+	// loaders (whenever the key is present) and by
+	// [ClientOptions.WithMaxResponseBodyBytes]; hand-written literals that want
+	// unlimited should use that helper for clarity.
+	MaxResponseBodyBytesSet bool `json:"-" mapstructure:"-"`
 }
+
+// defaultMaxResponseBodyBytes is the default cap on response-body size applied
+// by drainBody. 10MB covers the JSON payloads typical of ad-tech / finance APIs
+// while guaranteeing no single response can OOM the process. Callers that
+// expect larger payloads set MaxResponseBodyBytes explicitly (0 disables).
+const defaultMaxResponseBodyBytes = 10 * 1024 * 1024
 
 // defaultClientOptions returns the package defaults used to fill zero option
 // fields. It is the single source of truth for "what is the default for X".
 func defaultClientOptions() ClientOptions {
 	return ClientOptions{
-		ConnectTimeout:  5 * time.Second,
-		RequestTimeout:  30 * time.Second,
-		MaxIdleConns:    100,
-		IdleConnTimeout: 90 * time.Second,
-		MaxIdlePerHost:  10,
-		RetryMax:        3,
-		RetryWaitMin:    100 * time.Millisecond,
-		RetryWaitMax:    2 * time.Second,
-		FollowRedirect:  true,
+		ConnectTimeout:       5 * time.Second,
+		RequestTimeout:       30 * time.Second,
+		MaxIdleConns:         100,
+		IdleConnTimeout:      90 * time.Second,
+		MaxIdlePerHost:       10,
+		RetryMax:             3,
+		RetryWaitMin:         100 * time.Millisecond,
+		RetryWaitMax:         2 * time.Second,
+		FollowRedirect:       true,
+		MaxResponseBodyBytes: defaultMaxResponseBodyBytes,
 	}
 }
 
@@ -132,7 +167,9 @@ func defaultClientOptions() ClientOptions {
 // corresponding default. Non-zero fields are preserved, so callers can override
 // only what they need. FollowRedirect is set to its default (true) unless the
 // caller signalled an explicit choice via FollowRedirectSet, in which case the
-// explicit value is kept.
+// explicit value is kept. MaxResponseBodyBytes likewise gets its protective
+// default unless the caller set it explicitly (MaxResponseBodyBytesSet), so that
+// an explicit 0 ("unlimited") opt-out is honoured rather than overwritten.
 func (o ClientOptions) withDefaults() ClientOptions {
 	d := defaultClientOptions()
 	if o.ConnectTimeout <= 0 {
@@ -161,6 +198,9 @@ func (o ClientOptions) withDefaults() ClientOptions {
 	}
 	if !o.FollowRedirectSet {
 		o.FollowRedirect = d.FollowRedirect
+	}
+	if !o.MaxResponseBodyBytesSet {
+		o.MaxResponseBodyBytes = d.MaxResponseBodyBytes
 	}
 	return o
 }
@@ -191,3 +231,21 @@ func WithRedirect(o ClientOptions) ClientOptions { return o.WithRedirect() }
 // WithNoRedirect is a package-level convenience that mirrors
 // [ClientOptions.WithNoRedirect].
 func WithNoRedirect(o ClientOptions) ClientOptions { return o.WithNoRedirect() }
+
+// WithMaxResponseBodyBytes returns a copy of o with the response-body cap set
+// to maxBytes and flagged as explicitly set, so withDefaults will not override
+// it. Pass 0 to disable the cap entirely (unlimited, for callers that stream
+// large payloads and accept the memory risk); pass a positive value to tighten
+// or loosen the default 10MB cap. When a response exceeds the cap the call
+// fails fast with [ErrResponseTooLarge].
+func (o ClientOptions) WithMaxResponseBodyBytes(maxBytes int) ClientOptions {
+	o.MaxResponseBodyBytes = maxBytes
+	o.MaxResponseBodyBytesSet = true
+	return o
+}
+
+// WithMaxResponseBodyBytes is a package-level convenience that mirrors
+// [ClientOptions.WithMaxResponseBodyBytes].
+func WithMaxResponseBodyBytes(o ClientOptions, maxBytes int) ClientOptions {
+	return o.WithMaxResponseBodyBytes(maxBytes)
+}

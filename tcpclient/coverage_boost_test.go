@@ -535,6 +535,116 @@ func TestConnPool_Put_AfterClose(t *testing.T) {
 	}
 }
 
+// --- R15 F5: pool put/close race must not strand a conn in the dead channel ---
+
+// TestConnPool_PutCloseRace_NoOrphanedConn is the R15-F5 regression test.
+//
+// The bug: put() read `closed` under mu, released mu, then did the non-blocking
+// channel send. close() could run in that window: it sets closed=true (under
+// mu), releases mu, and drains the channel. If put's send lands AFTER close's
+// drain loop, the conn sits in the dead channel forever — never reused, never
+// closed -> FD leak.
+//
+// The fix: hold mu across the closed-check AND the send, so close() cannot
+// interleave: any put that observes closed==false completes its send before
+// close acquires mu, and close's subsequent drain picks the conn up.
+//
+// Reproduction: hammer put and close concurrently. Every conn handed to put
+// must be accounted for exactly once — either closed (by put's overspill/full
+// path, by put's closed path, or by close's drain) — and the channel must be
+// empty once close returns. On the buggy code some conns are orphaned in the
+// channel with Close never called.
+func TestConnPool_PutCloseRace_NoOrphanedConn(t *testing.T) {
+	const rounds = 200
+	for range rounds {
+		// Capacity 1 keeps the race window tight (most puts hit the full path,
+		// exercising the closed-check vs send interleave).
+		p := newConnPool("tcp", "127.0.0.1:1", 1, time.Second, time.Second)
+
+		const n = 16
+		var wg sync.WaitGroup
+		wg.Add(n + 1)
+		conns := make([]*fakeConn, n)
+		for i := range conns {
+			conns[i] = &fakeConn{}
+		}
+		start := make(chan struct{})
+		// Closer races against the puts.
+		go func() {
+			defer wg.Done()
+			<-start
+			p.close()
+		}()
+		for i := range conns {
+			go func(fc *fakeConn) {
+				defer wg.Done()
+				<-start
+				p.put(fc)
+			}(conns[i])
+		}
+		close(start)
+		wg.Wait()
+
+		// After close() returns the pool is drained: the channel must be empty
+		// (no orphaned conn). On the buggy code a conn can be stranded here.
+		if got := len(p.pool); got != 0 {
+			t.Fatalf("round: pool channel still holds %d conn(s) after close "+
+				"(put/close race stranded a conn — FD leak)", got)
+		}
+		// Every conn must be closed exactly once. If any conn is neither in the
+		// channel nor closed, it leaked (the buggy window). The channel is empty
+		// (asserted above), so closes must total n.
+		var closed int64
+		for _, fc := range conns {
+			closed += fc.closes.Load()
+		}
+		if closed != n {
+			t.Fatalf("round: closes = %d, want %d (some conn was never closed "+
+				"nor pooled — orphaned by the put/close race)", closed, n)
+		}
+	}
+}
+
+// TestConnPool_PutHoldsMuAcrossSend pins the fix's mechanism: put must hold mu
+// across both the closed-check and the channel send. We verify this by taking mu
+// ourselves and confirming put blocks until mu is released (i.e. put cannot
+// sneak its send in while we hold mu, which is what closes the race).
+func TestConnPool_PutHoldsMuAcrossSend(t *testing.T) {
+	const n = 3
+	// Capacity >= n so every put enqueues (none hit the overspill close path,
+	// which would muddy the "put holds mu" assertion).
+	p := newConnPool("tcp", "127.0.0.1:1", n, time.Second, time.Second)
+	defer p.close()
+
+	// Hold mu: a correctly-implemented put (check + send under mu) cannot make
+	// progress; it must block here. We release mu via the signal so put can run.
+	p.mu.Lock()
+	conns := make([]*fakeConn, n)
+	for i := range conns {
+		conns[i] = &fakeConn{}
+	}
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for _, fc := range conns {
+		go func(fc *fakeConn) {
+			defer wg.Done()
+			p.put(fc) // must block on mu
+		}(fc)
+	}
+	// Give the puts a moment to block on mu.
+	time.Sleep(20 * time.Millisecond)
+	// While mu is held, the channel must be untouched by put.
+	if got := len(p.pool); got != 0 {
+		t.Fatalf("pool len = %d while mu held, want 0 (put must hold mu across send)", got)
+	}
+	p.mu.Unlock()
+	wg.Wait()
+	// Now all puts completed under mu; the channel holds exactly n.
+	if got := len(p.pool); got != n {
+		t.Fatalf("pool len = %d, want %d after mu release", got, n)
+	}
+}
+
 // --- writeOnce / writeReadAll / writeReadLine error branches -----------------
 
 // TestWriteOnce_WriteDeadlineError covers the SetWriteDeadline error branch of
@@ -1043,6 +1153,371 @@ func TestSendReceiveLine_BreakerShortCircuits(t *testing.T) {
 	}
 	if m := c.Metrics(); m.Failed != 1 || m.Total != 1 {
 		t.Fatalf("metrics = %+v, want Failed=1 Total=1", m)
+	}
+}
+
+// --- R15 F1: ctx-fired conns must not be pooled (close-vs-pool race) --------
+
+// persistentAcceptAll accepts every connection and echoes writes back via
+// io.Copy, keeping each connection open. Used by the F1/F2 regression tests
+// that need a connection which stays alive across a write+read cycle (so a
+// healthy pooled conn remains reusable, but a ctx-fired one must not be pooled).
+func persistentAcceptAll(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_, _ = io.Copy(c, c) // echo until error or EOF
+			}(conn)
+		}
+	}()
+	return ln
+}
+
+// drainPooledConns pulls every idle conn currently sitting in the pool and
+// returns them, closing each after the test inspects it.
+func drainPooledConns(p *connPool) []*poolConn {
+	var out []*poolConn
+	for {
+		select {
+		case pc := <-p.pool:
+			out = append(out, pc)
+		default:
+			return out
+		}
+	}
+}
+
+// TestWithConn_CtxFiredAfterSuccessNotPooled is the R15-F1 regression test.
+//
+// The bug: withConn's ctx-watcher goroutine runs
+//
+//	select { case <-ctx.Done(): conn.Close(); case <-done: }
+//
+// When ctx fires while fn is mid-success, both cases are ready once `done` is
+// closed, so Go picks pseudo-randomly. If the watcher wins it calls conn.Close()
+// AFTER the main path has already done c.pool.put(conn). A future caller then
+// gets a closed conn from the pool -> spurious net.ErrClosed.
+//
+// The fix: before c.pool.put(conn) on the success path, guard
+//
+//	if ctx.Err() != nil { conn.Close(); return nil }
+//
+// A conn whose ctx fired is never pooled.
+//
+// This test reproduces the race under concurrency: thousands of withConn calls
+// each cancel their ctx ~immediately after a successful write. After draining
+// the pool, EVERY conn must still be writable. On the old (buggy) code a few
+// conns are closed by straggling watchers -> Write returns net.ErrClosed.
+func TestWithConn_CtxFiredAfterSuccessNotPooled(t *testing.T) {
+	ln := persistentAcceptAll(t)
+	defer ln.Close()
+
+	c := NewClient(ClientOptions{
+		Address:        ln.Addr().String(),
+		ConnectTimeout: 500 * time.Millisecond,
+		ReadTimeout:    0, // rely on ctx; reads in fn return promptly anyway
+		WriteTimeout:   500 * time.Millisecond,
+		RetryMax:       0,
+		IdleTimeout:    0, // disable eviction so poisoned conns are observable
+		PoolSize:       64,
+	})
+	defer c.Close()
+
+	// fn writes (succeeds immediately against an echo server) and returns nil.
+	// The caller cancels ctx concurrently so the watcher races the return.
+	const n = 5000
+	var wg sync.WaitGroup
+	wg.Add(n)
+	start := make(chan struct{})
+	for range n {
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			defer wg.Done()
+			defer cancel()
+			<-start
+			_ = c.withConn(ctx, func(conn net.Conn, poolable *bool) error {
+				_, err := conn.Write([]byte("x"))
+				return err
+			})
+			// Cancel immediately after fn returns so the watcher's ctx.Done()
+			// case becomes ready right around pool.put. (cancel is also deferred
+			// above; calling twice is a no-op.)
+			cancel()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	// Drain the pool: every conn that survived must still be usable. A
+	// poisoned (watcher-closed) conn fails Write with net.ErrClosed.
+	pooled := drainPooledConns(c.pool)
+	t.Logf("drained %d pooled conns; each must still be writable", len(pooled))
+	var poisoned int
+	for _, pc := range pooled {
+		// Give a straggling watcher a moment to finish its Close if it is going
+		// to (the race window is tiny, but the watcher goroutine may not have
+		// been scheduled yet).
+		_ = pc.Conn.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+		if _, err := pc.Conn.Write([]byte("probe")); err != nil {
+			poisoned++
+			t.Errorf("pooled conn write err = %v (pooled-after-close bug)", err)
+		}
+		_ = pc.Conn.Close()
+	}
+	if poisoned != 0 {
+		t.Fatalf("%d pooled conns were closed by a straggling watcher", poisoned)
+	}
+}
+
+// TestWithConn_CtxFiredSuccessReturnsNil confirms the fix does not change the
+// call's own return value: withConn returns nil for a successful fn even when
+// ctx fired (the conn is simply closed rather than pooled). This pins the
+// observable contract so a future refactor that turns the success-but-ctx-fired
+// path into an error is caught.
+func TestWithConn_CtxFiredSuccessReturnsNil(t *testing.T) {
+	ln := persistentAcceptAll(t)
+	defer ln.Close()
+
+	c := NewClient(ClientOptions{
+		Address:        ln.Addr().String(),
+		ConnectTimeout: 500 * time.Millisecond,
+		WriteTimeout:   500 * time.Millisecond,
+		RetryMax:       0,
+		IdleTimeout:    0,
+		PoolSize:       1,
+	})
+	defer c.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// fn cancels its own ctx right before returning success, so the guard at
+	// pool.put observes ctx.Err() != nil deterministically. fn returns nil.
+	err := c.withConn(ctx, func(conn net.Conn, poolable *bool) error {
+		_, werr := conn.Write([]byte("x"))
+		cancel() // ctx fires before fn returns
+		return werr
+	})
+	if err != nil {
+		t.Fatalf("withConn err = %v, want nil (success even when ctx fired)", err)
+	}
+	if got := len(c.pool.pool); got != 0 {
+		t.Fatalf("pool len = %d, want 0 (ctx-fired conn must not be pooled)", got)
+	}
+}
+
+// --- R15 F2: writeReadLine bufio over-read must not lose bytes ---------------
+
+// lineThenExtraListener accepts every connection, reads the request, then
+// writes a single line followed by extra bytes (no newline): "line1\nEXTRA".
+// This is the server shape that exposes the bufio over-read bug: bufio.Reader
+// pulls both chunks off the socket in one Read, ReadString('\n') returns
+// "line1\n", and "EXTRA" sits in the bufio buffer. On the buggy code the conn
+// is returned to the pool with "EXTRA" stranded in the GC'd bufio buffer.
+func lineThenExtraListener(t *testing.T, reply string) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 64)
+				_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+				_, _ = c.Read(buf) // consume the request so the reply lands
+				// Write the whole reply in one call so it typically arrives in a
+				// single TCP segment, maximising the chance bufio over-reads.
+				_, _ = c.Write([]byte(reply))
+			}(conn)
+		}
+	}()
+	return ln
+}
+
+// TestWriteReadLine_OverreadNotPooled is the R15-F2 regression test.
+//
+// The bug: writeReadLine wraps the conn in a bufio.Reader and calls
+// ReadString('\n'). bufio fills a 4096-byte buffer in one Read on the conn, so
+// when the server sends "line1\nEXTRA" the whole payload is pulled off the
+// socket; ReadString returns "line1\n" and "EXTRA" is stranded in the bufio
+// buffer. On the buggy code the conn is returned to the pool and the bufio
+// reader is GC'd with the unread tail still inside -> "EXTRA" silently lost.
+//
+// The fix: after a successful line read, if br.Buffered() > 0 the conn is
+// marked not poolable (the over-read bytes cannot be put back on the socket), so
+// withConn closes it instead of poisoning the pool.
+//
+// Reproduction: the server replies "line1\nEXTRA". writeReadLine must return
+// "line1" AND the conn must NOT be pooled (a pooled conn would be reused by a
+// later call and the lost "EXTRA" would manifest as a corrupt/empty stream).
+func TestWriteReadLine_OverreadNotPooled(t *testing.T) {
+	ln := lineThenExtraListener(t, "line1\nEXTRA")
+	defer ln.Close()
+
+	c := NewClient(ClientOptions{
+		Address:        ln.Addr().String(),
+		ConnectTimeout: 500 * time.Millisecond,
+		ReadTimeout:    500 * time.Millisecond,
+		WriteTimeout:   500 * time.Millisecond,
+		RetryMax:       0,
+		IdleTimeout:    0, // disable eviction so we can observe the pool directly
+		PoolSize:       4,
+	})
+	defer c.Close()
+
+	line, err := c.writeReadLine(context.Background(), []byte("q\n"))
+	if err != nil {
+		t.Fatalf("writeReadLine: %v", err)
+	}
+	if line != "line1" {
+		t.Fatalf("line = %q, want %q", line, "line1")
+	}
+	// The over-read conn must NOT be in the pool: the bufio buffer holds
+	// "EXTRA" which would be lost on reuse. On the buggy code this is non-zero.
+	if got := len(c.pool.pool); got != 0 {
+		t.Fatalf("pool len = %d, want 0 (over-read conn must not be pooled; "+
+			"buf bytes would be lost)", got)
+	}
+}
+
+// TestSendReceiveLine_OverreadDoesNotCorruptNextCall is the end-to-end form of
+// the F2 regression: after a call whose response over-read extra bytes, a
+// subsequent call must not receive the stale/lost bytes. The fix ensures the
+// over-reading conn is closed rather than pooled, so the next call dials fresh.
+func TestSendReceiveLine_OverreadDoesNotCorruptNextCall(t *testing.T) {
+	ln := lineThenExtraListener(t, "ok\ntrailing")
+	defer ln.Close()
+
+	c := NewClient(ClientOptions{
+		Address:        ln.Addr().String(),
+		ConnectTimeout: 500 * time.Millisecond,
+		ReadTimeout:    500 * time.Millisecond,
+		WriteTimeout:   500 * time.Millisecond,
+		RetryMax:       0,
+		IdleTimeout:    0,
+		PoolSize:       4,
+	})
+	defer c.Close()
+
+	// First call: server replies "ok\ntrailing". The line is "ok"; "trailing"
+	// is over-read and must not poison the pool.
+	first, err := c.SendReceiveLine(context.Background(), []byte("1\n"))
+	if err != nil {
+		t.Fatalf("SendReceiveLine[1]: %v", err)
+	}
+	if first != "ok" {
+		t.Fatalf("SendReceiveLine[1] = %q, want %q", first, "ok")
+	}
+	// Second call against a fresh conn: must get "ok" again, NOT a corrupted
+	// stream caused by reusing a conn whose bufio buffer ate "trailing".
+	second, err := c.SendReceiveLine(context.Background(), []byte("2\n"))
+	if err != nil {
+		t.Fatalf("SendReceiveLine[2]: %v", err)
+	}
+	if second != "ok" {
+		t.Fatalf("SendReceiveLine[2] = %q, want %q (over-read bytes leaked?)", second, "ok")
+	}
+}
+
+// --- R15 F6: deterministic pool-exhaustion extra-dial (replaces flaky test) ---
+
+// echoOnceInternal is the internal-package echo-once listener (the external
+// echoOnceListener lives in tcpclient_test.go and is unreachable here). It
+// counts accepted connections for the blocked-checkout assertion.
+func echoOnceInternal(t *testing.T) (net.Listener, *uint64) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	var conns uint64
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			atomic.AddUint64(&conns, 1)
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 64*1024)
+				_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+				n, err := c.Read(buf)
+				if err != nil || n == 0 {
+					return
+				}
+				_, _ = c.Write(buf[:n])
+			}(conn)
+		}
+	}()
+	return ln, &conns
+}
+
+// TestClient_PoolExhaustion_BlockedCheckout deterministically proves that a
+// second call dials a fresh connection when the pool's only conn is checked out
+// by an in-flight call. This replaces the scheduler-dependent assertion in
+// TestClient_PoolExhaustion_DialsExtra (external test), which flaked because a
+// write-only Send returns before the second goroutine runs.
+//
+// We acquire the pool's single conn directly (internal access) and hold it
+// checked out, then run a second Send: with no idle conn available it must
+// dial. The server therefore accepts >= 2 connections — the deterministic
+// "extra dial under genuine exhaustion" property.
+func TestClient_PoolExhaustion_BlockedCheckout(t *testing.T) {
+	ln, conns := echoOnceInternal(t)
+	defer ln.Close()
+
+	c := NewClient(ClientOptions{
+		Network:        "tcp",
+		Address:        ln.Addr().String(),
+		ConnectTimeout: 500 * time.Millisecond,
+		ReadTimeout:    500 * time.Millisecond,
+		WriteTimeout:   500 * time.Millisecond,
+		PoolSize:       1,
+		IdleTimeout:    0,
+		RetryMax:       0,
+	})
+	defer c.Close()
+
+	// Hold the pool's single conn checked out so the next Send cannot reuse it.
+	conn1, err := c.pool.get(context.Background(), c.opts.ConnectTimeout)
+	if err != nil {
+		t.Fatalf("pool.get[1]: %v", err)
+	}
+	defer c.pool.put(conn1)
+	// Give the accept counter time to observe conn1's accept.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && atomic.LoadUint64(conns) < 1 {
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// Second Send runs with conn1 checked out: the pool is exhausted, so it
+	// must dial a fresh conn. The echo-once server accepts it -> success.
+	if err := c.Send(context.Background(), []byte("x")); err != nil {
+		t.Fatalf("Send[2] while conn checked out: %v", err)
+	}
+	// Server accepted >= 2 connections: one for conn1, one for the forced dial.
+	deadline = time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && atomic.LoadUint64(conns) < 2 {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := atomic.LoadUint64(conns); got < 2 {
+		t.Fatalf("blocked-checkout: server conns = %d, want >= 2 (forced dial)", got)
 	}
 }
 

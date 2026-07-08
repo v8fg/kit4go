@@ -435,18 +435,28 @@ func (c *Client) withConn(ctx context.Context, fn func(conn net.Conn, poolable *
 	// connection, which unblocks any in-flight Read/Write with a "use of
 	// closed network connection" error. done is closed when fn returns so the
 	// watcher knows to stop.
+	//
+	// watcherStopped is closed by the watcher once its select has exited, i.e.
+	// it has committed to never calling conn.Close again. The main path waits
+	// on it before pooling so the ctx.Err() guard below is authoritative:
+	// without the handshake the watcher could pick ctx.Done() (and Close the
+	// conn) AFTER c.pool.put(conn) had already returned the conn to the pool —
+	// a future caller would then pull a closed socket (spurious net.ErrClosed).
 	done := make(chan struct{})
+	watcherStopped := make(chan struct{})
 	go func() {
 		select {
 		case <-ctx.Done():
 			_ = conn.Close()
 		case <-done:
 		}
+		close(watcherStopped)
 	}()
 
 	poolable := true
 	fnErr := fn(conn, &poolable)
 	close(done)
+	<-watcherStopped
 
 	if fnErr != nil {
 		// On error the connection may be in a half-broken state; close it
@@ -464,6 +474,17 @@ func (c *Client) withConn(ctx context.Context, fn func(conn net.Conn, poolable *
 	if !poolable {
 		// fn signalled the peer half-closed (e.g. clean EOF after a response):
 		// close rather than poison the pool with a one-shot connection.
+		_ = conn.Close()
+		return nil
+	}
+	// If ctx fired, the ctx-watcher goroutine may already have (or be about to)
+	// Close this conn: pooling it would hand a future caller a closed socket
+	// (spurious net.ErrClosed). The watcher races fn's return via `done`, so by
+	// the time we reach here ctx.Done() may have been selected — even though fn
+	// itself reported success. A conn whose ctx fired must not be pooled; close
+	// it instead. This mirrors the error-path guard at the net.ErrClosed branch
+	// above. See TestWithConn_CtxFiredAfterSuccessNotPooled.
+	if ctx.Err() != nil {
 		_ = conn.Close()
 		return nil
 	}
@@ -600,6 +621,17 @@ func (c *Client) writeReadLine(ctx context.Context, data []byte) (string, error)
 		// bufio.Reader is allocated per call: keeping it would require pooling
 		// the buffered-but-unread bytes across calls, which is unsafe for a
 		// pooled raw connection. One allocation per SendReceiveLine is fine.
+		//
+		// Correctness: bufio fills its internal buffer in one Read on the conn,
+		// so ReadString('\n') may pull bytes PAST the first newline off the
+		// socket. Those bytes live only in the bufio buffer; when the conn is
+		// returned to the pool they are silently lost (the bufio.Reader is GC'd
+		// with the unread tail still inside). To avoid poisoning the pool we
+		// inspect br.Buffered() after the read: if any bytes remain in the
+		// bufio buffer (over-read past the newline) the conn is NOT pooled — it
+		// is closed in withConn's !poolable branch. When Buffered()==0 the read
+		// consumed exactly up to (and including) the newline with no over-read,
+		// so the conn is safe to reuse. See TestWriteReadLine_OverreadNotPooled.
 		br := bufio.NewReader(conn)
 		s, rErr := br.ReadString('\n')
 		c.fireEvent("receive", len(s), 0)
@@ -612,6 +644,11 @@ func (c *Client) writeReadLine(ctx context.Context, data []byte) (string, error)
 				*poolable = false
 			}
 			return rErr
+		}
+		// Successful line read: guard the pool against over-read bytes that
+		// bufio pulled past the newline. They cannot be returned to the socket.
+		if br.Buffered() > 0 {
+			*poolable = false
 		}
 		return nil
 	})

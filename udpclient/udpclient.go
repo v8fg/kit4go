@@ -350,17 +350,24 @@ func (c *Client) sendReceiveWithRetry(ctx context.Context, data []byte) ([]byte,
 			continue
 		}
 
-		// Read exactly one reply datagram.
-		if rerr := c.conn.SetReadDeadline(time.Now().Add(c.opts.ReadTimeout)); rerr != nil {
-			return nil, rerr
-		}
-		rn, rerr := c.conn.Read(buf)
+		// Read exactly one reply datagram. The bare conn.Read is a blocking
+		// syscall that ignores ctx: a ctx cancel mid-read would otherwise block
+		// until ReadTimeout fires. readCtx races the read against ctx.Done() and,
+		// on ctx cancel, resets the read deadline to now to force the in-flight
+		// Read to return promptly, then surfaces ctx.Err().
+		rn, rerr := c.readCtx(ctx, buf)
 		c.fireEvent("receive", rn, attempt)
 		if rerr == nil {
 			// Hand the caller a right-sized slice that does not alias buf.
 			out := make([]byte, rn)
 			copy(out, buf[:rn])
 			return out, nil
+		}
+		// If the read failed solely because ctx was cancelled (we poked the
+		// deadline to force it), surface ctx.Err() so shouldRetry treats it as
+		// terminal rather than retrying a torn-down call.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		err, last = rerr, rn
 		if !shouldRetry(rerr) || attempt == c.opts.RetryMax {
@@ -371,6 +378,64 @@ func (c *Client) sendReceiveWithRetry(ctx context.Context, data []byte) ([]byte,
 		}
 	}
 	return nil, err
+}
+
+// readCtx sets the per-attempt read deadline (ReadTimeout) and performs a single
+// Read on the shared connected socket, honouring ctx.
+//
+// A raw conn.Read is a blocking syscall that nothing but a deadline or socket
+// close can interrupt. The retry/backoff sleep already honours ctx, but a Read
+// blocked waiting for a datagram from a silent peer would otherwise ignore ctx
+// and block the full ReadTimeout — so cancelling ctx mid-read returned ~5s late
+// (the default) instead of promptly. Unlike tcpclient (which has a per-call
+// pooled conn it can Close to unblock the Read), udpclient owns one shared
+// connected socket that cannot be closed per call. The minimal correct fix is
+// to race the Read against ctx.Done(): when ctx fires first we reset the read
+// deadline to now, which forces the in-flight Read to return immediately with a
+// deadline-exceeded error, then the caller surfaces ctx.Err(). The watcher is
+// torn down (done closed) as soon as Read returns so a slow ctx cancel arriving
+// after a successful read cannot corrupt a subsequent attempt's deadline.
+//
+// If ReadTimeout <= 0 the deadline is cleared (an unbounded read); ctx cancel
+// still unblocks it via the deadline-reset path.
+func (c *Client) readCtx(ctx context.Context, buf []byte) (int, error) {
+	deadline := time.Now().Add(c.opts.ReadTimeout)
+	if c.opts.ReadTimeout <= 0 {
+		deadline = time.Time{} // no deadline
+	}
+	if err := c.conn.SetReadDeadline(deadline); err != nil {
+		return 0, err
+	}
+
+	done := make(chan struct{})
+	c.ctxWatcher(ctx, done)
+
+	n, err := c.conn.Read(buf)
+	close(done)
+	return n, err
+}
+
+// ctxWatcher runs a goroutine that, on ctx.Done(), resets the client's shared
+// read deadline to now so any in-flight Read on the socket returns promptly. It
+// stops once done is closed (the Read returned). done MUST be closed exactly
+// once by readCtx after the Read completes.
+//
+// Resetting the deadline (rather than closing the shared socket) is the right
+// primitive for a connected UDP socket shared across goroutines: a Close would
+// kill every other in-flight caller. The deadline-reset only nudges Reads that
+// are actually blocked; a later attempt re-establishes its own deadline, so the
+// transient "now" deadline leaves no lasting damage.
+func (c *Client) ctxWatcher(ctx context.Context, done <-chan struct{}) {
+	go func() {
+		select {
+		case <-ctx.Done():
+			// Force the blocked Read to return. The caller will see a deadline
+			// error and, because ctx.Err() != nil, surface ctx.Err() instead.
+			_ = c.conn.SetReadDeadline(time.Now())
+		case <-done:
+			// Read already returned; nothing to interrupt.
+		}
+	}()
 }
 
 // retry is the shared retry tail for sendWithRetry and sendReceiveWithRetry: it

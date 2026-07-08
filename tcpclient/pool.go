@@ -108,6 +108,14 @@ func (p *connPool) expired(pc *poolConn) bool {
 // failed mid-call only if the caller has not already closed it — in that case
 // pass a freshly-dialled replacement or skip put entirely. put never blocks.
 //
+// The closed-check and the channel send are both performed under mu so that
+// close() cannot run in the window between them: without holding mu across the
+// send, close() could drain the pool and mark it closed AFTER put observed
+// closed==false but BEFORE the send, leaving conn stranded in the (now dead)
+// channel forever — an FD leak. The non-blocking send on a buffered channel
+// under a mutex does not meaningfully contend: the critical section is a single
+// channel op, and close() is rare (client shutdown).
+//
 // To support detecting reuse in tests, conn is wrapped with the current time
 // before being enqueued.
 func (p *connPool) put(conn net.Conn) {
@@ -115,12 +123,11 @@ func (p *connPool) put(conn net.Conn) {
 		return
 	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.closed {
-		p.mu.Unlock()
 		_ = conn.Close()
 		return
 	}
-	p.mu.Unlock()
 
 	select {
 	case p.pool <- &poolConn{Conn: conn, lastUsed: time.Now()}:

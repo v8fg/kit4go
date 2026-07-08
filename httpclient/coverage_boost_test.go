@@ -221,7 +221,7 @@ func TestDo_DrainBodyReadError(t *testing.T) {
 	_, err := drainBody(&http.Response{
 		StatusCode: http.StatusOK,
 		Body:       rc,
-	})
+	}, 0)
 	if err == nil {
 		t.Fatal("drainBody: expected error from failing reader, got nil")
 	}
@@ -265,7 +265,7 @@ func TestDo_DrainBodyReadError(t *testing.T) {
 
 // TestDrainBody_NilResponse covers `b == nil` short-circuit in drainBody.
 func TestDrainBody_NilResponse(t *testing.T) {
-	out, err := drainBody(nil)
+	out, err := drainBody(nil, 0)
 	if err != nil || out != nil {
 		t.Fatalf("drainBody(nil) = (%v, %v), want (nil, nil)", out, err)
 	}
@@ -273,7 +273,7 @@ func TestDrainBody_NilResponse(t *testing.T) {
 
 // TestDrainBody_NilBody covers `b.Body == nil` short-circuit.
 func TestDrainBody_NilBody(t *testing.T) {
-	out, err := drainBody(&http.Response{StatusCode: 200, Body: nil})
+	out, err := drainBody(&http.Response{StatusCode: 200, Body: nil}, 0)
 	if err != nil || out != nil {
 		t.Fatalf("drainBody(nil Body) = (%v, %v), want (nil, nil)", out, err)
 	}
@@ -285,7 +285,7 @@ func TestDrainBody_EmptyBody(t *testing.T) {
 	out, err := drainBody(&http.Response{
 		StatusCode: 200,
 		Body:       io.NopCloser(bytes.NewReader(nil)),
-	})
+	}, 0)
 	if err != nil {
 		t.Fatalf("drainBody(empty) err = %v", err)
 	}

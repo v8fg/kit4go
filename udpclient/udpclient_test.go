@@ -451,6 +451,89 @@ func TestClient_Retry_HonoursContextCancellation(t *testing.T) {
 	}
 }
 
+// TestClient_SendReceive_ContextCancelMidRead_ReturnsPromptly is the regression
+// test for R15 F3: SendReceive's blocking conn.Read ignored the caller's ctx.
+// The backoff sleep honoured ctx, but a Read blocked on a datagram from a silent
+// peer had no ctx watcher, so cancelling ctx mid-read blocked the FULL
+// ReadTimeout (e.g. 5s default) instead of returning promptly. With a 2s
+// ReadTimeout and a ctx cancel at 100ms, the old code returned ~2s late with an
+// "i/o timeout" error; the fixed code returns within ~200ms with ctx.Err().
+//
+// RetryMax=0 isolates the single Read so the result is not muddied by retry
+// backoff (which already honoured ctx).
+func TestClient_SendReceive_ContextCancelMidRead_ReturnsPromptly(t *testing.T) {
+	addr, _ := silentServer(t)
+	opts := fastOpts(addr)
+	opts.ReadTimeout = 2 * time.Second // long: expose the mid-read block
+	opts.RetryMax = 0                  // isolate the single Read
+	c, err := udpclient.NewClient(opts)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = c.SendReceive(ctx, []byte("ping"))
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("SendReceive: expected error from cancelled ctx")
+	}
+	// The old code surfaced a transport i/o timeout after the full ReadTimeout;
+	// the fix surfaces the ctx error.
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendReceive err = %v, want errors.Is(context.Canceled)", err)
+	}
+	// Must return shortly after the 100ms cancel, not block the full 2s
+	// ReadTimeout. Allow generous slack for CI scheduling without masking the
+	// bug (old code was ~2000ms; 500ms is comfortably above the cancel yet
+	// well below the broken behaviour).
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("elapsed = %v, expected prompt return after ctx cancel (mid-read must honour ctx)", elapsed)
+	}
+}
+
+// TestClient_SendReceive_ContextCancelMidRead_DefaultReadTimeout confirms the
+// fix at the package default ReadTimeout (5s), which is the configuration the
+// bug actually bites in production. With ctx cancel at 100ms the old code
+// blocked the full ~5s; the fix returns within ~200ms.
+func TestClient_SendReceive_ContextCancelMidRead_DefaultReadTimeout(t *testing.T) {
+	addr, _ := silentServer(t)
+	// Default options: ReadTimeout is 5s, RetryMax is its default. The exact
+	// defaults are exercised via NewClient with only Address set.
+	c, err := udpclient.NewClient(udpclient.ClientOptions{Address: addr})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = c.SendReceive(ctx, []byte("ping"))
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("SendReceive: expected error from cancelled ctx")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendReceive err = %v, want errors.Is(context.Canceled)", err)
+	}
+	// Default ReadTimeout is 5s; the old code blocked ~5s. 500ms proves the
+	// Read no longer ignores ctx while staying well clear of CI flake.
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("elapsed = %v, expected prompt return after ctx cancel at default ReadTimeout", elapsed)
+	}
+}
+
 func TestClient_Send_DoesNotWaitForReply(t *testing.T) {
 	// Send to a server that never reads; it must still return promptly because
 	// Send does not issue a read.

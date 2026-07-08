@@ -437,8 +437,17 @@ func TestClient_PoolExhaustion_DialsExtra(t *testing.T) {
 	c := tcpclient.NewClient(opts)
 	defer c.Close()
 
-	// Two concurrent Sends with a pool of 1: the second cannot reuse the
-	// in-flight conn, so it must dial a fresh one. Both should succeed.
+	// Two concurrent Sends with a pool of 1. Whether the second reuses the
+	// first's (already-returned) conn or dials a fresh one depends entirely on
+	// goroutine scheduling: a write-only Send returns as soon as the write is
+	// flushed, so the first conn is very likely back in the pool before the
+	// second goroutine runs, yielding a single accept. Asserting conns >= 2
+	// therefore flakes ~9/10 in isolation. The always-true property under
+	// concurrent load is: both Sends succeed and the server accepted at least
+	// one connection. The "extra dial when the pool is genuinely exhausted"
+	// behaviour is covered deterministically by
+	// TestClient_PoolExhaustion_BlockedCheckout (internal test), which holds a
+	// conn checked out so the second Send provably dials.
 	const n = 2
 	var wg sync.WaitGroup
 	wg.Add(n)
@@ -459,8 +468,11 @@ func TestClient_PoolExhaustion_DialsExtra(t *testing.T) {
 	for err := range errCh {
 		t.Fatalf("concurrent Send: %v", err)
 	}
-	if !waitForConns(conns, uint64(n)) {
-		t.Fatalf("pool exhaustion: server conns = %d, want >= %d (extra dial)", atomic.LoadUint64(conns), n)
+	// Both Sends succeeded and the server accepted at least one connection —
+	// the only scheduling-independent invariant. (The old assertion
+	// `conns >= n` was scheduler-dependent and flaked frequently.)
+	if !waitForConns(conns, 1) {
+		t.Fatalf("pool exhaustion: server conns = %d, want >= 1", atomic.LoadUint64(conns))
 	}
 }
 
