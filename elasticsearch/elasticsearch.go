@@ -149,6 +149,8 @@ func Wrap(raw *elasticsearch.Client, opts ...Option) *Client {
 // Index creates/replaces a document. body is the JSON document. Forward options
 // (WithDocumentID, WithRefresh, ...) untouched; ctx is applied via WithContext
 // (caller options win — appended last, so an explicit WithContext overrides).
+//
+// The caller MUST close resp.Body (failure leaks the connection).
 func (c *Client) Index(ctx context.Context, index string, body io.Reader, opts ...func(*esapi.IndexRequest)) (*esapi.Response, error) {
 	c.indexes.Add(1)
 	resp, err := c.index(index, body, prependCtx(esapi.Index(nil).WithContext(ctx), opts)...)
@@ -156,6 +158,8 @@ func (c *Client) Index(ctx context.Context, index string, body io.Reader, opts .
 }
 
 // Search runs a query. Pass WithBody(body) + WithIndex("idx") etc. in opts.
+//
+// The caller MUST close resp.Body (failure leaks the connection).
 func (c *Client) Search(ctx context.Context, opts ...func(*esapi.SearchRequest)) (*esapi.Response, error) {
 	c.searches.Add(1)
 	resp, err := c.search(prependCtx(esapi.Search(nil).WithContext(ctx), opts)...)
@@ -163,6 +167,8 @@ func (c *Client) Search(ctx context.Context, opts ...func(*esapi.SearchRequest))
 }
 
 // Get fetches a document by id.
+//
+// The caller MUST close resp.Body (failure leaks the connection).
 func (c *Client) Get(ctx context.Context, index, id string, opts ...func(*esapi.GetRequest)) (*esapi.Response, error) {
 	c.gets.Add(1)
 	resp, err := c.get(index, id, prependCtx(esapi.Get(nil).WithContext(ctx), opts)...)
@@ -170,6 +176,8 @@ func (c *Client) Get(ctx context.Context, index, id string, opts ...func(*esapi.
 }
 
 // Delete removes a document by id.
+//
+// The caller MUST close resp.Body (failure leaks the connection).
 func (c *Client) Delete(ctx context.Context, index, id string, opts ...func(*esapi.DeleteRequest)) (*esapi.Response, error) {
 	c.deletes.Add(1)
 	resp, err := c.delete(index, id, prependCtx(esapi.Delete(nil).WithContext(ctx), opts)...)

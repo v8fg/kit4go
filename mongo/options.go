@@ -42,7 +42,9 @@ func WithServerSelectionTimeout(d time.Duration) Option {
 func WithMaxPoolSize(n uint64) Option { return func(o *Options) { o.MaxPoolSize = n } }
 
 // WithCredentials sets username/password (and auth source). Prefer putting these
-// in the URI; this is for when the URI must stay credential-free.
+// in the URI; this is for when the URI must stay credential-free. Setting both
+// WithURI(... with embedded creds ...) and WithCredentials silently overrides the
+// URI credentials (driver SetAuth wins).
 func WithCredentials(username, password, authSource string) Option {
 	return func(o *Options) { o.Username = username; o.Password = password; o.AuthSource = authSource }
 }

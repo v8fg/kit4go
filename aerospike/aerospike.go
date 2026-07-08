@@ -161,4 +161,6 @@ func (c *Client) Close() {
 func (c *Client) Client() *as.Client { return c.raw }
 
 // Options returns the resolved options the client was built with.
+//
+// The struct includes Password: do not log or serialize it verbatim.
 func (c *Client) Options() Options { return c.opts }

@@ -35,7 +35,8 @@ const (
 )
 
 // SetOnEvent installs a hook fired after each operation (nil disables it). The
-// hook runs on the calling goroutine; keep it cheap. When nil, the cost is a
+// hook runs on the calling goroutine; keep it cheap and must not panic (a panic
+// propagates to the caller — the wrapper does not recover). When nil, the cost is a
 // single atomic-pointer load per operation (effectively zero overhead).
 func (c *Client) SetOnEvent(fn func(Event)) {
 	if fn == nil {

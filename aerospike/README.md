@@ -64,6 +64,8 @@ m := c.Metrics() // Puts, Gets (incl. BatchGet), Deletes, Errors
 
 `*as.Client` satisfies a local `asAPI` interface subset directly (methods return `as.Error`). `as.Error` has unexported methods so it can't be constructed outside the package — the mock's error path returns a real `as.Error` sentinel obtained from a public aerospike function. `Wrap(*as.Client)` adopts an existing client.
 
+`Client()` returns nil when the Client was built from a mock.
+
 ## Testing
 
 ```
