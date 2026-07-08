@@ -36,8 +36,12 @@ type Debounce struct {
 	lastArgs atomic.Pointer[any]
 	closed   atomic.Bool
 
-	recovered uint64    // count of fn panics recovered (observable; L5)
-	onPanic   func(any) // optional hook fired on a recovered fn panic
+	recovered uint64 // count of fn panics recovered (observable; L5)
+	// onPanic is an optional hook fired on a recovered fn panic. Stored as an
+	// atomic.Pointer so SetOnPanic (caller goroutine) and the recover path
+	// (AfterFunc/Flush goroutine) never race on the bare field; a nil hook costs
+	// only a Load on the no-hook fast path. API identical to the bare-field version.
+	onPanic atomic.Pointer[func(any)]
 }
 
 // New builds a debounce that calls fn after `after` of inactivity following the
@@ -57,8 +61,8 @@ func New(after time.Duration, fn func()) *Debounce {
 		defer func() {
 			if r := recover(); r != nil {
 				atomic.AddUint64(&d.recovered, 1)
-				if d.onPanic != nil {
-					d.onPanic(r)
+				if hp := d.onPanic.Load(); hp != nil {
+					(*hp)(r)
 				}
 			}
 		}()
@@ -68,7 +72,17 @@ func New(after time.Duration, fn func()) *Debounce {
 }
 
 // SetOnPanic installs a hook fired when fn panics. Also counted in Recovered().
-func (d *Debounce) SetOnPanic(fn func(any)) { d.onPanic = fn }
+// Safe to call concurrently with Call/Flush (the hook pointer is stored
+// atomically, so there is no data race between a writer here and the reader in
+// the recover path). Pass nil to clear a previously-installed hook.
+func (d *Debounce) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		d.onPanic.Store(nil)
+		return
+	}
+	f := fn // copy to heap
+	d.onPanic.Store(&f)
+}
 
 // Recovered returns the total fn panics recovered.
 func (d *Debounce) Recovered() uint64 { return atomic.LoadUint64(&d.recovered) }
@@ -153,8 +167,12 @@ type Throttle struct {
 
 	now func() time.Time // injectable clock seam; defaults to time.Now (E5)
 
-	recovered uint64    // count of fn panics recovered in Call's goroutine (L5)
-	onPanic   func(any) // optional hook fired on a recovered fn panic
+	recovered uint64 // count of fn panics recovered in Call's goroutine (L5)
+	// onPanic is an optional hook fired on a recovered fn panic. Stored as an
+	// atomic.Pointer so SetOnPanic (caller goroutine) and safeFire's recover
+	// path (Call's goroutine) never race on the bare field; a nil hook costs only
+	// a Load on the no-hook fast path. API identical to the bare-field version.
+	onPanic atomic.Pointer[func(any)]
 }
 
 // NewThrottle builds a throttle that calls fn at most once per interval.
@@ -212,16 +230,26 @@ func (t *Throttle) safeFire() {
 	defer func() {
 		if r := recover(); r != nil {
 			atomic.AddUint64(&t.recovered, 1)
-			if t.onPanic != nil {
-				t.onPanic(r)
+			if hp := t.onPanic.Load(); hp != nil {
+				(*hp)(r)
 			}
 		}
 	}()
 	t.fn()
 }
 
-// SetOnPanic installs a hook fired when Call's fn panics.
-func (t *Throttle) SetOnPanic(fn func(any)) { t.onPanic = fn }
+// SetOnPanic installs a hook fired when Call's fn panics. Safe to call
+// concurrently with Call (the hook pointer is stored atomically, so there is no
+// data race between a writer here and the reader in safeFire's recover path).
+// Pass nil to clear a previously-installed hook.
+func (t *Throttle) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		t.onPanic.Store(nil)
+		return
+	}
+	f := fn // copy to heap
+	t.onPanic.Store(&f)
+}
 
 // Recovered returns the total fn panics recovered.
 func (t *Throttle) Recovered() uint64 { return atomic.LoadUint64(&t.recovered) }

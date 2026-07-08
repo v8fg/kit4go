@@ -208,7 +208,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			continue
 		}
 		sctx, cancel := context.WithTimeout(ctx, m.startTimeout)
-		err := it.c.start(sctx)
+		err := safeStart(it.c.start, sctx)
 		cancel()
 		if err != nil {
 			// Roll back: stop what we started, in reverse. The rollback error is
@@ -252,6 +252,21 @@ func safeStop(stop func(context.Context) error, ctx context.Context) (err error)
 		}
 	}()
 	return stop(ctx)
+}
+
+// safeStart runs a component's start hook with panic recovery. A panic is
+// turned into an error so the caller (Start) treats it as a normal start
+// failure — which triggers the reverse-order rollback of already-started
+// components. This is the symmetric twin of safeStop: without it, a panicking
+// start hook escapes Start before stopReverse runs, so already-started
+// components are never stopped.
+func safeStart(start func(context.Context) error, ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("shutdown: start panic recovered: %v", r)
+		}
+	}()
+	return start(ctx)
 }
 
 func (m *Manager) stopReverse(ctx context.Context, names []string) error {

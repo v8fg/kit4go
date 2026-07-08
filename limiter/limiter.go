@@ -11,6 +11,14 @@ import (
 // when composing limiters).
 var ErrRateLimited = errors.New("limiter: rate limited")
 
+// ErrLimiterClosed is returned by [Limiter.Wait] when the limiter has been
+// closed. Close makes Allow/TryAcquire no-ops (they return false), and Wait
+// likewise short-circuits: it returns ctx.Err() if ctx is already done, else
+// ErrLimiterClosed — instead of busy-looping on sub-millisecond timers until the
+// context expires. The doc contract on the [Limiter] interface says Allow/Wait/
+// TryAcquire are no-ops after Close, so this makes Wait honour that contract.
+var ErrLimiterClosed = errors.New("limiter: closed")
+
 // Limiter is a rate limiter. All methods are safe for concurrent use.
 //
 // Implementations are deliberately minimal: a non-blocking probe ([Allow]), a
@@ -24,6 +32,9 @@ type Limiter interface {
 
 	// Wait blocks until one token is acquired or until ctx is cancelled. It
 	// returns nil on success, or ctx.Err() if the context expires first.
+	// After [Close], Wait is a no-op: it returns ctx.Err() if ctx is already
+	// done, otherwise [ErrLimiterClosed] — it never busy-loops on a closed
+	// limiter.
 	Wait(ctx context.Context) error
 
 	// TryAcquire attempts to acquire n tokens at once. It returns true only if

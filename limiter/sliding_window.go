@@ -102,8 +102,17 @@ func (sw *slidingWindow) acquire(n int) bool {
 
 // Wait blocks until one token is acquired or ctx is cancelled. It polls with a
 // short sleep (sized to the remaining window tail) since the sliding window can
-// only free capacity as the oldest second expires.
+// only free capacity as the oldest second expires. After Close it returns
+// promptly (ctx.Err() if ctx is done, else ErrLimiterClosed) rather than
+// busy-looping.
 func (sw *slidingWindow) Wait(ctx context.Context) error {
+	// Closed short-circuit: match Allow/TryAcquire (see tokenBucket.Wait).
+	if sw.closed.Load() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return ErrLimiterClosed
+	}
 	if sw.Allow() {
 		return nil
 	}

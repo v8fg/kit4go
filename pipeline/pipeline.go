@@ -35,8 +35,12 @@ type Pipeline[I, O any] struct {
 	done    chan struct{}
 	once    sync.Once
 
-	recovered uint64    // count of stage panics recovered (observable; L5)
-	onPanic   func(any) // optional hook fired on a recovered stage panic
+	recovered uint64 // count of stage panics recovered (observable; L5)
+	// onPanic is an optional hook fired on a recovered stage panic. Stored as an
+	// atomic.Pointer so SetOnPanic (caller goroutine) and the recover path
+	// (worker goroutine) never race on the bare field; a nil hook costs only a
+	// Load on the no-hook fast path. API identical to the bare-field version.
+	onPanic atomic.Pointer[func(any)]
 }
 
 // Option configures the Pipeline.
@@ -126,8 +130,8 @@ func (p *Pipeline[I, O]) process(item I, ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			atomic.AddUint64(&p.recovered, 1)
-			if p.onPanic != nil {
-				p.onPanic(r)
+			if hp := p.onPanic.Load(); hp != nil {
+				(*hp)(r)
 			}
 			// The item is dropped; the worker survives for the next item.
 		}
@@ -148,8 +152,18 @@ func (p *Pipeline[I, O]) process(item I, ctx context.Context) {
 }
 
 // SetOnPanic installs a hook fired (non-blocking) when a stage panics. The panic
-// is also counted in Recovered() and the offending item is dropped.
-func (p *Pipeline[I, O]) SetOnPanic(fn func(any)) { p.onPanic = fn }
+// is also counted in Recovered() and the offending item is dropped. Safe to call
+// concurrently with Send/stage execution (the hook pointer is stored atomically,
+// so there is no data race between a writer here and the reader in the recover
+// path). Pass nil to clear a previously-installed hook.
+func (p *Pipeline[I, O]) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		p.onPanic.Store(nil)
+		return
+	}
+	f := fn // copy to heap
+	p.onPanic.Store(&f)
+}
 
 // Recovered returns the total number of stage panics recovered.
 func (p *Pipeline[I, O]) Recovered() uint64 { return atomic.LoadUint64(&p.recovered) }

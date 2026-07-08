@@ -90,6 +90,13 @@ func (fw *fixedWindow) acquire(n int) bool {
 }
 
 func (fw *fixedWindow) Wait(ctx context.Context) error {
+	// Closed short-circuit: match Allow/TryAcquire (see tokenBucket.Wait).
+	if fw.closed.Load() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return ErrLimiterClosed
+	}
 	if fw.Allow() {
 		return nil
 	}

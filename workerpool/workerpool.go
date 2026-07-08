@@ -39,8 +39,12 @@ type Pool[T any] struct {
 	results  chan Result[T]
 	collectW bool
 
-	recovered uint64    // count of job panics recovered (observable; L5)
-	onPanic   func(any) // optional hook fired on a recovered job panic
+	recovered uint64 // count of job panics recovered (observable; L5)
+	// onPanic is an optional hook fired on a recovered job panic. Stored as an
+	// atomic.Pointer so SetOnPanic (caller goroutine) and the recover path
+	// (worker goroutine) never race on the bare field; a nil hook costs only a
+	// Load on the no-hook fast path. API identical to the bare-field version.
+	onPanic atomic.Pointer[func(any)]
 }
 
 type jobWrap[T any] struct {
@@ -154,8 +158,8 @@ func (p *Pool[T]) safeCall(ctx context.Context, fn Job[T]) (val T, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			atomic.AddUint64(&p.recovered, 1)
-			if p.onPanic != nil {
-				p.onPanic(r)
+			if hp := p.onPanic.Load(); hp != nil {
+				(*hp)(r)
 			}
 			err = fmt.Errorf("workerpool: job panic recovered: %v", r)
 		}
@@ -164,8 +168,18 @@ func (p *Pool[T]) safeCall(ctx context.Context, fn Job[T]) (val T, err error) {
 }
 
 // SetOnPanic installs a hook fired (non-blocking) when a job panics. The panic
-// is also counted in Recovered() and delivered as the job's error.
-func (p *Pool[T]) SetOnPanic(fn func(any)) { p.onPanic = fn }
+// is also counted in Recovered() and delivered as the job's error. Safe to call
+// concurrently with Submit/job execution (the hook pointer is stored atomically,
+// so there is no data race between a writer here and the reader in the recover
+// path). Pass nil to clear a previously-installed hook.
+func (p *Pool[T]) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		p.onPanic.Store(nil)
+		return
+	}
+	f := fn // copy to heap
+	p.onPanic.Store(&f)
+}
 
 // Recovered returns the total number of job panics recovered since the pool
 // started.

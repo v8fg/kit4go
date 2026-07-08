@@ -172,6 +172,18 @@ func (b *Breaker[T]) Metrics() BreakerMetrics {
 // If ctx is already cancelled, Execute counts that as a failure but still
 // records it (so a flaky caller cancelling on timeout cannot hide failures
 // from the breaker).
+//
+// Panics from fn are propagated raw to the caller (fn runs on the caller's
+// goroutine, so the raw-panic contract of the kit-callback convention holds).
+// The one exception is bookkeeping: in StateHalfOpen a panic escapes before
+// recordSuccess/recordFailure can release the probe slot, so a half-open slot
+// is leaked on every panicking probe and after MaxRequests such panics the
+// breaker is wedged in HalfOpen (no slot ever frees, so it can neither recover
+// nor re-trip). To stay do-no-harm, a panic that occurs while the caller holds
+// a HalfOpen probe slot is treated as a failed probe — recordFailure runs
+// (which trips to Open and resets halfOpenCount, the self-healing path) — and
+// then the original panic is re-thrown. Non-HalfOpen states are untouched: the
+// raw panic propagates with no recover, exactly as before.
 func (b *Breaker[T]) Execute(ctx context.Context, fn func(ctx context.Context) (T, error)) (T, error) {
 	var zero T
 
@@ -200,7 +212,41 @@ func (b *Breaker[T]) Execute(ctx context.Context, fn func(ctx context.Context) (
 		return zero, err
 	}
 
+	// A successful admission in StateHalfOpen took a probe slot. That slot is
+	// normally released by recordSuccess/recordFailure, but a panicking fn
+	// escapes before either runs — leaking the slot and (after MaxRequests such
+	// panics) wedging the breaker in HalfOpen. Only HalfOpen needs the safety
+	// net: in Closed there is no per-call slot to leak (a panic simply unwinds
+	// to the caller, window accounting skipped, which is the pre-existing
+	// behaviour), and in Open we never reach here.
+	halfOpenSlot := BreakerState(b.state.Load()) == StateHalfOpen
+
 	b.total.Add(1)
+	if halfOpenSlot {
+		// Run fn under a recover whose only job is to settle the half-open slot
+		// accounting before re-throwing, preserving the raw-panic contract. On a
+		// panic the deferred recover calls recordFailure (which trips to Open and
+		// resets halfOpenCount — the self-healing path) and then re-panics with
+		// the original value, so the caller observes the panic exactly as if the
+		// recover were not there. On the normal path the closure returns with
+		// valid v, err and the surrounding code records the outcome.
+		v, err := func() (vv T, e error) {
+			defer func() {
+				if r := recover(); r != nil {
+					b.recordFailure()
+					panic(r) // re-throw: raw-panic contract preserved.
+				}
+			}()
+			return fn(ctx)
+		}()
+		if err != nil {
+			b.recordFailure()
+			return v, err
+		}
+		b.recordSuccess()
+		return v, nil
+	}
+
 	v, err := fn(ctx)
 	if err != nil {
 		b.recordFailure()

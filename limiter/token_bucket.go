@@ -125,8 +125,18 @@ func (tb *tokenBucket) acquire(n int) bool {
 
 // Wait blocks until one token is acquired or ctx is cancelled. It polls Allow
 // with a short sleep sized to the current deficit so a near-available token is
-// grabbed promptly without busy-spinning.
+// grabbed promptly without busy-spinning. After Close it returns promptly
+// (ctx.Err() if ctx is done, else ErrLimiterClosed) rather than busy-looping.
 func (tb *tokenBucket) Wait(ctx context.Context) error {
+	// Closed short-circuit: match Allow/TryAcquire, which already bail out on
+	// close. Without this, Wait would spin on 1ms timers (Allow keeps returning
+	// false) until ctx expires — violating the "no-op after Close" contract.
+	if tb.closed.Load() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return ErrLimiterClosed
+	}
 	// Fast path: try once before setting up the timer.
 	if tb.Allow() {
 		return nil

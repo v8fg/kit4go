@@ -90,6 +90,13 @@ func (g *gcraLimiter) acquire(n int) bool {
 }
 
 func (g *gcraLimiter) Wait(ctx context.Context) error {
+	// Closed short-circuit: match Allow/TryAcquire (see tokenBucket.Wait).
+	if g.closed.Load() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return ErrLimiterClosed
+	}
 	if g.Allow() {
 		return nil
 	}

@@ -99,6 +99,13 @@ func (lb *leakyBucket) acquire(n int) bool {
 }
 
 func (lb *leakyBucket) Wait(ctx context.Context) error {
+	// Closed short-circuit: match Allow/TryAcquire (see tokenBucket.Wait).
+	if lb.closed.Load() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return ErrLimiterClosed
+	}
 	if lb.Allow() {
 		return nil
 	}

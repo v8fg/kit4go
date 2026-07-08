@@ -15,6 +15,7 @@ package batcher
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +34,15 @@ type Batcher[T any] struct {
 	closed  chan struct{}      // closed when the collector has fully stopped
 	once    sync.Once
 
+	// recovered counts flushFn panics recovered across every flush site
+	// (size/timer/Close/Flush/final-straggler). The collector goroutine owns the
+	// flush path, so an un-recovered panic would abort the collector — Close then
+	// deadlocks forever on <-b.closed. Recovering keeps the collector alive (L1),
+	// makes the panic observable (L5), and lets close(b.closed) run so Close stays
+	// bounded (L6). onPanic is an optional hook fired on each recovery.
+	recovered atomic.Uint64
+	onPanic   atomic.Pointer[func(any)]
+
 	// mu serializes Add's send with Close's final drain. Add holds the read lock
 	// during the buffered send; Close holds the write lock while draining
 	// stragglers, so an Add that raced the collector's exit cannot strand an item.
@@ -44,9 +54,14 @@ type Option[T any] func(*Batcher[T])
 
 // WithBufferSize sets the input channel capacity (default = maxSize). A larger
 // buffer decouples the producer from a momentarily-slow flusher at the cost of
-// memory.
+// memory. n is clamped to >= 0 (0 = unbuffered); a negative value is ignored,
+// since make(chan, n) would panic on a negative buffer.
 func WithBufferSize[T any](n int) Option[T] {
-	return func(b *Batcher[T]) { b.bufferCap = n }
+	return func(b *Batcher[T]) {
+		if n >= 0 {
+			b.bufferCap = n
+		}
+	}
 }
 
 // New builds a batcher that flushes when it accumulates maxSize items, every
@@ -76,6 +91,39 @@ func New[T any](maxSize int, interval time.Duration, flush func([]T), opts ...Op
 	go b.run(interval)
 	return b
 }
+
+// safeFlush runs flushFn with panic recovery. A panicking flush is counted in
+// recovered and surfaced via the onPanic hook (if set), but never re-panicked —
+// so a buggy flush cannot kill the collector goroutine (which would deadlock
+// Close on <-b.closed) or abort Close's straggler drain. Mirrors workerpool's
+// safeCall / signalbus invoke. buf is always cleared by the caller regardless of
+// a panic, so no batch is double-flushed.
+func (b *Batcher[T]) safeFlush(buf []T) {
+	defer func() {
+		if r := recover(); r != nil {
+			b.recovered.Add(1)
+			if hook := b.onPanic.Load(); hook != nil {
+				(*hook)(r)
+			}
+		}
+	}()
+	b.flushFn(buf)
+}
+
+// SetOnPanic installs a hook fired (non-blocking) whenever flushFn panics and is
+// recovered. The hook runs on the collector or Close goroutine — the flushing
+// goroutine — so it must not block. Set to nil to disable.
+func (b *Batcher[T]) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		b.onPanic.Store(nil)
+		return
+	}
+	b.onPanic.Store(&fn)
+}
+
+// Recovered returns the total number of flushFn panics recovered since the
+// batcher was created.
+func (b *Batcher[T]) Recovered() uint64 { return b.recovered.Load() }
 
 // Add enqueues item, blocking until accepted (backpressure). Returns false (and
 // does not enqueue) after Close.
@@ -132,12 +180,12 @@ func (b *Batcher[T]) Close() error {
 		case item := <-b.in:
 			buf = append(buf, item)
 			if len(buf) >= b.maxSize {
-				b.flushFn(buf)
+				b.safeFlush(buf)
 				buf = make([]T, 0, b.maxSize)
 			}
 		default:
 			if len(buf) > 0 {
-				b.flushFn(buf)
+				b.safeFlush(buf)
 			}
 			return nil
 		}
@@ -154,7 +202,7 @@ func (b *Batcher[T]) run(interval time.Duration) {
 			return
 		}
 		out := buf
-		b.flushFn(out)
+		b.safeFlush(out)
 		buf = make([]T, 0, b.maxSize)
 	}
 	addAndMaybeFlush := func(item T) {

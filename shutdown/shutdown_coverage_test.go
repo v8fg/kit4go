@@ -187,6 +187,108 @@ func TestSafeStop_ReturnsError(t *testing.T) {
 	require.ErrorIs(t, err, stopErr)
 }
 
+// --- F5: safeStart panic recovery -----------------------------------------
+//
+// Start wraps each start hook in safeStart (recover -> error) so a panicking
+// start becomes a normal start-failure that triggers the existing reverse-order
+// rollback. BEFORE THE FIX Start called the start hook raw, so a panic escaped
+// Start before stopReverse ran — already-started components were never stopped.
+// The tests below would FAIL on the old code: a's stop would be skipped (no
+// "stop:a" in the recorder) and the raw panic would crash the test instead of
+// surfacing as an error.
+
+// TestSafeStart_PanicTriggersRollback is the headline regression: "a" starts
+// and stops cleanly; "b" depends on "a" and panics in its start hook. Start must
+// (1) return an error wrapping the panic, and (2) roll back by stopping "a".
+// On the old code the panic escaped Start, so "stop:a" never ran.
+func TestSafeStart_PanicTriggersRollback(t *testing.T) {
+	var rec recorder
+	m := New(WithStartTimeout(time.Second))
+	m.Add("a",
+		func(context.Context) error { rec.record("start:a"); return nil },
+		func(context.Context) error { rec.record("stop:a"); return nil },
+	)
+	m.Add("b",
+		func(context.Context) error { rec.record("start:b"); panic("kaboom") },
+		nil,
+		"a",
+	)
+
+	err := m.Start(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "panic recovered")
+	// Rollback ran: a was started, then b panicked, then a was stopped.
+	require.Equal(t, []string{"start:a", "start:b", "stop:a"}, rec.slice())
+}
+
+// TestSafeStart_PanicDoesNotEscape proves the recovered panic stays contained:
+// Start returns (error, nil-panic) rather than letting the panic propagate up
+// the stack. On the old code this test would abort via the panic instead of
+// reaching the assertions.
+func TestSafeStart_PanicDoesNotEscape(t *testing.T) {
+	m := New(WithStartTimeout(time.Second))
+	m.Add("a", func(context.Context) error { panic("boom") }, nil)
+
+	err := m.Start(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "start panic recovered")
+	require.Contains(t, err.Error(), "boom")
+}
+
+// TestSafeStart_Unit covers safeStart directly (the twin of the TestSafeStop_*
+// unit tests): a panicking start hook becomes an error; a normal return and a
+// returned error both pass through unchanged.
+func TestSafeStart_Unit(t *testing.T) {
+	t.Run("panic becomes error", func(t *testing.T) {
+		err := safeStart(func(context.Context) error { panic("zapp") }, context.Background())
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "start panic recovered")
+		require.Contains(t, err.Error(), "zapp")
+	})
+	t.Run("nil passes through", func(t *testing.T) {
+		called := false
+		err := safeStart(func(context.Context) error { called = true; return nil }, context.Background())
+		require.NoError(t, err)
+		require.True(t, called)
+	})
+	t.Run("error passes through", func(t *testing.T) {
+		startErr := errors.New("nope")
+		err := safeStart(func(context.Context) error { return startErr }, context.Background())
+		require.ErrorIs(t, err, startErr)
+	})
+}
+
+// TestSafeStart_RollbackStopsMultipleComponents extends the headline test to
+// three components: a and b start cleanly, c panics on start. The rollback must
+// stop b and a in reverse order. On the old code neither b nor a would be
+// stopped because the panic escaped before stopReverse.
+func TestSafeStart_RollbackStopsMultipleComponents(t *testing.T) {
+	var rec recorder
+	m := New(WithStartTimeout(time.Second))
+	m.Add("a",
+		func(context.Context) error { rec.record("start:a"); return nil },
+		func(context.Context) error { rec.record("stop:a"); return nil },
+	)
+	m.Add("b",
+		func(context.Context) error { rec.record("start:b"); return nil },
+		func(context.Context) error { rec.record("stop:b"); return nil },
+		"a",
+	)
+	m.Add("c",
+		func(context.Context) error { rec.record("start:c"); panic("c-down") },
+		nil,
+		"b",
+	)
+
+	err := m.Start(context.Background())
+	require.Error(t, err)
+	// Reverse-order rollback of the two started components, then c's panic.
+	require.Equal(t,
+		[]string{"start:a", "start:b", "start:c", "stop:b", "stop:a"},
+		rec.slice(),
+	)
+}
+
 // TestRun_StopReturnsError covers the path where Run reaches Stop and Stop
 // returns an aggregated *ErrShutdown.
 func TestRun_StopReturnsError(t *testing.T) {

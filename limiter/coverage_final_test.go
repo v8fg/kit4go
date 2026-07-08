@@ -362,34 +362,52 @@ func TestTokenBucket_Wait_CtxDeadlineInTimer(t *testing.T) {
 	}
 }
 
-// --- tokenBucket.Wait `wait <= 0` defensive default ------------------------
+// --- tokenBucket.Wait closed short-circuit ---------------------------------
 //
-// tokenBucket.Wait computes `wait := tb.nextAvailableDelay(); if wait <= 0 {
-// wait = time.Millisecond }`. nextAvailableDelay returns 0 when avail >= 1, in
-// which case the fast-path Allow would normally succeed and Wait returns early
-// — so the `wait <= 0` branch is only reachable when Allow fails for a reason
-// other than "no token". The closed-bucket invariant provides exactly that:
-// Allow short-circuits on `closed` (returning false without consulting tokens),
-// while nextAvailableDelay ignores `closed` and returns 0 for a full bucket. So
-// closing a full bucket makes Wait enter its loop, observe wait==0, and arm the
-// 1ms fallback. The loop then spins on Allow (which stays false because closed)
-// until the context expires.
+// tokenBucket.Wait now checks `closed` before anything else and returns
+// promptly (ctx.Err() if ctx is done, else ErrLimiterClosed) — matching
+// Allow/TryAcquire, which already short-circuit on close. Previously Wait
+// entered its polling loop, where nextAvailableDelay ignores `closed` and
+// returns 0 for a full bucket, so Wait armed the 1ms fallback timer and spun on
+// Allow (staying false) until the context expired. The doc contract on the
+// Limiter interface says Allow/Wait/TryAcquire are no-ops after Close, so the
+// prompt return is the correct behaviour.
 
-// TestTokenBucket_Wait_WaitLeZero covers the `if wait <= 0 { wait =
-// time.Millisecond }` branch in tokenBucket.Wait via the closed-bucket
-// invariant described above. We close a full bucket: the fast-path Allow fails
-// (closed), nextAvailableDelay sees the full bucket and returns 0, so Wait arms
-// the 1ms fallback timer and loops. A short context bounds the run.
-func TestTokenBucket_Wait_WaitLeZero(t *testing.T) {
+// TestTokenBucket_Wait_ClosedShortCircuits asserts the closed-limiter contract:
+// Wait on a closed bucket returns at once (not after the full context budget)
+// with ErrLimiterClosed when ctx is still live. This replaces the former
+// busy-loop-until-deadline assertion, which encoded the bug being fixed.
+func TestTokenBucket_Wait_ClosedShortCircuits(t *testing.T) {
 	tb := newTokenBucket(100, 5) // starts full (burst=5)
-	tb.Close()                   // Allow now short-circuits to false; nextAvailableDelay ignores closed
-	// Bound the loop: nextAvailableDelay keeps returning 0 (full bucket), so Wait
-	// spins on 1ms timers until the context expires.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	tb.Close()
+	// A long budget so that, under the OLD busy-loop code, this test would block
+	// long enough to clearly fail the elapsed assertion below.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	start := time.Now()
 	err := tb.Wait(ctx)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Wait err=%v want context.DeadlineExceeded", err)
+	elapsed := time.Since(start)
+	if !errors.Is(err, ErrLimiterClosed) {
+		t.Fatalf("Wait err=%v want ErrLimiterClosed", err)
+	}
+	// Must return ~immediately — well under the 2s budget the old code would
+	// have consumed. 50ms is generous against scheduler/-race jitter.
+	if elapsed > 50*time.Millisecond {
+		t.Fatalf("Wait on closed limiter took %v; expected prompt return", elapsed)
+	}
+}
+
+// TestTokenBucket_Wait_ClosedPrefersCtxErr asserts that when the limiter is
+// closed AND the context is already done, Wait returns ctx.Err() (the more
+// informative of the two conditions) rather than ErrLimiterClosed.
+func TestTokenBucket_Wait_ClosedPrefersCtxErr(t *testing.T) {
+	tb := newTokenBucket(100, 5)
+	tb.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // ctx done takes precedence over the closed sentinel
+	err := tb.Wait(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Wait err=%v want context.Canceled (ctx done beats closed)", err)
 	}
 }
 

@@ -208,11 +208,19 @@ func TestSlidingWindow_Close_Idempotent(t *testing.T) {
 	if !sw.TryAcquire(0) {
 		t.Fatal("TryAcquire(0) after Close must still be a noop success")
 	}
-	// Wait after close: Allow returns false, so it polls until ctx expires.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	// Wait after close: the limiter short-circuits on `closed` and returns
+	// promptly (ctx.Err() if ctx is done, else ErrLimiterClosed) instead of
+	// polling until the context expires. A long context proves it did not
+	// busy-loop on the old 1ms-timer path.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := sw.Wait(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Wait after Close err=%v want DeadlineExceeded", err)
+	start := time.Now()
+	err := sw.Wait(ctx)
+	if !errors.Is(err, ErrLimiterClosed) {
+		t.Fatalf("Wait after Close err=%v want ErrLimiterClosed", err)
+	}
+	if d := time.Since(start); d > 50*time.Millisecond {
+		t.Fatalf("Wait after Close took %v, expected prompt return", d)
 	}
 }
 
