@@ -128,6 +128,7 @@ graph TB
 | [postgres](postgres) | pgx pool wrapper | jackc/pgx/v5 |
 | [clickhouse](clickhouse) | ClickHouse OLAP client wrapper (native protocol, PrepareBatch pass-through) | ClickHouse/clickhouse-go |
 | [etcd](etcd) | etcd distributed-KV wrapper (service registration + discovery: KV/Lease/Watch) | etcd-io/etcd |
+| [aerospike](aerospike) | Aerospike high-throughput KV wrapper (Put/Get/Delete/BatchGet) | aerospike/aerospike-client-go |
 | [minio](minio) | S3/MinIO object-store client wrapper (Put/Get/Stat/Remove/List/Presign) | minio/minio-go |
 | [mongo](mongo) | MongoDB document-store wrapper (Collection CRUD: Find/Insert/Update/Delete) | mongodb/mongo-go-driver |
 | [redis](redis) | Redis client wrapper | redis/go-redis |
