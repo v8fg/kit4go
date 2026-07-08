@@ -11,6 +11,22 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-08
+
+### Added
+
+- **elasticsearch** — search/analytics wrapper around the OFFICIAL
+  `go-elasticsearch/v8` v8.19.6 (low-level esapi). Targets the maintained
+  official client, replacing the semi-maintained `olivere/elastic` used by local
+  projects. Document CRUD + search (Index/Get/Search/Delete); Bulk/Aggregation/
+  Indices/Cat/Cluster via Client(). Handles two v8.19 API specifics: the ops are
+  named-func-type FIELDS (held directly by the wrapper — no adapter layer), and
+  option helpers are methods on those func types (`esapi.Index(nil).WithDocumentID`).
+  Fail-fast Ping at construction; only transport errors count in Errors. The repo
+  is now 18 sub-modules; the mainstream data/messaging/search stack is fully
+  covered (relational → postgres; KV → redis/etcd/aerospike; document → mongo;
+  columnar → clickhouse; object → minio; search → elasticsearch; messaging → kafka).
+
 ## [0.5.0] — 2026-07-08
 
 Four new isolated sub-modules — the data-store / coordination client stack is now
