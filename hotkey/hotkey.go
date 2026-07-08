@@ -103,14 +103,26 @@ func (d *Detector) Touch(key string) {
 	d.evictIdleLocked(now)
 }
 
-// Count returns the number of hits for key in the current window.
+// Count returns the number of hits for key in the current window. It is
+// read-only with respect to the key set: an absent key, or one whose window has
+// drained to empty, is never created in the map by calling Count. This keeps
+// the read path from bypassing the maxKeys cap (an attacker probing Count with
+// distinct untrusted keys must not grow the map).
 func (d *Detector) Count(key string) int {
 	now := d.clock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	ts := trimBefore(d.keys[key], now.Add(-d.window))
-	d.keys[key] = ts
-	return len(ts)
+	ts, ok := d.keys[key]
+	if !ok {
+		return 0 // absent key: do NOT create a map entry
+	}
+	trimmed := trimBefore(ts, now.Add(-d.window))
+	if len(trimmed) == 0 {
+		delete(d.keys, key) // drained to empty: reclaim the entry
+		return 0
+	}
+	d.keys[key] = trimmed
+	return len(trimmed)
 }
 
 // Top returns the top-K keys by hit count in the current window, sorted by count

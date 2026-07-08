@@ -25,7 +25,7 @@ n    := d.Count("ssp:rubicon")       // current window count
 | `New(window, topK, opts...)` | Build a Detector (panics if window/topK ≤ 0) |
 | `Touch(key)` | Record a hit at the current time |
 | `Top() []HotKey` | Top-K keys by count (desc), excludes zero-hit |
-| `Count(key) int` | Hits for key in the current window |
+| `Count(key) int` | Hits for key in the current window (read-only; never creates a map entry) |
 | `Len() int` | Active (non-idle) key count |
 | `Reset()` | Clear all |
 | `WithMaxKeys(n)` | Cap tracked keys (prune idle, then fewest-hits). `0` (the Go zero value) disables the cap (unbounded); negative values are treated the same way. Default `DefaultMaxKeys` (10000) when omitted. Matches `freqcap`. |

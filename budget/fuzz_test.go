@@ -300,6 +300,3 @@ func FuzzSmoothRoundtrip(f *testing.F) {
 		}
 	})
 }
-
-// isFinite reports whether x is a finite float (not NaN, not +/-Inf).
-func isFinite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }

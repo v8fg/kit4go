@@ -66,17 +66,31 @@ func TestIdleKeysPruned(t *testing.T) {
 	require.Equal(t, 1, c.Len())
 }
 
-func TestMaxKeysEviction(t *testing.T) {
+// TestMaxKeysSoftCap covers the R13 F3 fix: maxKeys is a SOFT cap. A live
+// (in-window) key is NEVER evicted to make room for a new one — that would
+// silently reset its cap and cause over-delivery. When the live-key count
+// reaches the cap, a fresh entity's first Allow is denied instead. Idle keys
+// are still reclaimed to make room.
+func TestMaxKeysSoftCap(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(0, 0)}
 	c := New(time.Hour, 5, WithMaxKeys(2), WithClock(clk.now))
-	c.Allow("a")
+	require.True(t, c.Allow("a"))
 	clk.t = clk.t.Add(time.Second)
-	c.Allow("b")
-	clk.t = clk.t.Add(time.Second)
-	c.Allow("c") // over cap (3 > 2): oldest-start key "a" evicted
+	require.True(t, c.Allow("b"))
 	require.Equal(t, 2, c.Len())
-	require.True(t, c.Allow("b")) // b still tracked
-	require.True(t, c.Allow("c"))
+
+	// Both keys live -> a third distinct key must be DENIED, not admitted by
+	// evicting "a" (the pre-F3 behaviour, which reset the victim's cap).
+	clk.t = clk.t.Add(time.Second)
+	require.False(t, c.Allow("c"), "soft cap full: fresh entity denied, no live key dropped")
+	require.Equal(t, 2, c.Len(), "no live key evicted")
+	require.True(t, c.Allow("b"), "already-tracked key still updates under the cap")
+	require.Equal(t, 2, c.Count("b"))
+
+	// Idle reclamation still frees room: age "a" out, then a new key is admitted.
+	clk.t = clk.t.Add(2 * time.Hour) // "a" and "b" both aged out
+	require.True(t, c.Allow("d"), "idle keys reclaimed, room for a fresh entity")
+	require.Equal(t, 1, c.Len(), "only the new live key remains")
 }
 
 // TestDefaultMaxKeysApplied guards the D5 fix: omitting WithMaxKeys must cap
@@ -106,23 +120,25 @@ func TestDefaultMaxKeysApplied(t *testing.T) {
 }
 
 // TestDefaultMaxKeysEvictsOverCeiling drives the default cap to overflow and
-// confirms eviction keeps the map at exactly DefaultMaxKeys entries.
+// confirms the soft cap keeps the map at exactly DefaultMaxKeys entries: the
+// overflow key is DENIED (all slots full of live keys) rather than admitted by
+// evicting a live one.
 func TestDefaultMaxKeysEvictsOverCeiling(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(0, 0)}
 	c := New(time.Hour, 1, WithClock(clk.now)) // no WithMaxKeys -> default
 	require.Equal(t, DefaultMaxKeys, c.maxKeys)
 
-	// Fill to the ceiling; each Allow triggers a prune of idle keys, so the
-	// map size never exceeds the cap while events are all in-window.
+	// Fill to the ceiling; each Allow is a fresh live key, and the soft cap
+	// admits them one per slot.
 	for i := range DefaultMaxKeys {
 		c.Allow(stringKey(i))
 	}
 	require.Equal(t, DefaultMaxKeys, c.Len())
 
-	// One more distinct, in-window key must evict the oldest-start key rather
-	// than grow the map past the default ceiling.
+	// One more distinct, in-window key is DENIED (soft cap: no live key to
+	// reclaim), so the map does not grow past the default ceiling.
 	clk.t = clk.t.Add(time.Second)
-	c.Allow("overflow")
+	require.False(t, c.Allow("overflow"), "soft cap full -> overflow entity denied")
 	require.Equal(t, DefaultMaxKeys, c.Len(), "default ceiling must hold")
 }
 
@@ -202,59 +218,111 @@ type fakeClock struct{ t time.Time }
 
 func (f *fakeClock) now() time.Time { return f.t }
 
-// TestEvictionSecondLoopCannotSeeEmptySlice pins the invariant that makes two
-// branches of evictIdleLocked unreachable, so they are documented here rather
-// than left as silent coverage gaps.
-//
-// The second eviction loop (drop oldest-start key once the idle prune is not
-// enough) has two defensive branches:
-//
-//	if len(ts) == 0 { victim = k; break }   // freqcap.go:146-148
-//	if victim == "" { return }              // freqcap.go:154-156
-//
-// Both are unreachable given the first loop: the first loop deletes every key
-// whose trimmed slice is empty, and trimBefore only ever shrinks a slice, so
-// every key that survives into the second loop has len(ts) >= 1. Therefore the
-// len(ts) == 0 check can never fire, and because the second loop only runs when
-// len(c.keys) > c.maxKeys >= 0 (i.e. at least one key is present) the inner
-// range always sets `victim` on its first iteration (the `first` flag is true),
-// so victim == "" can never fire either. This test asserts the surviving-keys
-// property directly so a future change to the first loop does not silently make
-// the second loop's branches reachable (and buggy) without flagging it here.
-func TestEvictionSecondLoopCannotSeeEmptySlice(t *testing.T) {
+// TestCountReadOnly pins the invariant fixed in R13 F2: Count is read-only with
+// respect to the key set. A never-seen key returns 0 WITHOUT creating a map
+// entry, and a key whose window has drained to empty is deleted (reclaimed)
+// rather than left as a nil/empty-slice stub. This is what keeps the read path
+// from bypassing maxKeys: an attacker probing Count with distinct untrusted
+// keys must not grow the map.
+func TestCountReadOnly(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(0, 0)}
 	c := New(time.Second, 1, WithMaxKeys(1), WithClock(clk.now))
 
-	// "a" gets one event, then ages out; Count() lazy-trims it to an empty
-	// slice still held under the key.
+	// "a" gets one event, then ages out; Count() must NOT leave an empty-slice
+	// stub behind — it reclaims the entry.
 	c.Allow("a")
+	require.Equal(t, 1, c.Len())
 	clk.t = clk.t.Add(2 * time.Second)
-	c.Count("a") // stores []time.Time{} under "a", does not prune
+	require.Equal(t, 0, c.Count("a"))
 
-	// Confirm the empty-slice state was in fact materialised by Count.
+	// The drained key must have been removed from the map, not stored as an
+	// empty slice. (Pre-F2 the map still held "a" -> []time.Time{} here.)
 	c.mu.Lock()
-	ts, ok := c.keys["a"]
+	_, ok := c.keys["a"]
 	c.mu.Unlock()
-	require.True(t, ok)
-	require.Len(t, ts, 0)
+	require.False(t, ok, "Count must delete a drained key, not leave an empty slice")
 
-	// A new in-window key forces evictIdleLocked. The first loop must delete
-	// "a" (its trimmed slice is empty); the second loop then never runs since
-	// len(c.keys)==1 <= maxKeys==1. The empty-slice branch in loop 2 is
-	// therefore never reached, and "b" is recorded cleanly.
+	// A never-seen key must not be created by Count.
+	require.Equal(t, 0, c.Count("ghost"))
+	c.mu.Lock()
+	_, ok = c.keys["ghost"]
+	c.mu.Unlock()
+	require.False(t, ok, "Count must not create an entry for an absent key")
+
+	// A new in-window key records cleanly (the reclaimed slot is reused).
 	require.True(t, c.Allow("b"))
 	require.Equal(t, 1, c.Len())
 	require.Equal(t, 1, c.Count("b"))
 
-	// Drive the multi-key, all-non-empty path through loop 2 to confirm that
-	// path deletes the oldest-start key without needing either defensive
-	// branch.
+	// maxKeys is now a SOFT cap: filling to the cap with live keys and then
+	// asking for one more distinct key must DENY rather than evict a live key.
+	// (c2 exercises the multi-live-key path that the old second loop used to
+	// serve by dropping the oldest-start key.)
 	c2 := New(time.Hour, 5, WithMaxKeys(2), WithClock(clk.now))
 	c2.Allow("a")
 	clk.t = clk.t.Add(time.Second)
 	c2.Allow("b")
 	clk.t = clk.t.Add(time.Second)
-	require.True(t, c2.Allow("c")) // 3 > 2 -> evict oldest-start ("a")
-	require.Equal(t, 2, c2.Len())
-	require.Equal(t, 0, c2.Count("a")) // evicted -> 0, not stored empty slice
+	require.False(t, c2.Allow("c"), "soft cap: 2 live keys fill the cap, c must be DENIED")
+	require.Equal(t, 2, c2.Len(), "no live key evicted to make room")
+	// "a" and "b" keep their caps: their next Allow still counts toward the
+	// original cap (no silent reset, no over-delivery).
+	require.True(t, c2.Allow("a"))
+	require.Equal(t, 2, c2.Count("a"))
+}
+
+// TestCountDoesNotGrowMapR13F2 is the F2 regression: the read-only Count
+// accessor must not create map entries for never-seen keys, otherwise the
+// maxKeys cap is bypassed on the read path. Pre-F2, Count over 50 distinct
+// never-seen keys with maxKeys=3 grew the map to 50. It MUST stay at 0.
+func TestCountDoesNotGrowMapR13F2(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	c := New(time.Hour, 3, WithMaxKeys(3), WithClock(clk.now))
+	for i := range 50 {
+		require.Equal(t, 0, c.Count(stringKey(i)), "never-seen key reports 0")
+	}
+	require.Equal(t, 0, c.Len(), "Count must not create entries for absent keys")
+
+	// Even after the map has live entries, probing more never-seen keys must
+	// not grow the map beyond what Allow recorded.
+	require.True(t, c.Allow("live"))
+	require.Equal(t, 1, c.Len())
+	for i := range 50 {
+		require.Equal(t, 0, c.Count(stringKey(i+100)))
+	}
+	require.Equal(t, 1, c.Len(), "absent-key Count probes added no entries")
+}
+
+// TestSoftCapNoOverDeliveryR13F3 is the F3 regression: when the live-key count
+// reaches maxKeys, a fresh entity's first Allow is DENIED rather than evicting a
+// live entity. Evicting a live entity would silently reset its cap and cause
+// over-delivery (the core "at most maxEvents per entity per window" invariant).
+// Pre-F3, u1 at 2/3 impressions was evicted to admit another key, then u1 got 3
+// more -> 5/hour instead of 3. The scenario below asserts no over-delivery.
+func TestSoftCapNoOverDeliveryR13F3(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	// Default cap of 3 per hour. maxKeys=3 so three live entities saturate it.
+	c := New(time.Hour, 3, WithMaxKeys(3), WithClock(clk.now))
+
+	// u1 takes 2 of its 3 allowed impressions.
+	require.True(t, c.Allow("u1"))
+	require.True(t, c.Allow("u1"))
+	require.Equal(t, 2, c.Count("u1"))
+
+	// Two more distinct live keys fill the map to the soft cap.
+	require.True(t, c.Allow("u2"))
+	require.True(t, c.Allow("u3"))
+	require.Equal(t, 3, c.Len())
+
+	// A fourth distinct key is DENIED: the map is full of live audiences and
+	// none may be dropped. (Pre-F3: u1 was dropped here, resetting its cap.)
+	require.False(t, c.Allow("u4"), "soft cap full -> fresh entity denied, no live key evicted")
+	require.Equal(t, 3, c.Len(), "all three live keys retained")
+
+	// u1's cap is intact: it has exactly 1 remaining impression in the window.
+	// (Pre-F3: u1's count was reset to 0, so this Allow + 2 more = 5/hour.)
+	require.True(t, c.Allow("u1"), "u1 still has 1 remaining within its original cap")
+	require.False(t, c.Allow("u1"), "u1 now at cap=3")
+	require.False(t, c.Allow("u1"))
+	require.Equal(t, 3, c.Count("u1"), "no over-delivery: exactly 3 in window, not 5")
 }

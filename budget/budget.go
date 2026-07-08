@@ -17,15 +17,24 @@ package budget
 import (
 	"errors"
 	"math"
+	"sync/atomic"
 	"time"
 )
 
 // ErrBudget is returned for a non-positive total budget or period.
 var ErrBudget = errors.New("budget: total and period must be > 0")
 
+// isFinite reports whether x is a finite float (not NaN, not +/-Inf). Used to
+// sanitize API-boundary inputs so a bad spend counter can never make the
+// protection primitives fail open (throttle-bypass / full-pace).
+func isFinite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
+
 // Pacer distributes a total budget across a period and paces spend against a
-// weighted target curve. Safe for concurrent read of decision methods; record
-// spend (AddSpend) from a single accounting path (or guard externally).
+// weighted target curve. Safe for concurrent read of decision methods
+// (TargetSpend, Deviation, OnPlan, ShouldThrottle, PaceRatio, SmoothedRate,
+// Total, Period); record spend (Smooth) from a single accounting path (or guard
+// externally). SmoothedRate is safe to call concurrently with Smooth: the
+// smoothed rate is stored atomically.
 type Pacer struct {
 	total      float64       // total budget for the period
 	period     time.Duration // period length (e.g. 24h)
@@ -33,9 +42,9 @@ type Pacer struct {
 	weight     []float64     // cumulative normalized weights (len buckets+1, [0,1])
 	tolerance  float64       // over/under-spend tolerance fraction
 	emaAlpha   float64       // EMA smoothing factor for spend rate (0=off, 1=no smoothing)
-	emaRate    float64       // smoothed spend rate (budget/sec)
-	lastSpend  float64       // last cumulative spend seen by Smooth
-	lastTime   time.Time     // last time Smooth was called
+	emaRate    atomic.Uint64 // smoothed spend rate (budget/sec), stored as Float64bits for lock-free reads
+	lastSpend  float64       // last cumulative spend seen by Smooth (writer-only)
+	lastTime   time.Time     // last time Smooth was called (writer-only)
 	rawWeights []float64     // staged by WithWeights, normalized in buildCurve
 }
 
@@ -131,15 +140,27 @@ func (p *Pacer) buildCurve() {
 	p.weight[p.buckets] = 1 // guard against float drift
 }
 
-// fractionOfDay returns the elapsed fraction [0,1] of the period at t, using t's
-// time-of-day for a daily period.
+// dailyPeriod is the exact period length that triggers the wall-clock
+// time-of-day daily shape (a 24h campaign aligned to midnight). Non-24h
+// periods (including 48h/72h multi-day flights) are NOT shaped as a repeating
+// daily curve; they fall through to the arbitrary-period branch so the plan
+// advances monotonically across the whole flight instead of resetting every
+// midnight. A repeating-daily shape over a multi-day flight is a different,
+// opt-in policy and must not be the silent default.
+const dailyPeriod = 24 * time.Hour
+
+// fractionOfPeriod returns the elapsed fraction [0,1] of the period at t. For
+// an exactly-24h period the wall-clock time-of-day is used so the curve aligns
+// to local midnight (the daily shape). For every other period length (sub-day
+// or multi-day), the fraction is computed as UnixNano() % period, which makes
+// the plan advance linearly across the whole period.
 func (p *Pacer) fractionOfPeriod(t time.Time) float64 {
-	// For a daily period, use the wall-clock fraction of the day; for other
-	// periods, use the fraction since the period's start boundary. We anchor to
-	// midnight of t's day for a daily shape.
-	if p.period%time.Hour == 0 && p.period >= 24*time.Hour {
+	// Daily shape ONLY for an exactly-24h period. >= 24h multiples (48h, 72h)
+	// must NOT reuse the daily curve — they'd reset to 0 every midnight and
+	// over-pace the first 24h.
+	if p.period == dailyPeriod {
 		startOfDay := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-		f := float64(t.Sub(startOfDay)) / float64(24*time.Hour)
+		f := float64(t.Sub(startOfDay)) / float64(dailyPeriod)
 		if f < 0 {
 			f = 0
 		}
@@ -174,39 +195,72 @@ func (p *Pacer) targetFraction(t time.Time) float64 {
 // TargetSpend returns the planned cumulative spend at time t.
 func (p *Pacer) TargetSpend(t time.Time) float64 { return p.targetFraction(t) * p.total }
 
+// sanitizeSpend normalizes an actualSpend value at the API boundary. A budget
+// pacing system is a PROTECTION primitive: it must never fail open (let bids
+// through unsuppressed) because a caller handed it a bad spend counter. NaN and
+// +/-Inf — which a corrupted/missing spend feed can produce — are mapped to 0 so
+// the downstream deviation math is conservative (treated as "no spend seen yet"
+// -> behind plan). Negative cumulative spend is undefined for a monotonic
+// counter and is likewise clamped to 0. Without this guard, NaN spend made every
+// comparison false, so ShouldThrottle(NaN) returned false (full pace) and
+// PaceRatio(NaN) returned 1.0 — the exact opposite of safe.
+func (p *Pacer) sanitizeSpend(actualSpend float64) float64 {
+	if !isFinite(actualSpend) || actualSpend < 0 {
+		return 0
+	}
+	return actualSpend
+}
+
 // Deviation returns (actual - planned) / planned at time t. Positive = ahead of
-// plan (overspending); negative = behind.
+// plan (overspending); negative = behind. NaN/Inf/negative actualSpend is
+// clamped to 0 (see sanitizeSpend).
 func (p *Pacer) Deviation(actualSpend float64, t time.Time) float64 {
 	planned := p.TargetSpend(t)
 	if planned <= 0 {
 		return 0
 	}
-	return (actualSpend - planned) / planned
+	return (p.sanitizeSpend(actualSpend) - planned) / planned
 }
 
 // OnPlan reports whether actualSpend is within tolerance of the plan at t.
+// NaN/Inf/negative spend is clamped to 0 first, so a bad feed never reads as
+// "on plan" by accident (it reads as behind plan).
 func (p *Pacer) OnPlan(actualSpend float64, t time.Time) bool {
 	return math.Abs(p.Deviation(actualSpend, t)) <= p.tolerance
 }
 
 // ShouldThrottle reports whether spend is ahead of plan beyond tolerance (true =
 // slow down / shade bids). Near end-of-period with budget left it returns false
-// (spend the remainder).
+// (spend the remainder). NaN/Inf/negative spend is clamped to 0 (behind plan ->
+// no throttle); spend at/over total throttles regardless of feed corruption.
 func (p *Pacer) ShouldThrottle(actualSpend float64, t time.Time) bool {
-	if actualSpend >= p.total {
+	// Non-finite spend is a corrupt feed; throttle-safe is to slow down rather
+	// than let the comparison silently evaluate to false (full pace).
+	if !isFinite(actualSpend) {
+		return true
+	}
+	spend := p.sanitizeSpend(actualSpend)
+	if spend >= p.total {
 		return true // budget exhausted
 	}
-	return p.Deviation(actualSpend, t) > p.tolerance
+	return p.Deviation(spend, t) > p.tolerance
 }
 
 // PaceRatio returns a [0,1] bid-pacing multiplier derived from the deviation:
 // 1.0 when on/behind plan, tapering toward 0 as overspend grows. Use it to shade
-// bid probability or cap the bid rate.
+// bid probability or cap the bid rate. NaN/Inf spend yields 0 (no pace); a
+// negative spend is clamped to 0 (behind plan -> full pace).
 func (p *Pacer) PaceRatio(actualSpend float64, t time.Time) float64 {
-	if actualSpend >= p.total {
+	// Non-finite spend is a corrupt feed; fail closed (0 pace) rather than
+	// letting the NaN path fall through to the full-pace branch.
+	if !isFinite(actualSpend) {
 		return 0
 	}
-	dev := p.Deviation(actualSpend, t)
+	spend := p.sanitizeSpend(actualSpend)
+	if spend >= p.total {
+		return 0
+	}
+	dev := p.Deviation(spend, t)
 	if dev <= p.tolerance {
 		return 1 // on/behind plan -> full pace
 	}
@@ -219,10 +273,24 @@ func (p *Pacer) PaceRatio(actualSpend float64, t time.Time) float64 {
 	return r
 }
 
+// loadEmaRate returns the smoothed spend rate (budget/sec), reading the
+// atomically-stored bits. Safe for concurrent use with Smooth.
+func (p *Pacer) loadEmaRate() float64 {
+	return math.Float64frombits(p.emaRate.Load())
+}
+
+// storeEmaRate publishes the smoothed spend rate atomically. Smooth (the single
+// writer) calls this; concurrent SmoothedRate readers observe a consistent
+// (non-torn) float64.
+func (p *Pacer) storeEmaRate(v float64) {
+	p.emaRate.Store(math.Float64bits(v))
+}
+
 // Smooth updates the EMA spend rate from the current cumulative spend and time,
 // and returns the smoothed spend rate (budget units / second). Call it
 // periodically (e.g. each spend tick). With WithSmoothing off it returns the
-// instantaneous rate since the last call.
+// instantaneous rate since the last call. Smooth is single-writer; concurrent
+// SmoothedRate reads are safe (the rate is stored atomically).
 func (p *Pacer) Smooth(actualSpend float64, t time.Time) float64 {
 	if p.lastTime.IsZero() {
 		p.lastTime = t
@@ -231,23 +299,33 @@ func (p *Pacer) Smooth(actualSpend float64, t time.Time) float64 {
 	}
 	dt := t.Sub(p.lastTime).Seconds()
 	if dt <= 0 {
-		return p.emaRate
+		return p.loadEmaRate()
 	}
 	inst := (actualSpend - p.lastSpend) / dt
-	if p.emaAlpha <= 0 {
-		p.emaRate = inst
-	} else if p.emaRate == 0 {
-		p.emaRate = inst
-	} else {
-		p.emaRate = p.emaAlpha*inst + (1-p.emaAlpha)*p.emaRate
+	// Sanitize: a non-finite input (NaN/Inf spend, or a pathological dt) must
+	// never poison the smoothed rate or leak to callers. Keep the previous rate
+	// on bad input rather than propagating NaN/Inf.
+	cur := p.loadEmaRate()
+	var next float64
+	switch {
+	case !isFinite(inst):
+		next = cur // ignore non-finite instantaneous rate
+	case p.emaAlpha <= 0:
+		next = inst
+	case cur == 0:
+		next = inst // seed the EMA on the first finite tick
+	default:
+		next = p.emaAlpha*inst + (1-p.emaAlpha)*cur
 	}
+	p.storeEmaRate(next)
 	p.lastSpend = actualSpend
 	p.lastTime = t
-	return p.emaRate
+	return next
 }
 
-// SmoothedRate returns the last smoothed spend rate without updating it.
-func (p *Pacer) SmoothedRate() float64 { return p.emaRate }
+// SmoothedRate returns the last smoothed spend rate without updating it. Safe
+// for concurrent use with Smooth.
+func (p *Pacer) SmoothedRate() float64 { return p.loadEmaRate() }
 
 // Total returns the configured total budget.
 func (p *Pacer) Total() float64 { return p.total }

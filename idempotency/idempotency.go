@@ -18,7 +18,9 @@ package idempotency
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,6 +47,13 @@ type Cache[V any] struct {
 	maxEntries  int
 	cacheErrors bool
 	clock       func() time.Time
+
+	recovered uint64 // count of leader fn panics recovered (observable; L5)
+	// onPanic is an optional hook fired on a recovered leader panic. Stored as
+	// an atomic.Pointer so SetOnPanic (caller goroutine) and the recover path
+	// (leader goroutine) never race on the bare field; a nil hook costs only a
+	// Load on the no-hook fast path. Mirrors workerpool/pipeline/signalbus.
+	onPanic atomic.Pointer[func(any)]
 }
 
 // Option configures a Cache.
@@ -77,6 +86,26 @@ func New[V any](opts ...Option[V]) *Cache[V] {
 	return c
 }
 
+// SetOnPanic installs a hook fired (non-blocking) when the leader fn panics.
+// The panic is also counted in Recovered and delivered as the result error (to
+// the leader and all followers), and the entry is treated as a normal failure
+// (dropped unless WithCacheErrors is on). Safe to call concurrently with Do
+// (the hook pointer is stored atomically, so there is no data race between a
+// writer here and the reader in the recover path). Pass nil to clear a
+// previously-installed hook.
+func (c *Cache[V]) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		c.onPanic.Store(nil)
+		return
+	}
+	f := fn // copy to heap
+	c.onPanic.Store(&f)
+}
+
+// Recovered returns the total number of leader fn panics recovered since the
+// cache was created.
+func (c *Cache[V]) Recovered() uint64 { return atomic.LoadUint64(&c.recovered) }
+
 // Do runs fn at most once for concurrent/repeat callers of key (within the TTL
 // for cached successes). Followers wait for the leader; if their ctx is
 // cancelled while waiting they return ctx.Err() immediately (the leader still
@@ -102,10 +131,40 @@ func (c *Cache[V]) Do(ctx context.Context, key string, fn func(ctx context.Conte
 	c.evictLocked(now)
 	c.mu.Unlock()
 
-	// Run the work outside the lock.
-	val, err := fn(ctx)
+	// Run the work outside the lock. The leader is async relative to its
+	// followers (they wait on e.done), so a panicking fn must be recovered —
+	// matching the kit callback-recover convention (workerpool/pipeline/
+	// signalbus/shutdown/debounce). Without recovery the panic escapes Do
+	// BEFORE close(e.done): followers hang forever, the entry leaks, and a
+	// fresh Do(key) permanently stalls on a done that never closes. The panic
+	// is converted to an error and routed through finishLocked so close(e.done)
+	// is ALWAYS reached.
+	var val V
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				atomic.AddUint64(&c.recovered, 1)
+				if hp := c.onPanic.Load(); hp != nil {
+					(*hp)(r)
+				}
+				err = fmt.Errorf("idempotency: fn panic recovered: %v", r)
+			}
+		}()
+		val, err = fn(ctx)
+	}()
 
 	c.mu.Lock()
+	c.finishLocked(e, key, val, err)
+	c.mu.Unlock()
+	return val, err
+}
+
+// finishLocked records the leader's result, decides whether to cache or drop
+// the entry, and closes e.done to wake all followers. Used by BOTH the normal
+// and panic-recovery paths so close(e.done) is ALWAYS reached. Caller must hold
+// c.mu.
+func (c *Cache[V]) finishLocked(e *entry[V], key string, val V, err error) {
 	e.val = val
 	e.err = err
 	e.completed = true
@@ -116,9 +175,7 @@ func (c *Cache[V]) Do(ctx context.Context, key string, fn func(ctx context.Conte
 	if !keep {
 		delete(c.entries, key) // failures (when not caching) are removable -> retry
 	}
-	c.mu.Unlock()
 	close(e.done) // wake all followers
-	return val, err
 }
 
 // waitFor blocks until the leader completes (e.done closes) or ctx is cancelled.

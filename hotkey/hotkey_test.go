@@ -163,38 +163,41 @@ func TestTopExcludesZeroCountKeys(t *testing.T) {
 	require.Empty(t, top) // no keys -> empty
 }
 
-// TestTopPrunesIdleEntryLeftByCount covers the in-map idle-pruning branch of
-// Top (delete + continue on a key whose trimmed window is empty). Count leaves
-// an empty (but still-present) slice for an expired key instead of deleting the
-// map entry; Top must then observe that idle entry and remove it. This drives
-// the Top branch that ordinary Touch+evictIdleLocked never expose, because
-// Touch prunes idle keys before Top can see them.
-func TestTopPrunesIdleEntryLeftByCount(t *testing.T) {
+// TestCountReadOnly pins the R13 F2 fix: Count is read-only with respect to the
+// key set. A never-seen key returns 0 WITHOUT creating a map entry, and a key
+// whose window has drained to empty is deleted (reclaimed) rather than left as a
+// nil/empty-slice stub. This keeps the read path from bypassing maxKeys: an
+// attacker probing Count with distinct untrusted keys must not grow the map.
+func TestCountReadOnly(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(8000, 0)}
 	d := New(time.Second, 5, WithClock(clk.now))
 
 	// "stale" is in-window at touch time, then ages out.
 	d.Touch("stale")
+	require.Equal(t, 1, d.Len())
 	clk.t = clk.t.Add(2 * time.Second) // past the 1s window
 
-	// Count trims "stale" to an empty slice and writes it back WITHOUT deleting
-	// the map entry, leaving an idle key resident in d.keys.
+	// Count must reclaim the drained key, not leave an empty-slice stub behind.
+	// (Pre-F2 the map still held "stale" -> []time.Time{} here, and Top had to
+	// clean it up.)
 	require.Equal(t, 0, d.Count("stale"))
-	require.Equal(t, 1, d.Len(), "Count must leave the idle entry in the map")
+	require.Equal(t, 0, d.Len(), "Count must delete a drained key, not leave an empty slice")
 
-	// Touching a fresh key adds it; evictIdleLocked prunes the idle "stale"
-	// entry too, but the assertion below holds regardless.
+	// A never-seen key must not be created by Count.
+	require.Equal(t, 0, d.Count("ghost"))
+	require.Equal(t, 0, d.Len(), "Count must not create an entry for an absent key")
+
+	// Fresh touches still record cleanly.
 	d.Touch("live")
-	require.Equal(t, 1, d.Len(), "idle stale key must be gone after fresh touch")
-
-	// Re-establish an idle-in-map entry and drive Top's own delete branch.
-	clk.t = clk.t.Add(2 * time.Second)
-	require.Equal(t, 0, d.Count("live")) // trims live to empty, leaves entry
 	require.Equal(t, 1, d.Len())
+	require.Equal(t, 1, d.Count("live"))
 
+	// Top still prunes any idle entry it observes on its own scan (the Top
+	// delete branch remains, even though Count no longer feeds it idle stubs).
+	clk.t = clk.t.Add(2 * time.Second) // "live" ages out
 	top := d.Top()
-	require.Empty(t, top, "Top must exclude the idle entry and report nothing")
-	require.Equal(t, 0, d.Len(), "Top must delete the idle entry it encountered")
+	require.Empty(t, top, "Top excludes the now-idle key")
+	require.Equal(t, 0, d.Len(), "Top prunes the idle entry it encountered")
 }
 
 // TestEvictIdleLockedVictimEmptyGuard documents the defensive victim==""
@@ -240,4 +243,26 @@ func TestConcurrency(t *testing.T) {
 	top := d.Top()
 	require.NotEmpty(t, top)
 	require.Equal(t, "hot", top[0].Key) // hot had more touches (12 goroutines vs 4)
+}
+
+// TestCountDoesNotGrowMapR13F2 is the F2 regression: the read-only Count
+// accessor must not create map entries for never-seen keys, otherwise the
+// maxKeys cap is bypassed on the read path. Pre-F2, Count over 50 distinct
+// never-seen keys with maxKeys=3 grew the map to 50. It MUST stay at 0.
+func TestCountDoesNotGrowMapR13F2(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(0, 0)}
+	d := New(time.Hour, 5, WithMaxKeys(3), WithClock(clk.now))
+	for i := range 50 {
+		require.Equal(t, 0, d.Count(fmt.Sprintf("k%d", i)), "never-seen key reports 0")
+	}
+	require.Equal(t, 0, d.Len(), "Count must not create entries for absent keys")
+
+	// Even after the map has live entries, probing more never-seen keys must
+	// not grow the map beyond what Touch recorded.
+	d.Touch("live")
+	require.Equal(t, 1, d.Len())
+	for i := range 50 {
+		require.Equal(t, 0, d.Count(fmt.Sprintf("x%d", i)))
+	}
+	require.Equal(t, 1, d.Len(), "absent-key Count probes added no entries")
 }

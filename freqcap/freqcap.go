@@ -8,6 +8,15 @@
 // In-memory and exact (a timestamp per allowed event); idle keys are pruned so
 // memory tracks active entities, not historical ones.
 //
+// The per-entity cap is a hard invariant: an entity is allowed at most maxEvents
+// per window, period. The tracked-key ceiling (WithMaxKeys) is a SOFT cap on
+// memory: a key that still has in-window events is never evicted to make room
+// for a new one, because that would silently reset the entity's cap and cause
+// over-delivery. When the live-key count reaches the cap, a fresh entity's first
+// Allow is denied instead (memory full, all active audiences) — preferable to
+// under-counting a live audience. Count is read-only and never creates map
+// entries, so probing it with untrusted keys cannot grow the map.
+//
 // Ad-tech / push uses: "show this creative to this user at most 3 times per
 // hour", "notify this user at most 5 times per day", "a device may trigger at
 // most K events per minute" (bot suppression).
@@ -42,13 +51,19 @@ type Counter struct {
 // Option configures a Counter.
 type Option func(*Counter)
 
-// WithMaxKeys caps the number of tracked keys; when exceeded, idle keys (those
-// with no events in the window) are pruned first, then the oldest-start keys.
+// WithMaxKeys caps the number of tracked keys. The cap is SOFT: idle keys (those
+// with no events in the window) are always reclaimed to make room, but a key
+// that still has in-window events is NEVER evicted — dropping it would silently
+// reset that entity's cap and cause over-delivery. When the live-key count
+// reaches the cap, a fresh entity's first Allow is denied (return false) rather
+// than dropping a live entity.
 //
 // Omitting the option applies DefaultMaxKeys as a sane ceiling. Pass
 // WithMaxKeys(0) — the Go zero value — for an unbounded map; use this only when
 // the caller bounds the key space itself, since nothing else limits memory
-// growth. This matches the convention in package hotkey.
+// growth. This matches the convention in package hotkey (where the cap, by
+// contrast, IS a hard eviction of the coldest key, which is correct for a
+// hot-key detector but wrong for a frequency cap).
 func WithMaxKeys(n int) Option { return func(c *Counter) { c.maxKeys = n } }
 
 // WithClock injects a clock (for tests). Defaults to time.Now.
@@ -89,33 +104,65 @@ func New(window time.Duration, maxEvents int, opts ...Option) *Counter {
 // Allow records an event for key if the key is still under the cap within the
 // window; returns true when recorded, false when the cap would be exceeded (and
 // records nothing).
+//
+// maxKeys is enforced as a SOFT cap: if admitting a new key would push the live
+// key count to maxKeys and every existing key is still in-window, the event is
+// DENIED (return false) rather than dropping a live entity. Dropping a live
+// entity would silently reset its cap and cause over-delivery, breaking the core
+// invariant ("at most maxEvents per entity per window"). An idle key is reclaimed
+// to make room when one exists. Recording another event for an already-tracked,
+// in-window key never counts toward the cap.
 func (c *Counter) Allow(key string) bool {
 	now := c.clock()
 	cutoff := now.Add(-c.window)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ts := trimBefore(c.keys[key], cutoff)
-	if len(ts) >= c.maxEvents {
-		// At/over cap: keep the trimmed slice (still active events), reject.
-		c.keys[key] = ts
+	ts, ok := c.keys[key]
+	trimmed := trimBefore(ts, cutoff)
+	if len(trimmed) >= c.maxEvents {
+		// At/over cap (maxEvents >= 1, so trimmed is non-empty here): keep the
+		// trimmed slice (still active events), reject.
+		c.keys[key] = trimmed
 		return false
 	}
-	ts = append(ts, now)
-	c.keys[key] = ts
-	c.evictIdleLocked(now)
+	// Admitting this event adds a key to the live set only when the key is not
+	// already a live, in-window entry. Reclaim idle keys first; then, if the key
+	// is new-to-live and the live set is already at the soft cap, deny rather
+	// than evict a live entity (over-delivery guard).
+	if !ok || len(trimmed) == 0 {
+		c.evictIdleLocked(now)
+		if c.maxKeys > 0 && len(c.keys) >= c.maxKeys {
+			// evictIdleLocked leaves only live keys, so len(c.keys) == live count.
+			return false
+		}
+	}
+	trimmed = append(trimmed, now)
+	c.keys[key] = trimmed
 	return true
 }
 
 // Count returns the number of events currently within the window for key
-// (lazy-trimmed). It does not record an event.
+// (lazy-trimmed). It does not record an event and is read-only with respect to
+// the key set: a key that is absent, or whose window has drained to empty, is
+// never created in the map by calling Count. This keeps the read path from
+// bypassing the maxKeys cap (an attacker probing Count with distinct untrusted
+// keys must not grow the map).
 func (c *Counter) Count(key string) int {
 	now := c.clock()
 	cutoff := now.Add(-c.window)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ts := trimBefore(c.keys[key], cutoff)
-	c.keys[key] = ts
-	return len(ts)
+	ts, ok := c.keys[key]
+	if !ok {
+		return 0 // absent key: do NOT create a map entry
+	}
+	trimmed := trimBefore(ts, cutoff)
+	if len(trimmed) == 0 {
+		delete(c.keys, key) // drained to empty: reclaim the entry
+		return 0
+	}
+	c.keys[key] = trimmed
+	return len(trimmed)
 }
 
 // Reset drops all recorded events for key.
@@ -132,33 +179,22 @@ func (c *Counter) Len() int {
 	return len(c.keys)
 }
 
-// evictIdleLocked prunes keys whose window is empty, and — if a key cap is set
-// and still exceeded — drops the oldest-starting keys. Caller holds the lock.
+// evictIdleLocked prunes keys whose window has drained to empty. It NEVER evicts
+// a key that still has in-window events: doing so would silently reset that
+// entity's cap and cause over-delivery, breaking the core freqcap invariant
+// ("at most maxEvents per entity per window"). Caller holds the lock.
+//
+// As a consequence maxKeys is a SOFT cap on memory: once the live key count
+// reaches the cap, evictIdleLocked cannot free more room (no idle keys remain),
+// and Allow denies the new event instead of dropping a live entity. A former
+// oldest-start eviction loop lived here; it was removed because under the soft
+// cap it could only ever drop live keys — exactly the over-delivery bug.
 func (c *Counter) evictIdleLocked(now time.Time) {
-	// Drop fully-idle keys (no events within the window).
+	cutoff := now.Add(-c.window)
 	for k, ts := range c.keys {
-		if len(trimBefore(ts, now.Add(-c.window))) == 0 {
+		if len(trimBefore(ts, cutoff)) == 0 {
 			delete(c.keys, k)
 		}
-	}
-	// If still over the key cap, drop the key with the oldest earliest event.
-	for c.maxKeys > 0 && len(c.keys) > c.maxKeys {
-		victim := ""
-		oldest := time.Time{}
-		first := true
-		for k, ts := range c.keys {
-			if len(ts) == 0 { // prefer an empty one
-				victim = k
-				break
-			}
-			if first || ts[0].Before(oldest) {
-				oldest, victim, first = ts[0], k, false
-			}
-		}
-		if victim == "" {
-			return
-		}
-		delete(c.keys, victim)
 	}
 }
 

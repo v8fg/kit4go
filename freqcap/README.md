@@ -28,13 +28,13 @@ if cap.Allow(userID + "|" + creativeID) {
 |---|---|
 | `New(window, maxEvents, opts...)` | Allow at most `maxEvents` per key in `window` |
 | `Allow(key) bool` | Record an event if under cap; `true` when recorded |
-| `Count(key) int` | Events currently in the window (read-only, lazy-trimmed) |
+| `Count(key) int` | Events currently in the window (read-only, lazy-trimmed; never creates a map entry) |
 | `Reset(key)` | Drop all events for a key |
 | `Len() int` | Tracked keys (active + not-yet-pruned idle) |
 
 | Option | Default | Effect |
 |---|---|---|
-| `WithMaxKeys(n)` | `DefaultMaxKeys` (10000) | Cap tracked keys; prunes idle, then oldest-start. `0` (the Go zero value) means unbounded — use only when the caller bounds the key space itself. Matches `hotkey`. |
+| `WithMaxKeys(n)` | `DefaultMaxKeys` (10000) | SOFT cap on tracked keys: idle keys are reclaimed to make room, but a key that still has in-window events is NEVER evicted (dropping it would silently reset that entity's cap and cause over-delivery). When the live-key count reaches the cap, a fresh entity's first `Allow` is denied (`false`). `0` (the Go zero value) means unbounded — use only when the caller bounds the key space itself. (`hotkey` enforces a HARD cap by contrast — correct for a hot-key detector, wrong for a frequency cap.) |
 | `WithClock(f)` | `time.Now` | Inject a clock (tests) |
 
 ## Ad-tech / push uses
