@@ -127,6 +127,7 @@ graph TB
 | [kafka](kafka) | producer + consumer (sync/async, group, partition; sarama/franz-go unified) | IBM/sarama |
 | [postgres](postgres) | pgx pool wrapper | jackc/pgx/v5 |
 | [clickhouse](clickhouse) | ClickHouse OLAP client wrapper (native protocol, PrepareBatch pass-through) | ClickHouse/clickhouse-go |
+| [elasticsearch](elasticsearch) | Elasticsearch search/analytics wrapper (Index/Get/Search/Delete, official go-elasticsearch/v8) | elastic/go-elasticsearch |
 | [etcd](etcd) | etcd distributed-KV wrapper (service registration + discovery: KV/Lease/Watch) | etcd-io/etcd |
 | [aerospike](aerospike) | Aerospike high-throughput KV wrapper (Put/Get/Delete/BatchGet) | aerospike/aerospike-client-go |
 | [minio](minio) | S3/MinIO object-store client wrapper (Put/Get/Stat/Remove/List/Presign) | minio/minio-go |

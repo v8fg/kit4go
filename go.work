@@ -5,6 +5,7 @@ use (
 	./adaptive
 	./aerospike
 	./clickhouse
+	./elasticsearch
 	./etcd
 	./email
 	./grpcclient
