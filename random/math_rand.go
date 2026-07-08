@@ -93,9 +93,22 @@ func NormFloat64() float64 { return rand.NormFloat64() }
 // ExpFloat64 returns an exponentially distributed float64 with rate parameter 1.
 func ExpFloat64() float64 { return rand.ExpFloat64() }
 
-// StringByRead returns the random string with the length == len(b).
+// StringByRead fills b with cryptographically secure random bytes (via
+// crypto/rand) and returns them base64 (StdEncoding) encoded. The returned
+// string's byte length depends on len(b); n <= 0 or a nil/empty buffer returns
+// "".
+//
+// This is crypto-backed (it uses crypto/rand, not math/rand), so it is suitable
+// for secrets/tokens. On a Read error it returns "" rather than encoding
+// potentially-unfilled/zero bytes, mirroring CryptoReadString's ""-on-error
+// contract — any non-empty result is therefore fully random.
 func StringByRead(b []byte) string {
-	_, _ = crand.Read(b)
+	if len(b) == 0 {
+		return ""
+	}
+	if _, err := DefaultCryptoSource.Read(b); err != nil {
+		return ""
+	}
 	return base64.StdEncoding.EncodeToString(b)
 }
 

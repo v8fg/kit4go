@@ -37,6 +37,16 @@ var b32NoPadding = base32.StdEncoding.WithPadding(base32.NoPadding)
 // read) is propagated rather than swallowed.
 var ErrSecretReadFailed = errors.New("otp: failed to read random secret from Rand")
 
+// ErrIssuerContainsColon is returned when opts.Issuer contains a colon. The
+// otpauth label path is "/Issuer:AccountName" and the upstream parser
+// (pquerna/otp) splits AccountName on the FIRST ':', so a ':' inside Issuer
+// silently corrupts the parsed AccountName (e.g. Issuer "A:B" + AccountName
+// "user" round-trips back as "B:user"). url.PathEscape does not help here —
+// ':' is a valid path character and is emitted literally. Rejecting the colon
+// up front keeps the round-trip correct. The secret itself is unaffected (it
+// is an independent query parameter).
+var ErrIssuerContainsColon = errors.New("otp: Issuer must not contain ':' (would corrupt the otpauth AccountName)")
+
 // KeyOpts provides options for Generate().  The default values
 // are compatible with Google-Authenticator.
 //
@@ -62,9 +72,23 @@ type KeyOpts struct {
 	Counter uint64
 }
 
-// RandomSecret generates a random secret of given length (number of bytes) without padding,
-// if rand.Read failed returns empty string.
+// RandomSecret generates a random secret of given length (number of bytes) without
+// padding. It returns "" on failure.
+//
+// An empty result ("") means one of:
+//   - length <= 0 (no secret requested), or
+//   - the random source (DefaultRandomReader) failed or short-read (CSPRNG
+//     failure / entropy exhaustion).
+//
+// Because both cases yield "", callers that need to distinguish them must check
+// length themselves before calling. The ""-on-failure contract is preserved to
+// stay non-breaking; a length <= 0 is treated as "no secret" rather than
+// panicking — make([]byte, -5) would otherwise panic ("makeslice: len out of
+// range").
 func RandomSecret(length int) (secret string) {
+	if length <= 0 {
+		return ""
+	}
 	secretB := make([]byte, length)
 	gen, err := DefaultRandomReader.Read(secretB)
 	if err != nil || gen != length {
@@ -74,9 +98,21 @@ func RandomSecret(length int) (secret string) {
 	return
 }
 
-// VerifySecret verifies the secret is valid, support padding or NoPadding format.
+// VerifySecret verifies the secret is valid base32, supporting either padded or
+// NoPadding format. It returns true only for a non-empty, well-formed base32
+// secret.
+//
+// This is a base32 FORMAT check only — it does NOT validate secret strength,
+// length, or entropy. An all-zero secret that happens to be valid base32 still
+// passes; callers provisioning 2FA must additionally enforce a minimum length
+// (RFC 4226 §4 recommends 160 bits / 20 bytes). An empty or whitespace-only
+// secret is rejected as false (the bare base32 decoder would otherwise accept
+// "" as valid, which would let a caller gate provisioning on an empty secret).
 func VerifySecret(secret string) bool {
 	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return false
+	}
 	if n := len(secret) % 8; n != 0 {
 		secret = secret + strings.Repeat("=", 8-n)
 	}
@@ -161,6 +197,11 @@ func simpleURL(opts KeyOpts, otpType string) (*xtp.Key, error) {
 		return nil, xtp.ErrGenerateMissingAccountName
 	}
 
+	// A ':' in Issuer corrupts the parsed AccountName (see ErrIssuerContainsColon).
+	if strings.ContainsRune(opts.Issuer, ':') {
+		return nil, ErrIssuerContainsColon
+	}
+
 	if opts.SecretSize == 0 {
 		opts.SecretSize = 20 // RFC 4226 §4 recommends 160-bit (20-byte) secrets; matches upstream totp.Generate
 	}
@@ -204,10 +245,16 @@ func simpleURL(opts KeyOpts, otpType string) (*xtp.Key, error) {
 		v.Set("counter", strconv.FormatUint(opts.Counter, 10))
 	}
 
+	// Path-escape both label segments. Issuer is already guaranteed colon-free
+	// (see the ErrIssuerContainsColon guard above); the escape mainly protects
+	// against '/' and other reserved chars in Issuer/AccountName that would
+	// otherwise split or corrupt the otpauth path. ':' itself is a valid path
+	// char and is NOT escaped by PathEscape, which is why the colon guard above
+	// is required separately.
 	u := url.URL{
 		Scheme:   "otpauth",
 		Host:     otpType,
-		Path:     "/" + opts.Issuer + ":" + opts.AccountName,
+		Path:     "/" + url.PathEscape(opts.Issuer) + ":" + url.PathEscape(opts.AccountName),
 		RawQuery: v.Encode(),
 	}
 

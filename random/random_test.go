@@ -103,7 +103,6 @@ func TestRandNIn(t *testing.T) {
 
 func TestRandStringInCharset(t *testing.T) {
 	convey.Convey("TestRandStringInCharset", t, func() {
-		convey.So(func() { random.RandStringInCharset(0, []rune{}) }, convey.ShouldPanic)
 		convey.So(random.RandStringInCharset(0, []rune{1}), convey.ShouldEqual, "")
 		convey.So(random.RandStringInCharset(1, []rune{'A'}), convey.ShouldEqual, "A")
 		convey.So(random.RandStringInCharset(2, []rune("AB")), convey.ShouldHaveLength, 2)

@@ -4,6 +4,7 @@ import (
 	"encoding/base32"
 	"errors"
 	"io"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -60,6 +61,22 @@ func TestRandomSecret(t *testing.T) {
 				convey.So(otp.RandomSecret(6), convey.ShouldEqual, "")
 			})
 		})
+
+		// Regression (F5): a negative length previously panicked inside
+		// make([]byte, -5) ("makeslice: len out of range"). The guard now
+		// returns "" before the allocation, so the call must not panic and
+		// must return the same sentinel as a CSPRNG failure.
+		convey.Convey("TestRandomSecret-NegativeLength-NoPanic", func() {
+			convey.So(otp.RandomSecret(-5), convey.ShouldEqual, "")
+			convey.So(otp.RandomSecret(-1), convey.ShouldEqual, "")
+		})
+
+		// Regression (F5): length 0 returns "" rather than allocating. This is
+		// the documented ""-on-no-op contract; it is indistinguishable from a
+		// CSPRNG failure, which the doc calls out explicitly.
+		convey.Convey("TestRandomSecret-ZeroLength", func() {
+			convey.So(otp.RandomSecret(0), convey.ShouldEqual, "")
+		})
 	})
 }
 
@@ -68,6 +85,20 @@ func TestVerifySecret(t *testing.T) {
 	convey.Convey("TestVerifySecret", t, func() {
 		convey.So(otp.VerifySecret("7ZDW4TVCYM"), convey.ShouldBeTrue)
 		convey.So(otp.VerifySecret("JBSWY3DPEHPK3PXP"), convey.ShouldBeTrue)
+
+		// Regression (F6): an empty or whitespace-only secret previously passed
+		// because the bare base32 decoder accepts "" as valid, which would let
+		// a caller gate 2FA provisioning on an empty secret. Now rejected.
+		convey.So(otp.VerifySecret(""), convey.ShouldBeFalse)
+		convey.So(otp.VerifySecret("   "), convey.ShouldBeFalse)
+		convey.So(otp.VerifySecret("\t\n"), convey.ShouldBeFalse)
+
+		// "0" is not a valid base32 symbol -> must be false (format check).
+		convey.So(otp.VerifySecret("0"), convey.ShouldBeFalse)
+		convey.So(otp.VerifySecret("not!base32!secret"), convey.ShouldBeFalse)
+
+		// A whitespace-padded valid secret still trims and verifies true.
+		convey.So(otp.VerifySecret("  JBSWY3DPEHPK3PXP  "), convey.ShouldBeTrue)
 	})
 }
 
@@ -198,6 +229,66 @@ func TestGenerateURLRandFailure(t *testing.T) {
 			convey.So(url, convey.ShouldBeEmpty)
 		})
 	}
+}
+
+// TestGenerateURLIssuerColon is the regression test for the F7 otpauth-label
+// bug. The label path is "/Issuer:AccountName" and the upstream parser
+// (pquerna/otp) splits AccountName on the FIRST ':', so a ':' inside Issuer
+// previously round-tripped a corrupted AccountName: Issuer "A:B" +
+// AccountName "user" came back as "B:user". url.PathEscape does not escape
+// ':' (it is a valid path char), so the fix rejects ':' in Issuer with
+// otp.ErrIssuerContainsColon. The secret is an independent query param and is
+// not affected. For a well-formed (colon-free) Issuer the URL must still
+// round-trip AccountName unchanged.
+func TestGenerateURLIssuerColon(t *testing.T) {
+	convey.SetDefaultFailureMode(convey.FailureContinues)
+
+	convey.Convey("colon in Issuer is rejected for TOTP and HOTP", t, func() {
+		for _, fn := range []struct {
+			name string
+			gen  func(otp.KeyOpts) (string, error)
+		}{
+			{"TOTP", otp.GenerateURLTOTP},
+			{"HOTP", otp.GenerateURLHOTP},
+		} {
+			convey.Convey(fn.name, func() {
+				opts := otp.KeyOpts{
+					Issuer:      "A:B",
+					AccountName: "user",
+					Secret:      []byte("12345678901234567890"),
+				}
+				url, err := fn.gen(opts)
+				convey.So(err, convey.ShouldBeError)
+				convey.So(errors.Is(err, otp.ErrIssuerContainsColon), convey.ShouldBeTrue)
+				convey.So(url, convey.ShouldBeEmpty)
+			})
+		}
+	})
+
+	convey.Convey("colon-free Issuer round-trips AccountName unchanged", t, func() {
+		opts := otp.KeyOpts{
+			Issuer:      "ACME Co",
+			AccountName: "john.doe@email.com",
+			Secret:      []byte("12345678901234567890"),
+		}
+		rawURL, err := otp.GenerateURLTOTP(opts)
+		convey.So(err, convey.ShouldBeNil)
+
+		parsed, err := url.Parse(rawURL)
+		convey.So(err, convey.ShouldBeNil)
+		// Mirror the upstream AccountName() parser: trim leading '/', split on
+		// the first ':'. The re-parsed AccountName must equal the input.
+		p := strings.TrimPrefix(parsed.Path, "/")
+		i := strings.Index(p, ":")
+		var account string
+		if i == -1 {
+			account = p
+		} else {
+			account = p[i+1:]
+		}
+		convey.So(account, convey.ShouldEqual, opts.AccountName)
+		convey.So(account, convey.ShouldNotEqual, "B:"+opts.AccountName)
+	})
 }
 
 // errReader always fails to read.

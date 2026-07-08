@@ -76,25 +76,20 @@ func randStringWithLetterDigits(n int, containDigits bool) string {
 
 // RandStringInCharset returns a random string of length n with the given charset.
 // One character in the charset maybe use 1byte, 2bytes, 3bytes or 4bytes.
+//
+// An empty charset returns "". The index selection uses rand.IntN, which is
+// rejection-free uniform in math/rand/v2 (the previous mask-then-modulo path
+// over-sampled low indices when len(charset) was not a power of two).
 func RandStringInCharset(n int, charset []rune) string {
-	idxBits := maxBits(len(charset))
-	idxMask := int64(1<<idxBits - 1)
-	idxMax := idxMask / int64(idxBits)
+	if len(charset) == 0 {
+		return ""
+	}
 
 	b := strings.Builder{}
 	b.Grow(n)
 
-	for i, cache, remain := n-1, rand.Int64(), idxMax; i >= 0; {
-		// round repeat
-		if remain == 0 || cache == 0 {
-			cache, remain = rand.Int64(), idxMax
-		}
-		if idx := int(cache & idxMask); idx < len(charset) {
-			b.WriteRune(charset[idx])
-			i--
-		}
-		cache >>= idxBits
-		remain--
+	for range n {
+		b.WriteRune(charset[rand.IntN(len(charset))])
 	}
 	return b.String()
 }
@@ -124,7 +119,11 @@ func RandStringWithKind(n int, kind int) []byte {
 	for i := range n {
 		ik = MustRandIn(posIndex) // posIndex is non-empty here.
 		count, base := characters[ik][0], characters[ik][1]
-		result[i] = uint8(base + rand.IntN(count))
+		// count is the inclusive span (e.g. '9'-'0' = 9). rand.IntN(count)
+		// returns [0,count), which would never select the last character
+		// ('9', 'Z', 'z'); use count+1 so the full range [base, base+count]
+		// is uniformly covered.
+		result[i] = uint8(base + rand.IntN(count+1))
 	}
 	return result
 }
@@ -138,10 +137,10 @@ func RandIn[T any](slice []T) (T, error) {
 		return zero, ErrEmptySlice
 	}
 
-	idxBits := maxBits(n)
-	idxMask := int64(1<<idxBits - 1)
-	idx := int(rand.Int64()&idxMask) % n
-	return slice[idx], nil
+	// rand.IntN is rejection-free uniform in math/rand/v2; the previous
+	// mask-then-modulo (`Int64()&idxMask % n`) over-sampled low indices
+	// whenever n was not a power of two (e.g. n=3 -> idx0 ~50%).
+	return slice[rand.IntN(n)], nil
 }
 
 // MustRandIn is like RandIn but panics on an empty slice. Use it when the
