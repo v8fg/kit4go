@@ -79,6 +79,16 @@ func New(initial State, rules ...Rule) (*Machine, error) {
 // guard, runs the action, and transitions to the target state. On enter/exit
 // hooks and listeners fire after the transition completes.
 //
+// The action runs OUTSIDE the machine lock so it may safely call back into the
+// machine (e.g. Current(), Is(), Can()) without self-deadlocking — sync.RWMutex
+// is not reentrant. The transition state is captured under the lock, the lock is
+// released for the action, then re-acquired to apply or revert the transition.
+//
+// Note: because the state is not committed until after the action succeeds, the
+// machine is treated as in-transition while the action runs. Concurrent Send
+// calls serialize on the lock; the current state remains `from` for the duration
+// of the action.
+//
 // Returns:
 //   - ErrNoTransition: no rule for (current, event).
 //   - ErrGuardRejected: the guard returned false.
@@ -94,16 +104,27 @@ func (m *Machine) Send(event string, ctx any) error {
 		m.mu.Unlock()
 		return ErrGuardRejected
 	}
+	// Capture the full transition under the lock, then release it so the action
+	// can call back into the machine (Current(), Is(), etc.) without deadlocking.
 	from := m.current
-	if rule.Action != nil {
-		if err := rule.Action(ctx); err != nil {
-			m.mu.Unlock()
+	to := rule.To
+	action := rule.Action
+	m.mu.Unlock()
+
+	// Invoke the action outside the lock. If it returns an error the transition
+	// does not occur — the state stays at `from`.
+	if action != nil {
+		if err := action(ctx); err != nil {
 			return fmt.Errorf("%w: %w", ErrActionFailed, err)
 		}
 	}
-	m.current = rule.To
+
+	// Re-acquire the lock to commit the transition and snapshot the hooks so
+	// they fire outside the lock (matching the established hook pattern).
+	m.mu.Lock()
+	m.current = to
 	onExit := m.onExit[from]
-	onEnter := m.onEnter[rule.To]
+	onEnter := m.onEnter[to]
 	listeners := m.listeners
 	m.mu.Unlock()
 
@@ -116,7 +137,7 @@ func (m *Machine) Send(event string, ctx any) error {
 		onEnter(ctx)
 	}
 	for _, l := range listeners {
-		l(from, rule.To, event, ctx)
+		l(from, to, event, ctx)
 	}
 	return nil
 }

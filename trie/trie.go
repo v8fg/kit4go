@@ -14,12 +14,14 @@ import (
 )
 
 // Trie is a prefix tree mapping string keys to values of type V. Safe for
-// concurrent use.
+// concurrent use. The tree is unbounded — there is deliberately no key-count cap
+// or eviction. If a bounded cache is needed, layer a separate cache on top; a
+// half-implemented eviction here would be a worse contract than an honest
+// unbounded trie.
 type Trie[V any] struct {
-	mu      sync.RWMutex
-	root    *node[V]
-	maxKeys int // 0 = unbounded
-	count   int // current key count
+	mu    sync.RWMutex
+	root  *node[V]
+	count int // current key count
 }
 
 type node[V any] struct {
@@ -30,12 +32,6 @@ type node[V any] struct {
 
 // Option configures a Trie.
 type Option[V any] func(*Trie[V])
-
-// WithMaxKeys caps the number of keys; Insert on a full trie evicts the
-// least-recently-inserted leaf. 0 = unbounded (default).
-func WithMaxKeys[V any](n int) Option[V] {
-	return func(t *Trie[V]) { t.maxKeys = n }
-}
 
 // New builds an empty Trie.
 func New[V any](opts ...Option[V]) *Trie[V] {

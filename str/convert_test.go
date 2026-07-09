@@ -87,6 +87,20 @@ func TestCamelToSnake(t *testing.T) {
 		convey.So(str.CamelToSnake("jsonFormat"), convey.ShouldEqual, "json_format")
 		convey.So(str.CamelToSnake("NetProtocolTCPAndUDP"), convey.ShouldEqual, "net_protocol_tcp_and_udp")
 	})
+
+	// Regression: initialismExtract greedily returned the longest initialism
+	// prefix without checking the word boundary. CamelToSnake("HTTPServer")
+	// matched "HTTPS" (a valid initialism) and stole the leading capital of
+	// "Server", producing "https_erver" instead of "http_server". The boundary
+	// rule now rejects an initialism candidate when the next character is
+	// lowercase (tail of the next word), while still accepting a longer
+	// initialism when the next character is uppercase or end-of-string.
+	convey.Convey("TestCamelToSnakeInitialismBoundary", t, func() {
+		convey.So(str.CamelToSnake("HTTPServer"), convey.ShouldEqual, "http_server")
+		convey.So(str.CamelToSnake("HTTPServerID"), convey.ShouldEqual, "http_server_id")
+		convey.So(str.CamelToSnake("HTTPSConnection"), convey.ShouldEqual, "https_connection")
+		convey.So(str.CamelToSnake("myHTTPServer"), convey.ShouldEqual, "my_http_server")
+	})
 }
 
 func TestCamelToSnakeWithDelimiter(t *testing.T) {

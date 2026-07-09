@@ -173,9 +173,27 @@ func SnakeToCamelWithInitialisms(s string, capitalizeFirstLetter bool, initialis
 	return sb.String()
 }
 
+// initialismExtract returns the longest common-initialism prefix of s that does
+// not over-consume a trailing word boundary.
+//
+// The previous implementation greedily returned the longest matching prefix
+// without inspecting the character that follows. That caused
+// CamelToSnake("HTTPServer") to match "HTTPS" (a valid initialism) and steal
+// the leading capital of "Server", producing "https_erver" instead of
+// "http_server".
+//
+// Boundary rule: accept a candidate initialism only when the character right
+// after it is uppercase (a real word boundary, e.g. "HTTPS" + "Connection") or
+// at end-of-string. Reject it when the next character is lowercase, because
+// that lowercase letter is the tail of the word whose capital the initialism
+// would steal (e.g. "HTTPS" + "erver" -> take "HTTP", leave "Server").
 func initialismExtract(s string) (initialism string) {
+	rs := []rune(s)
 	for i := 1; i <= maxLengthOfInitialisms; i++ {
 		if len(s) > i-1 && commonInitialisms[s[:i]] {
+			if i < len(rs) && unicode.IsLower(rs[i]) {
+				continue // over-consumption: lowercase tail belongs to the next word
+			}
 			initialism = s[:i]
 		}
 	}

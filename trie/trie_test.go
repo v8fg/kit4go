@@ -150,20 +150,28 @@ func TestConcurrency(t *testing.T) {
 	require.Equal(t, g, tr.Len())
 }
 
-func TestWithMaxKeysOption(t *testing.T) {
-	// White-box: WithMaxKeys wires maxKeys onto the Trie, and New applies it
-	// via the options loop (covers the previously-uncovered option-application
-	// branch and the WithMaxKeys constructor itself).
-	tr := New[int](WithMaxKeys[int](5))
-	require.Equal(t, 5, tr.maxKeys)
-
-	// Composing multiple options still drives the range loop body for each.
-	tr2 := New[int](WithMaxKeys[int](3), WithMaxKeys[int](7))
-	require.Equal(t, 7, tr2.maxKeys) // last option wins
-
-	// Nil-safe default: no options leaves maxKeys at its zero value (unbounded).
-	tr3 := New[int]()
-	require.Equal(t, 0, tr3.maxKeys)
+// TestNoMaxKeysCap is a regression test for the R19 P1 finding: WithMaxKeys
+// documented eviction but never implemented it. The dead option has been removed
+// entirely. This test asserts the trie is genuinely unbounded — inserting well
+// past any plausible cap must keep every key — and provides a compile-time guard:
+// any code that referenced the removed WithMaxKeys symbol fails to compile.
+//
+// If a real bounded-eviction feature is added later, replace this with an
+// explicit test of that feature; do NOT reintroduce a dead option.
+func TestNoMaxKeysCap(t *testing.T) {
+	tr := New[int]()
+	// A former WithMaxKeys(n) for small n would have evicted here. With the dead
+	// option gone, every key must survive.
+	const n = 1000
+	for i := range n {
+		tr.Insert("k"+itoa(i), i)
+	}
+	require.Equal(t, n, tr.Len(), "unbounded trie must keep all keys; WithMaxKeys was removed")
+	for i := range n {
+		v, ok := tr.Get("k" + itoa(i))
+		require.True(t, ok, "key k%d missing", i)
+		require.Equal(t, i, v)
+	}
 }
 
 func TestLongestPrefixRootFallback(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const (
@@ -241,4 +242,59 @@ func TestMachine_DuplicateRule(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for duplicate rule")
 	}
+}
+
+// TestMachine_ActionCallingBackDoesNotDeadlock is a regression test for the R19
+// P1 finding: an Action used to run while holding m.mu.Lock(), so an action that
+// called back into the machine (here m.Current(), which takes RLock) self-
+// deadlocked on sync.RWMutex (which is not reentrant). The fix runs the action
+// outside the lock. On the old code this test hangs and the -timeout kills it.
+func TestMachine_ActionCallingBackDoesNotDeadlock(t *testing.T) {
+	var seenInAction atomic.Bool
+	var stateFromInside State
+	rules := orderRules()
+	rules[1].Action = func(ctx any) error {
+		// Calling back into the machine must not deadlock. Before the fix this
+		// RLock blocks forever because the Send goroutine still holds Lock.
+		stateFromInside = m_currentForTest(t, ctx)
+		seenInAction.Store(true)
+		return nil
+	}
+	m := mustNew(t, StateIdle, rules...)
+	_ = m.Send(EventSubmit, nil)
+
+	done := make(chan error, 1)
+	go func() { done <- m.Send(EventPay, m) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Send returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Send deadlocked: action calling m.Current() blocked under the lock")
+	}
+
+	if !seenInAction.Load() {
+		t.Fatal("action did not run")
+	}
+	// The state is committed only AFTER a successful action; during the action
+	// the machine is still in `from`. The captured state reflects that.
+	if stateFromInside != StatePending {
+		t.Fatalf("state seen by action = %s, want %s (transition not yet committed)", stateFromInside, StatePending)
+	}
+	if !m.Is(StatePaid) {
+		t.Fatalf("after action success, state = %s, want %s", m.Current(), StatePaid)
+	}
+}
+
+// m_currentForTest calls Machine.Current on the *Machine carried in ctx, so the
+// action exercises the re-entrancy path that used to deadlock. It lives here
+// (not as a method) purely to thread the *testing.T for fatal diagnostics.
+func m_currentForTest(t *testing.T, ctx any) State {
+	t.Helper()
+	m, ok := ctx.(*Machine)
+	if !ok {
+		t.Fatalf("ctx must be *Machine for this test, got %T", ctx)
+	}
+	return m.Current()
 }

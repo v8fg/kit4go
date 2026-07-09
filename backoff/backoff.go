@@ -74,6 +74,17 @@ func WithJitter(j Jitter) Option { return func(b *Backoff) { b.jitter = j } }
 func WithMaxAttempts(n int) Option { return func(b *Backoff) { b.maxAttempts = n } }
 
 // New builds a Backoff with the given options applied.
+//
+// Inputs are normalised to a safe, internally-consistent configuration so that
+// no later call can panic or emit a negative delay:
+//   - factor < 1 is clamped to 1 (a factor below 1 is nonsensical for a retry
+//     backoff — it would shrink delays — and 0 would freeze the sequence at base
+//     forever; 1 yields a constant delay, the smallest useful value).
+//   - base < 0 is clamped to 0 (durations are non-negative by contract).
+//   - max < base is raised to base (the cap must not sit below the floor).
+//
+// If you need to detect invalid input rather than silently clamp, validate
+// before calling New.
 func New(opts ...Option) *Backoff {
 	b := &Backoff{
 		base:   100 * time.Millisecond,
@@ -83,6 +94,15 @@ func New(opts ...Option) *Backoff {
 	}
 	for _, opt := range opts {
 		opt(b)
+	}
+	if b.factor < 1 {
+		b.factor = 1
+	}
+	if b.base < 0 {
+		b.base = 0
+	}
+	if b.max < b.base {
+		b.max = b.base
 	}
 	b.raw = b.base
 	b.last = b.base
@@ -182,9 +202,20 @@ func (b *Backoff) Wait(ctx context.Context) error {
 }
 
 // randRange returns a uniform random duration in [lo, hi]; hi when lo>=hi.
+//
+// The span hi-lo+1 is guarded against int64 overflow. Both lo and hi are
+// non-negative durations <= math.MaxInt64, so the span hi-lo can reach but never
+// exceed MaxInt64; incrementing it would then wrap to a negative value, which
+// rand.Int64N rejects with a panic. When the span is exactly MaxInt64 it is
+// passed through unchanged (it is already the largest value rand.Int64N
+// accepts). This keeps WithMax(time.Duration(math.MaxInt64)) safe.
 func randRange(lo, hi time.Duration) time.Duration {
 	if hi <= lo {
 		return lo
 	}
-	return lo + time.Duration(rand.Int64N(int64(hi-lo+1)))
+	span := int64(hi) - int64(lo)
+	if span != math.MaxInt64 {
+		span++ // make the range inclusive of hi without wrapping
+	}
+	return lo + time.Duration(rand.Int64N(span))
 }

@@ -3,6 +3,7 @@ package backoff
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -183,4 +184,99 @@ func TestDecorrelatedGuardFloor(t *testing.T) {
 	d, ok := b.Next()
 	require.True(t, ok)
 	require.Equal(t, base, d, "floor must clamp hi to base, yielding exactly base")
+}
+
+// TestNewFactorClamp is a regression test for the R19 P2 finding: New accepted
+// any factor with no validation. A factor < 1 is nonsensical for a retry backoff
+// (it would shrink or freeze delays). factor < 1 is now clamped to 1, which
+// yields a constant delay sequence equal to base. factor=0 therefore produces
+// base on every call (not 0 forever); factor=-2 is clamped to the same 1.
+// On the old code this test FAILS: raw never advances because base*0==0, so the
+// None-jitter delays collapse to 0 after the first advance.
+func TestNewFactorClamp(t *testing.T) {
+	t.Run("factor_zero_clamped_to_constant_base", func(t *testing.T) {
+		const base = 50 * time.Millisecond
+		b := New(WithBase(base), WithFactor(0), WithJitter(JitterNone), WithMax(time.Second))
+		for range 5 {
+			d, ok := b.Next()
+			require.True(t, ok)
+			require.Equal(t, base, d, "factor=0 must clamp to 1 → constant base delay")
+			require.GreaterOrEqual(t, d, time.Duration(0), "delay must never be negative")
+		}
+	})
+	t.Run("factor_negative_clamped_to_constant_base", func(t *testing.T) {
+		const base = 50 * time.Millisecond
+		b := New(WithBase(base), WithFactor(-2), WithJitter(JitterNone), WithMax(time.Second))
+		for range 5 {
+			d, ok := b.Next()
+			require.True(t, ok)
+			require.Equal(t, base, d, "factor=-2 must clamp to 1 → constant base delay")
+		}
+	})
+}
+
+// TestNewNegativeBaseClamped is a regression test for the R19 P2 finding: New
+// accepted a negative base, which would then propagate negative delays through
+// the public API. base < 0 is now clamped to 0. On the old code the Full-jitter
+// first delay could be negative when base was negative.
+func TestNewNegativeBaseClamped(t *testing.T) {
+	b := New(WithBase(-time.Second), WithFactor(2), WithJitter(JitterNone), WithMax(time.Second))
+	require.Equal(t, time.Duration(0), b.base, "negative base must clamp to 0")
+	for range 5 {
+		d, ok := b.Next()
+		require.True(t, ok)
+		require.GreaterOrEqual(t, d, time.Duration(0), "delay must never be negative after base clamp")
+	}
+}
+
+// TestNewMaxBelowBaseRaised is a regression test for the R19 P2 finding: New
+// allowed max < base, a contradictory configuration where the cap sat below the
+// floor. max is now raised to at least base so the [base, max] interval is
+// always valid.
+func TestNewMaxBelowBaseRaised(t *testing.T) {
+	const base = 100 * time.Millisecond
+	b := New(WithBase(base), WithMax(10*time.Millisecond), WithJitter(JitterNone), WithFactor(2))
+	require.GreaterOrEqual(t, b.max, b.base, "max must be >= base")
+	require.Equal(t, base, b.max, "max below base must be raised to base")
+	for range 5 {
+		d, ok := b.Next()
+		require.True(t, ok)
+		require.GreaterOrEqual(t, d, time.Duration(0))
+	}
+}
+
+// TestRandRangeNoOverflowAtMaxInt64 is a regression test for the R19 P2 finding:
+// randRange(lo, hi) computed hi-lo+1, which overflows int64 to a negative when hi
+// is near math.MaxInt64 — and rand.Int64N panics on a negative span. The guard
+// clamps hi so the span is exactly MaxInt64. WithMax(time.Duration(MaxInt64))
+// must not panic on any jitter mode. On the old code the decorrelated path
+// (randRange(base, base*3) with base huge) or a huge Full span panicked.
+func TestRandRangeNoOverflowAtMaxInt64(t *testing.T) {
+	// Direct unit test of the overflow guard: span = hi-lo+1 must never wrap.
+	t.Run("direct_huge_hi_no_panic", func(t *testing.T) {
+		lo := time.Duration(0)
+		hi := time.Duration(math.MaxInt64) // lo..hi span = MaxInt64+1 → overflows unguarded
+		// Must not panic; result stays within [lo, hi].
+		d := randRange(lo, hi)
+		require.GreaterOrEqual(t, d, lo)
+		require.LessOrEqual(t, d, hi)
+	})
+
+	// End-to-end: every jitter mode survives WithMax(MaxInt64) without panicking.
+	jitters := []Jitter{JitterNone, JitterFull, JitterEqual, JitterDecorrelated}
+	for _, j := range jitters {
+		require.NotPanics(t, func() {
+			b := New(
+				WithBase(time.Duration(math.MaxInt64/4)), // large base → huge spans
+				WithMax(time.Duration(math.MaxInt64)),
+				WithFactor(2),
+				WithJitter(j),
+			)
+			for range 10 {
+				d, ok := b.Next()
+				require.True(t, ok)
+				require.GreaterOrEqual(t, d, time.Duration(0), "delay must never be negative")
+			}
+		}, "jitter %d must not panic at WithMax(MaxInt64)", j)
+	}
 }

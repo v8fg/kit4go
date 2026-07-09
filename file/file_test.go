@@ -122,6 +122,19 @@ func TestCopyFile(t *testing.T) {
 		convey.So(file.IsFile(filepath.Join(td, "dir2", "foo2")), convey.ShouldBeTrue)
 	})
 
+	// Regression: CopyFile silently returned a nil error when the source was a
+	// non-regular file (directory/device/socket) because the original condition
+	// `err != nil || !srcInfo.Mode().IsRegular()` returned the (nil) err for the
+	// non-regular branch. It must now surface an explicit error instead.
+	convey.Convey("TestCopyFileNonRegularSrcReturnsError", t, func() {
+		src := filepath.Join(td, "a_directory")
+		convey.So(os.MkdirAll(src, 0755), convey.ShouldBeNil)
+		err := file.CopyFile(src, filepath.Join(td, "dst_nonregular"))
+		convey.So(err, convey.ShouldBeError)
+		convey.So(err.Error(), convey.ShouldContainSubstring, "is not a regular file")
+		convey.So(file.IsExist(filepath.Join(td, "dst_nonregular")), convey.ShouldBeFalse)
+	})
+
 	// error-path coverage (gomonkey replaced by mockery mock injection).
 	convey.Convey("TestCopyFileStatError", t, func() {
 		src := filepath.Join(td, "err_src_stat")

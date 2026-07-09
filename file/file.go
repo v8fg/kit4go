@@ -45,10 +45,16 @@ func IsExist(path string) bool {
 
 // CopyFile copies a file from source to dest. Any existing file will be overwritten
 // and attributes will be ignored.
+//
+// Non-regular source entries (directories, devices, sockets, etc.) are rejected
+// with an explicit error rather than silently returning nil.
 func CopyFile(src string, dst string) (err error) {
 	var srcInfo fs.FileInfo
-	if srcInfo, err = DefaultFS.Stat(src); err != nil || !srcInfo.Mode().IsRegular() {
+	if srcInfo, err = DefaultFS.Stat(src); err != nil {
 		return err
+	}
+	if !srcInfo.Mode().IsRegular() {
+		return fmt.Errorf("file: source %q is not a regular file", src)
 	}
 
 	srcFh, err := DefaultFS.Open(src)
