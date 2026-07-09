@@ -581,7 +581,13 @@ func (k *KafkaWriter) drainSpill() {
 // guarding against the typed-nil-interface gotcha (a non-nil interface holding
 // a nil pointer).
 func (k *KafkaWriter) producerNotNil() bool {
-	return k.producer != nil && !reflect.ValueOf(k.producer).IsNil()
+	if k.producer == nil {
+		return false
+	}
+	v := reflect.ValueOf(k.producer)
+	// Only pointer and interface kinds can be nil; a struct value is non-nil
+	// by construction. reflect.Value.IsNil panics on non-nilable kinds.
+	return v.Kind() != reflect.Ptr && v.Kind() != reflect.Interface || !v.IsNil()
 }
 
 // daemon forwards channel messages to the producer and periodically drains the

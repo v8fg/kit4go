@@ -2,6 +2,7 @@ package log4go
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -57,11 +58,18 @@ func (LogAlertSink) Close() error { return nil }
 // Returns the Content-Type and the request body.
 type AlertFormatter func(level AlertLevel, kind, text string) (contentType string, body []byte)
 
+// jsonQuote returns a JSON-quoted string (safe for control bytes, unlike %q
+// which emits \xNN that JSON forbids). Used by the webhook formatters below.
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 // LarkTextFormatter formats a Lark/Feishu text post.
 func LarkTextFormatter(_ string) AlertFormatter {
 	return func(level AlertLevel, kind, text string) (string, []byte) {
 		msg := fmt.Sprintf("[log4go] %s %s: %s", level, kind, text)
-		return "application/json", []byte(fmt.Sprintf(`{"msg_type":"text","content":{"text":%q}}`, msg))
+		return "application/json", []byte(`{"msg_type":"text","content":{"text":` + jsonQuote(msg) + `}}`)
 	}
 }
 
@@ -69,7 +77,7 @@ func LarkTextFormatter(_ string) AlertFormatter {
 func DingtalkTextFormatter(_ string) AlertFormatter {
 	return func(level AlertLevel, kind, text string) (string, []byte) {
 		msg := fmt.Sprintf("[log4go] %s %s: %s", level, kind, text)
-		return "application/json", []byte(fmt.Sprintf(`{"msgtype":"text","text":{"content":%q}}`, msg))
+		return "application/json", []byte(`{"msgtype":"text","text":{"content":` + jsonQuote(msg) + `}}`)
 	}
 }
 
@@ -77,7 +85,7 @@ func DingtalkTextFormatter(_ string) AlertFormatter {
 func WechatTextFormatter(_ string) AlertFormatter {
 	return func(level AlertLevel, kind, text string) (string, []byte) {
 		msg := fmt.Sprintf("[log4go] %s %s: %s", level, kind, text)
-		return "application/json", []byte(fmt.Sprintf(`{"msgtype":"text","text":{"content":%q}}`, msg))
+		return "application/json", []byte(`{"msgtype":"text","text":{"content":` + jsonQuote(msg) + `}}`)
 	}
 }
 

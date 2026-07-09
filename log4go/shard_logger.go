@@ -1,6 +1,7 @@
 package log4go
 
 import (
+	"fmt"
 	"log"
 	"runtime"
 	"sync"
@@ -133,11 +134,12 @@ func (s *ShardLogger) ShardCount() int { return len(s.loggers) }
 // its own independent instance.
 func (s *ShardLogger) Register(w Writer) {
 	if len(s.loggers) > 1 {
-		if _, ok := w.(*FileWriter); ok {
-			panic("log4go: ShardLogger(n>1).Register(*FileWriter) is not allowed — the " +
-				"writer would be shared across shards, racing its bufio/file/daemon and " +
-				"corrupting output. Use RegisterFunc(func() Writer { ... }) to build an " +
-				"independent FileWriter per shard.")
+		switch w.(type) {
+		case *FileWriter, *KafkaWriter, *NetWriter:
+			panic(fmt.Sprintf("log4go: ShardLogger(n>1).Register(%T) is not allowed — the "+
+				"writer would be shared across shards, racing its daemon/channel and "+
+				"corrupting output. Use RegisterFunc(func() Writer { ... }) to build an "+
+				"independent %T per shard.", w, w))
 		}
 	}
 	for _, l := range s.loggers {
