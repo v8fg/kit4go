@@ -52,6 +52,11 @@ func (s *franzConsumerGroup) Consume(ctx context.Context, topics []string, handl
 	if s.cl == nil {
 		kopts := kgoConsumerGroupOpts(s.opts)
 		kopts = append(kopts, kgo.ConsumeTopics(topics...))
+		// Wire rebalance counter into the OnRebalance hook (monitoring parity
+		// with sarama). kgo.OnRebalance fires on assign/revoke/read-claim.
+		kopts = append(kopts, kgo.OnRebalance(func(_ context.Context, _ *kgo.Client, _ kgo.GroupCommitter) {
+			s.rebalance.Add(1)
+		}))
 		cl, err := kgo.NewClient(kopts...)
 		if err != nil {
 			s.clMu.Unlock()
