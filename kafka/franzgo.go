@@ -103,6 +103,8 @@ func kgoSyncProducerOpts(o Options) []kgo.Opt {
 // kgoConsumerGroupOpts builds kgo client options for a consumer group.
 // AutoCommitMarks + MarkCommitRecords on ACK gives at-least-once (NACK = not
 // marked = re-delivered next session), matching the sarama backend's semantics.
+// OnRebalance hooks into franz-go's internal rebalance to increment the counter
+// (matching the sarama backend's monitoring parity).
 func kgoConsumerGroupOpts(o Options) []kgo.Opt {
 	// Map the initial offset (OffsetNewest/Oldest) to the kgo reset offset.
 	var reset kgo.Offset

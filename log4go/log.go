@@ -498,7 +498,8 @@ type Logger struct {
 	// a retiring logger drops in-flight records instead of racing a channel close.
 	// Shared by pointer-value across a clone tree (like c), so retiring the root
 	// retires every child. records is NEVER closed.
-	quit chan struct{}
+	quit     chan struct{}
+	closeOnce sync.Once
 
 	layout          atomic.Pointer[string]
 	level           atomic.Int32
@@ -792,6 +793,14 @@ func Metrics() LoggerMetrics { return defaultLogger().Metrics() }
 
 // Close close logger
 func (l *Logger) Close() {
+	// Idempotent: Panic→Recover or defer Close + explicit Close on the same
+	// logger would double-close quit (panic). sync.Once gates the teardown.
+	l.closeOnce.Do(func() {
+		l.closeInternal()
+	})
+}
+
+func (l *Logger) closeInternal() {
 	// Retire the logger by closing quit (NOT records): concurrent senders select
 	// on quit and drop instead of racing a channel close, so Reload/Close under
 	// traffic is race-free and panic-free. The bootstrap drains in-flight records
