@@ -133,6 +133,7 @@ func New(opts ...Option) (*Client, error) {
 			MinIdleConns:  o.MinIdleConns,
 			MaxRetries:    o.MaxRetries,
 			TLSConfig:     o.TLSConfig,
+			ClientName:    o.ClientName,
 		}
 		c := goredis.NewFailoverClient(failover)
 		return &Client{cmd: c, own: true, opts: o}, nil
@@ -148,6 +149,7 @@ func New(opts ...Option) (*Client, error) {
 			MinIdleConns: o.MinIdleConns,
 			MaxRetries:   o.MaxRetries,
 			TLSConfig:    o.TLSConfig,
+			ClientName:   o.ClientName,
 		}
 		c := goredis.NewClusterClient(co)
 		return &Client{cmd: c, own: true, opts: o}, nil
