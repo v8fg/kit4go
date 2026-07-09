@@ -11,6 +11,8 @@ package shortlink
 import (
 	"crypto/rand"
 	"errors"
+	"fmt"
+	"math"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -25,10 +27,18 @@ var ErrEmptyURL = errors.New("shortlink: url is required")
 // ErrCollision is returned by Store.Save when the code already exists.
 var ErrCollision = errors.New("shortlink: code collision")
 
+// ErrCodeSpaceExhausted is returned by Generate when the configured retry
+// count is exhausted and every attempt collided. Distinct from a generic
+// ErrCollision, it signals that the code space is filling up — callers should
+// increase the code length (WithCodeLength) or widen the alphabet. A code space
+// is "saturated" when collisions dominate because nearly all codes are taken.
+var ErrCodeSpaceExhausted = errors.New("shortlink: code space exhausted (increase code length)")
+
 const (
 	// Alphabet is the default base62 character set for code generation.
 	Alphabet       = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	defaultCodeLen = 6
+	defaultRetries = 3
 )
 
 // Store is the backing store for code→URL mappings. Implementations must be
@@ -48,6 +58,7 @@ type config struct {
 	codeLen  int
 	alphabet string
 	store    Store
+	retries  int
 }
 
 // WithCodeLength sets the random code length (default 6). Ignored by IDShortener
@@ -60,11 +71,27 @@ func WithCodeLength(n int) Option {
 	}
 }
 
-// WithAlphabet overrides the base62 alphabet (must be non-empty and unique).
+// WithAlphabet overrides the base62 alphabet. The alphabet must be non-empty,
+// have at least two characters, and contain NO duplicate characters — duplicates
+// break the Encode/Decode bijection (two codes would map to the same ID and
+// vice versa). If s is too short or contains duplicates the option is ignored
+// and the default Alphabet is used.
 func WithAlphabet(s string) Option {
 	return func(c *config) {
-		if len(s) > 1 {
+		if len(s) > 1 && uniqueChars(s) {
 			c.alphabet = s
+		}
+	}
+}
+
+// WithRetries sets the number of collision retries Generate attempts before
+// returning ErrCodeSpaceExhausted (default 3). A retry re-draws a fresh random
+// code after a collision. Raise this for larger code spaces with occasional
+// collisions; the value is clamped to >= 0.
+func WithRetries(n int) Option {
+	return func(c *config) {
+		if n >= 0 {
+			c.retries = n
 		}
 	}
 }
@@ -72,6 +99,20 @@ func WithAlphabet(s string) Option {
 // WithStore sets the backing store (default: in-memory).
 func WithStore(s Store) Option {
 	return func(c *config) { c.store = s }
+}
+
+// uniqueChars reports whether every byte in s is distinct. Alphabets in this
+// package are ASCII (the default Alphabet is ASCII), so a byte-level check is
+// sufficient and allocation-free.
+func uniqueChars(s string) bool {
+	seen := make(map[byte]struct{}, len(s))
+	for i := range len(s) {
+		if _, dup := seen[s[i]]; dup {
+			return false
+		}
+		seen[s[i]] = struct{}{}
+	}
+	return true
 }
 
 func defaults(c *config) {
@@ -83,6 +124,9 @@ func defaults(c *config) {
 	}
 	if c.store == nil {
 		c.store = NewMemoryStore()
+	}
+	if c.retries <= 0 {
+		c.retries = defaultRetries
 	}
 }
 
@@ -102,12 +146,15 @@ func New(opts ...Option) *Shortener {
 		opt(&c)
 	}
 	defaults(&c)
-	return &Shortener{cfg: c, retries: 3}
+	return &Shortener{cfg: c, retries: c.retries}
 }
 
 // Generate creates a short code for url and stores it. On a code collision (a
-// Save failure indicating the code exists), it retries up to 3 times with a new
-// random code before returning the store's error.
+// Save failure indicating the code exists), it retries with a new random code
+// up to s.retries times (default 3, configurable via WithRetries). If every
+// attempt collides, Generate returns ErrCodeSpaceExhausted — a signal that the
+// code space is filling up and the code length should be increased. A
+// non-collision store error is returned immediately without retry.
 func (s *Shortener) Generate(url string) (string, error) {
 	if url == "" {
 		return "", ErrEmptyURL
@@ -127,7 +174,11 @@ func (s *Shortener) Generate(url string) (string, error) {
 		}
 		lastErr = err
 	}
-	return "", lastErr
+	// All retries exhausted on collisions: the code space is saturated. Wrap
+	// the underlying ErrCollision so callers can errors.Is either, while the
+	// distinct ErrCodeSpaceExhausted sentinel lets them tell saturation from a
+	// one-off collision they might otherwise retry manually.
+	return "", fmt.Errorf("%w: %w", ErrCodeSpaceExhausted, lastErr)
 }
 
 // Resolve returns the original URL for a code, or ErrNotFound.
@@ -165,9 +216,12 @@ type IDShortener struct {
 }
 
 // NewIDShortener builds an ID-based shortener. startID sets the initial counter
-// (use a non-zero value to avoid very short codes at the beginning).
+// (use a non-zero value to avoid very short codes at the beginning). The
+// alphabet must have at least two characters and contain NO duplicate
+// characters — duplicates break the Encode/Decode bijection. If alphabet is too
+// short or contains duplicates, the default Alphabet is used.
 func NewIDShortener(alphabet string, startID uint64) *IDShortener {
-	if len(alphabet) <= 1 {
+	if len(alphabet) <= 1 || !uniqueChars(alphabet) {
 		alphabet = Alphabet
 	}
 	s := &IDShortener{alphabet: alphabet}
@@ -207,7 +261,9 @@ func encodeBaseN(id uint64, alphabet string) string {
 	return string(buf[i:])
 }
 
-// decodeBaseN converts a base-N string back to uint64.
+// decodeBaseN converts a base-N string back to uint64. It rejects codes whose
+// value would overflow uint64 (e.g. a base62 code longer than ~11 characters
+// from a non-cooperative source) instead of silently wrapping.
 func decodeBaseN(code, alphabet string) (uint64, error) {
 	n := uint64(len(alphabet))
 	index := make(map[byte]uint64, n)
@@ -220,6 +276,12 @@ func decodeBaseN(code, alphabet string) (uint64, error) {
 		if !ok {
 			return 0, errors.New("shortlink: invalid character in code")
 		}
+		// Overflow guard: result = result*n + val must not exceed MaxUint64.
+		// Check before the multiply to avoid wrapping. (n >= 2 always here —
+		// callers validate alphabet length — so the division is safe.)
+		if result > (math.MaxUint64-val)/n {
+			return 0, errors.New("shortlink: code overflows uint64")
+		}
 		result = result*n + val
 	}
 	return result, nil
@@ -231,7 +293,11 @@ func decodeBaseN(code, alphabet string) (uint64, error) {
 // the Store contract.
 var _ Store = (*MemoryStore)(nil)
 
-// MemoryStore is an in-memory, concurrent-safe Store.
+// MemoryStore is an in-memory, concurrent-safe Store. It is UNBOUNDED — there
+// is no max-entries cap, so runaway Generate loops (or a saturating code space)
+// will grow it without limit. MemoryStore is intended for dev/test and small,
+// known key sets; for production, back the Shortener with a bounded Store
+// (Redis, a DB, or any implementation that enforces a ceiling).
 type MemoryStore struct {
 	mu sync.RWMutex
 	m  map[string]string

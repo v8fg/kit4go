@@ -38,8 +38,9 @@ c := lru.New[string, *Bidder](
 
 - **Recency**: `Get` and `Set` promote; `Peek`/`Contains` do not.
 - **Eviction**: strict LRU when over `MaxSize`; `OnEvicted` fires once per
-  departure (eviction, delete, expiry, purge, resize). It runs under the cache
-  lock — keep it cheap.
+  departure (eviction, delete, expiry, purge, resize). It runs WITHOUT the cache
+  lock held, so it may safely call back into the cache (Get/Set/...). Keep it
+  cheap; it runs on the caller's goroutine.
 - **Expiry**: lazy — checked on access and on `DeleteExpired`/`Purge`. There is
   no sweeper goroutine, so expired entries occupy memory until touched. Call
   `DeleteExpired` periodically if that matters.
