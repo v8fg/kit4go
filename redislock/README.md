@@ -48,9 +48,10 @@ defer lock.Release(ctx)
   never deletes or extends a lock that has expired and been re-acquired by
   someone else.
 - **Auto-renew** runs a goroutine that extends the TTL every `renewInterval`
-  until `Release`. If a renewal fails (TTL expired first / key removed),
-  `Lock.Lost()` closes and `OnLost` fires — the critical section must treat the
-  lock as gone.
+  until `Release`. If a renewal fails — including transient network errors
+  (fail-closed to prevent split-brain) — `Lock.Lost()` closes and `OnLost`
+  fires. **If you enable auto-renew, you MUST consume `Lost()` or set `OnLost`;
+  an unconsumed loss means your critical section continues without the lock.**
 
 ## Single-instance note
 
