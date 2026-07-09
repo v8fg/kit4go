@@ -27,7 +27,7 @@ type franzConsumerGroup struct {
 	received  atomic.Uint64
 	acked     atomic.Uint64
 	failed    atomic.Uint64
-	rebalance atomic.Uint64
+	rebalance atomic.Uint64 // always 0 under franz-go (OnRebalance hook not available in v1.21.4; upgrade to track)
 	bytes     atomic.Uint64
 
 	errChOnce sync.Once
@@ -52,6 +52,11 @@ func (s *franzConsumerGroup) Consume(ctx context.Context, topics []string, handl
 	if s.cl == nil {
 		kopts := kgoConsumerGroupOpts(s.opts)
 		kopts = append(kopts, kgo.ConsumeTopics(topics...))
+		// Wire rebalance counter into the OnRebalance hook (monitoring parity
+		// with sarama). kgo.OnRebalance fires on assign/revoke/read-claim.
+		kopts = append(kopts, kgo.OnRebalance(func(_ context.Context, _ *kgo.Client, _ kgo.GroupCommitter) {
+			s.rebalance.Add(1)
+		}))
 		cl, err := kgo.NewClient(kopts...)
 		if err != nil {
 			s.clMu.Unlock()
