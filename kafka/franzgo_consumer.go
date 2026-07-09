@@ -27,7 +27,7 @@ type franzConsumerGroup struct {
 	received  atomic.Uint64
 	acked     atomic.Uint64
 	failed    atomic.Uint64
-	rebalance atomic.Uint64
+	rebalance atomic.Uint64 // always 0 under franz-go (OnRebalance hook not available in v1.21.4; upgrade to track)
 	bytes     atomic.Uint64
 
 	errChOnce sync.Once
