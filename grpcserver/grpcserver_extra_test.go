@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/v8fg/kit4go/grpcserver"
 )
@@ -83,4 +85,60 @@ func TestServe_ListenError(t *testing.T) {
 	err = s.Serve()
 	require.Error(t, err)
 	require.False(t, errors.Is(err, grpcserver.ErrNoListener))
+}
+
+// TestStart_DoubleCallReturnsError (R16) confirms the idempotency guard: a
+// second Start on the same Server returns ErrAlreadyStarted immediately
+// instead of blocking forever on the already-served listener.
+//
+// To make the test deterministic (the two Start calls must not race for the
+// CAS), we first prove the first Start has genuinely entered Serve by dialing
+// it, and only then invoke the second Start synchronously from the test
+// goroutine.
+func TestStart_DoubleCallReturnsError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	addr := ln.Addr().String()
+
+	s := grpcserver.NewWithListener(ln)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- s.Start(ctx) }()
+
+	// Prove the first Start has entered Serve by establishing a real client
+	// connection. A successful dial guarantees the listener is being served
+	// and therefore startGuard has been flipped by the first Start.
+	cc, derr := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, derr)
+	// Force the connection to actually attempt a handshake so the dial blocks
+	// until the server is reachable, then close it.
+	connCtx, connCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer connCancel()
+	_ = cc.Invoke(connCtx, "/noop.Noop/None", &empty{}, &bytes{}) // expected to fail; we only needed the dial
+	cc.Close()
+
+	// Now the second Start must return immediately, not block.
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- s.Start(ctx) }()
+	select {
+	case secondErr := <-secondDone:
+		require.ErrorIs(t, secondErr, grpcserver.ErrAlreadyStarted,
+			"second Start must return ErrAlreadyStarted, not block or serve")
+	case <-time.After(5 * time.Second):
+		t.Fatal("second Start did not return (would block forever without the guard)")
+	}
+
+	// Let the first Start finish cleanly.
+	cancel()
+	select {
+	case firstErr := <-firstDone:
+		// The first Start must NOT be the one rejected as a duplicate.
+		require.False(t, errors.Is(firstErr, grpcserver.ErrAlreadyStarted),
+			"first Start must not be mistaken for a duplicate: %v", firstErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first Start did not return after cancel")
+	}
 }

@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+// MaxRequestIDLen bounds the size of a client-supplied X-Request-ID. Incoming
+// IDs longer than this are discarded (a fresh ID is generated) to keep clients
+// from polluting logs/metrics with megabyte-scale header values.
+const MaxRequestIDLen = 128
+
 // --- Request ID ---
 
 // ContextKey is the context key for the request ID.
@@ -25,17 +30,43 @@ const HeaderRequestID = "X-Request-ID"
 
 // RequestID generates a request ID (if absent) and propagates it via the
 // X-Request-ID header and context. If the incoming request already carries the
-// header, it is preserved (allows cross-service propagation).
+// header, it is preserved (allows cross-service propagation) — but only when it
+// is well-formed: at most MaxRequestIDLen bytes and matching the request-ID
+// charset [A-Za-z0-9._-]. An oversized or otherwise malformed client ID is
+// dropped and a fresh ID is generated, preventing a hostile or buggy client
+// from echoing megabytes of arbitrary data into logs, metrics, and downstream
+// response headers.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(HeaderRequestID)
-		if id == "" {
+		if id == "" || !validRequestID(id) {
 			id = generateID()
 			r.Header.Set(HeaderRequestID, id)
 		}
 		w.Header().Set(HeaderRequestID, id)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ContextKey{}, id)))
 	})
+}
+
+// validRequestID reports whether id is an acceptable client-supplied request
+// ID: non-empty, within MaxRequestIDLen bytes, and charset-restricted to
+// [A-Za-z0-9._-]. Anything else is treated as absent and replaced.
+func validRequestID(id string) bool {
+	if len(id) == 0 || len(id) > MaxRequestIDLen {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= 'a' && c <= 'z',
+			c >= 'A' && c <= 'Z',
+			c >= '0' && c <= '9',
+			c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // FromContext extracts the request ID from a context (set by RequestID middleware).
@@ -59,7 +90,15 @@ type AllowFunc func() bool
 // RateLimit returns middleware that checks allow before each request. If allow
 // returns false, the response is 429 Too Many Requests. Optionally set a custom
 // Retry-After header via retryAfter (0 = omit).
+//
+// allow must be non-nil; a nil AllowFunc would panic on the first request.
+// RateLimit panics at construction with a clear message instead of deferring
+// the failure to request time (matching the Must-style convention of other kit
+// constructors).
 func RateLimit(allow AllowFunc, retryAfter int) func(http.Handler) http.Handler {
+	if allow == nil {
+		panic("middleware: RateLimit requires a non-nil AllowFunc")
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !allow() {
@@ -117,6 +156,14 @@ func CORS(cfg CORSConfig) func(http.Handler) http.Handler {
 			// origin instead so browsers accept it with credentials.
 			if creds && allowOrigin == "*" && origin != "" {
 				allowOrigin = origin
+			}
+			// Whenever the response ACAO is not the literal "*" — i.e. the origin
+			// is reflected per request (allowlist match or credentials echo) — the
+			// cached response varies by Origin. Emit Vary: Origin so a CDN/proxy
+			// cache does not serve a wrong-origin response. ("Add", not "Set", so
+			// other Vary tokens set by downstream middleware are preserved.)
+			if allowOrigin != "*" {
+				w.Header().Add("Vary", "Origin")
 			}
 			w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 			w.Header().Set("Access-Control-Allow-Methods", methodStr)

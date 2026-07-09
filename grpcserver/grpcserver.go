@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -31,6 +32,12 @@ type Server struct {
 	opts       []grpc.ServerOption
 	shutdownTO time.Duration
 	maxRecv    int
+
+	// startGuard is set to true exactly once via CompareAndSwap on the first
+	// Start call, so any later Start returns ErrAlreadyStarted immediately
+	// instead of blocking forever on the same listener (grpc.Server.Serve
+	// cannot be re-entered after GracefulStop).
+	startGuard atomic.Bool
 }
 
 // Option configures the Server.
@@ -59,6 +66,17 @@ func WithGRPCOption(o grpc.ServerOption) Option {
 
 // ErrNoListener is returned by Start/Serve when no listener is bound.
 var ErrNoListener = errors.New("grpcserver: no listener")
+
+// ErrShutdownTimeout is returned by Start when GracefulStop does not complete
+// within the shutdown budget (see WithShutdownTimeout) and the server is force
+// stopped. Match with errors.Is.
+var ErrShutdownTimeout = errors.New("grpcserver: graceful stop timed out")
+
+// ErrAlreadyStarted is returned by a second Start call on the same Server.
+// Start must be called exactly once; the underlying grpc.Server.Serve cannot be
+// re-entered after GracefulStop, so a second Start returns this error
+// immediately instead of blocking forever on the same listener.
+var ErrAlreadyStarted = errors.New("grpcserver: Start already called")
 
 // New builds a Server that will listen on addr. Pass "" to defer binding.
 func New(addr string, opts ...Option) *Server {
@@ -128,8 +146,17 @@ func (s *Server) Addr() string {
 }
 
 // Start serves and blocks until ctx is done, then gracefully stops within
-// shutdownTO. Returns nil on clean stop, an error on timeout.
+// shutdownTO. Returns nil on clean stop, ErrShutdownTimeout on timeout.
+//
+// Start must be called exactly once per Server. A second call (including a
+// concurrent one) returns ErrAlreadyStarted immediately instead of blocking
+// forever on the same listener (grpc.Server.Serve cannot be re-entered after
+// GracefulStop).
 func (s *Server) Start(ctx context.Context) error {
+	// Exactly one caller wins the CAS and proceeds to Serve.
+	if !s.startGuard.CompareAndSwap(false, true) {
+		return ErrAlreadyStarted
+	}
 	if s.listener == nil {
 		if s.listenErr != nil {
 			return s.listenErr
@@ -150,7 +177,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return nil
 	case <-time.After(s.shutdownTO):
 		s.gs.Stop()
-		return errors.New("grpcserver: graceful stop timed out")
+		return ErrShutdownTimeout
 	}
 }
 

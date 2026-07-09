@@ -11,11 +11,16 @@ Composable HTTP middleware for `net/http` / `httpserver`. Each is a `func(http.H
 
 ## Example
 
+CORS must wrap RateLimit so CORS preflight (OPTIONS) is answered before any
+rate limit is applied (otherwise a rate-limited client gets a 429 instead of
+the expected 204 preflight). RequestID stays outermost so even rate-limited
+requests carry an ID.
+
 ```go
 handler := middleware.RequestID(
-    middleware.RateLimit(limiter.Allow, 5)(
-        middleware.CORS(middleware.CORSConfig{
-            AllowOrigins: []string{"https://app.example.com"},
-        })(myHandler)))
+    middleware.CORS(middleware.CORSConfig{
+        AllowOrigins: []string{"https://app.example.com"},
+    })(
+        middleware.RateLimit(limiter.Allow, 5)(myHandler)))
 http.ListenAndServe(":8080", handler)
 ```

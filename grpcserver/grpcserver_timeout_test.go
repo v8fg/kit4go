@@ -80,7 +80,8 @@ func TestStart_ShutdownTimeoutDeterministic(t *testing.T) {
 	select {
 	case err := <-done:
 		require.Error(t, err, "Start should time out GracefulStop and return an error")
-		require.Contains(t, err.Error(), "timed out")
+		require.ErrorIs(t, err, grpcserver.ErrShutdownTimeout,
+			"timeout error must match the ErrShutdownTimeout sentinel")
 	case <-time.After(5 * time.Second):
 		t.Fatal("Start did not return after cancel with in-flight RPC")
 	}

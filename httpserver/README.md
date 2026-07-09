@@ -51,7 +51,7 @@ Pair with the rest of kit4go for a complete request-processing pipeline:
 
 ## Testing
 
-94% statement coverage, `-race` clean. Covers start+serve round-trip, middleware
+100% statement coverage, `-race` clean. Covers start+serve round-trip, middleware
 chain ordering (before/after), graceful shutdown with in-flight request, addr-
 required guard, custom timeout config, HTTPServer exposure, Shutdown method, Close
 no-op, and body passthrough.

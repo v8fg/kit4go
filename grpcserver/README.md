@@ -32,11 +32,12 @@ if err := srv.Start(ctx); err != nil { log.Fatal(err) }
 
 ## Testing
 
-80% statement coverage, `-race` clean, via `bufconn` (in-process gRPC, no real
+100% statement coverage, `-race` clean, via `bufconn` (in-process gRPC, no real
 listener). Covers new-with-addr, new-with-listener, start+serve+lifecycle
 (graceful stop on ctx cancel), no-listener guard, deferred Bind, GracefulStop
 idempotency, custom options (interceptors + message size), Serve directly,
-and RegisterService.
+RegisterService, deterministic GracefulStop timeout, bind-failure surfacing,
+and Start double-call idempotency (`ErrAlreadyStarted`).
 
 ```bash
 go test -race -cover ./...
