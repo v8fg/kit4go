@@ -498,7 +498,7 @@ type Logger struct {
 	// a retiring logger drops in-flight records instead of racing a channel close.
 	// Shared by pointer-value across a clone tree (like c), so retiring the root
 	// retires every child. records is NEVER closed.
-	quit     chan struct{}
+	quit      chan struct{}
 	closeOnce sync.Once
 
 	layout          atomic.Pointer[string]
