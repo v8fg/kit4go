@@ -78,7 +78,11 @@ func WithRetryInterval(d time.Duration) Option { return func(o *options) { o.ret
 func WithWaitTimeout(d time.Duration) Option { return func(o *options) { o.waitTimeout = d } }
 
 // WithToken sets an explicit owner token instead of a random one. Use only when
-// you need a stable identity across re-acquisitions.
+// you need a stable identity across re-acquisitions by the SAME holder. The
+// token MUST be unique per active holder — sharing it across concurrent locks
+// on the same key defeats the Lua ownership guard: a stale Release from holder
+// A would pass the GET==token check and delete holder B's lock (split-brain).
+// For distinct holders, use the default random token (crypto/rand 16 bytes).
 func WithToken(token string) Option { return func(o *options) { o.token = token } }
 
 // WithAutoRenew enables a heartbeat goroutine that extends the TTL while the
@@ -299,7 +303,9 @@ func (l *Lock) startRenewer(ctx context.Context) {
 // Release deleting the key under an in-flight Refresh (or cancelling the ctx),
 // not a real loss, and must NOT fire onLost. Lost() is closed AFTER onLost (via
 // defer) so the callback's effects are happens-before the close, AND it still
-// closes if onLost panics.
+// closes if onLost panics (the recover ensures a panicking callback does not
+// crash the host process — the renewer is a library-owned goroutine per the
+// kit4go callback convention).
 func (l *Lock) handleLoss(err error) {
 	select {
 	case <-l.stop:
@@ -307,6 +313,15 @@ func (l *Lock) handleLoss(err error) {
 	default:
 	}
 	defer l.lostOnce.Do(func() { close(l.lost) }) // closes even if onLost panics
+	defer func() {
+		if r := recover(); r != nil {
+			// A panicking onLost must not crash the host. The lostOnce defer
+			// above still runs (defers execute in LIFO order: recover first,
+			// then close). The panic is swallowed — the renewer goroutine
+			// exits cleanly after this function returns.
+			_ = r
+		}
+	}()
 	if l.onLost != nil {
 		l.onLost(err) // runs before close: its effects are happens-before Lost()
 	}
