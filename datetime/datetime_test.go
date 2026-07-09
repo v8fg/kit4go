@@ -151,8 +151,9 @@ func TestAddDurationStr(t *testing.T) {
 	}
 }
 
-// TestDeltaDateDay covers DeltaDateDays integer-day counting, including the
-// same-day (1) and span-into-next-day (2) cases.
+// TestDeltaDateDay covers DeltaDateDays signed, symmetric day counting. Each
+// side snaps to midnight, so a same-day pair is 0 and a next-day pair is 1;
+// swapping the arguments flips only the sign.
 func TestDeltaDateDay(t *testing.T) {
 	type args struct {
 		start time.Time
@@ -164,16 +165,28 @@ func TestDeltaDateDay(t *testing.T) {
 		want int
 	}{
 		{
-			name: "", args: args{
+			name: "same-day", args: args{
 				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
 				end:   time.Date(2022, 2, 28, 1, 0, 0, 0, time.UTC),
+			}, want: 0,
+		},
+		{
+			name: "next-day", args: args{
+				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 3, 1, 23, 59, 59, 999999999, time.UTC),
 			}, want: 1,
 		},
 		{
-			name: "", args: args{
-				start: time.Date(2022, 2, 28, 0, 0, 0, 0, time.UTC),
-				end:   time.Date(2022, 3, 1, 23, 59, 59, 999999999, time.UTC),
-			}, want: 2,
+			name: "five-day-forward", args: args{
+				start: time.Date(2022, 6, 15, 0, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 6, 20, 0, 0, 0, 0, time.UTC),
+			}, want: 5,
+		},
+		{
+			name: "five-day-backward", args: args{
+				start: time.Date(2022, 6, 20, 0, 0, 0, 0, time.UTC),
+				end:   time.Date(2022, 6, 15, 0, 0, 0, 0, time.UTC),
+			}, want: -5,
 		},
 	}
 	for _, tt := range tests {
@@ -182,6 +195,27 @@ func TestDeltaDateDay(t *testing.T) {
 				t.Errorf("DeltaDateDays() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestDeltaDateDaysSymmetric guards the asymmetry bug: the old formula applied
+// EndTime(end) on one side and StartTime(start) + 1 on the other, so forward
+// 6/15->6/20 gave 6 while backward 6/20->6/15 gave -3 (magnitudes disagreed).
+// With both ends snapped to midnight and no +1, the pair must be exact
+// negatives. This test fails on the old code.
+func TestDeltaDateDaysSymmetric(t *testing.T) {
+	start := time.Date(2022, 6, 15, 10, 30, 0, 0, time.UTC)
+	end := time.Date(2022, 6, 20, 22, 0, 0, 0, time.UTC)
+	fwd := datetime.DeltaDateDays(start, end)
+	bwd := datetime.DeltaDateDays(end, start)
+	if fwd != -bwd {
+		t.Errorf("DeltaDateDays not symmetric: forward=%d, backward=%d (want exact negatives)", fwd, bwd)
+	}
+	if fwd != 5 {
+		t.Errorf("DeltaDateDays(forward 5-day span) = %d, want 5", fwd)
+	}
+	if bwd != -5 {
+		t.Errorf("DeltaDateDays(backward 5-day span) = %d, want -5", bwd)
 	}
 }
 

@@ -48,9 +48,11 @@ type Option[T any] func(*Map[T])
 func WithHash[T any](h Hash) Option[T] { return func(m *Map[T]) { m.hash = h } }
 
 // WithNodes seeds the map with nodes. Convenience for the common "construct with
-// a node list" case; equivalent to calling Add after New.
+// a node list" case; equivalent to calling Add after New. Duplicate IDs (by
+// id()) are ignored, mirroring [Add] so the "distinct nodes" contract for GetN
+// holds regardless of how nodes enter the map.
 func WithNodes[T any](nodes ...T) Option[T] {
-	return func(m *Map[T]) { m.nodes = append(m.nodes, nodes...) }
+	return func(m *Map[T]) { m.appendDedupLocked(nodes...) }
 }
 
 // New builds a rendezvous-hashing map. id must return a stable, unique string
@@ -68,13 +70,7 @@ func New[T any](id func(T) string, opts ...Option[T]) *Map[T] {
 func (m *Map[T]) Add(nodes ...T) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, n := range nodes {
-		nid := m.id(n)
-		if m.containsLocked(nid) {
-			continue
-		}
-		m.nodes = append(m.nodes, n)
-	}
+	m.appendDedupLocked(nodes...)
 }
 
 // Remove drops the node whose id() matches the given node. No-op if absent.
@@ -207,4 +203,19 @@ func (m *Map[T]) containsLocked(id string) bool {
 		}
 	}
 	return false
+}
+
+// appendDedupLocked appends nodes whose id() is not already present, skipping
+// duplicates both against the existing set and within the incoming batch. The
+// caller must hold m.mu (or be inside WithNodes, where the map is still under
+// construction and unshared). This is the single dedup path shared by Add and
+// WithNodes, so duplicate IDs can never reach m.nodes regardless of entry point.
+func (m *Map[T]) appendDedupLocked(nodes ...T) {
+	for _, n := range nodes {
+		nid := m.id(n)
+		if m.containsLocked(nid) {
+			continue
+		}
+		m.nodes = append(m.nodes, n)
+	}
 }

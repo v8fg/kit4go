@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -117,6 +118,17 @@ func RoundTrunc[T Int | Uint | Float](f T, precision int) T {
 		return f
 	}
 
+	// For integer-typed T, ParseFloat would lose precision for values whose
+	// magnitude exceeds 2^53 (e.g. RoundTrunc(int64(1<<53+1), 0) dropped to
+	// 1<<53). The string-based truncation logic above is still used to compute
+	// the result string, but we parse it back with the integer parsing path
+	// (ParseInt/ParseUint) so large integers survive losslessly. Truncating an
+	// integer at precision >= 0 is a no-op, so short-circuit and return f
+	// unchanged without any string round-trip.
+	if precision >= 0 && isIntegerKind(f) {
+		return f
+	}
+
 	sig, integer, fractional := regSplitNormalNumber(s)
 	sb := bytes.NewBufferString(sig)
 
@@ -139,11 +151,64 @@ func RoundTrunc[T Int | Uint | Float](f T, precision int) T {
 		}
 	}
 
+	// Integer types: parse the (integer) result string losslessly via the
+	// integer path instead of ParseFloat, which would corrupt magnitudes > 2^53.
+	// The negative-precision branch above always produces an integer string for
+	// integer inputs, so ParseInt/ParseUint applies.
+	if isIntegerKind(f) {
+		if v, ok := parseIntLossless[T](sb.String()); ok {
+			return v
+		}
+		// Unparseable integer string: fall through to the float path rather
+		// than silently returning a wrong zero value.
+	}
+
 	ret, _ := strconv.ParseFloat(sb.String(), 64)
 	if ret == -0 {
 		return 0
 	}
 	return T(ret)
+}
+
+// isIntegerKind reports whether f's kind is a signed or unsigned integer. It is
+// the runtime kind check backing the integer short-circuit in [RoundTrunc];
+// generics cannot express it statically without splitting the API.
+func isIntegerKind[T any](f T) bool {
+	switch reflect.TypeOf(f).Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return true
+	}
+	return false
+}
+
+// parseIntLossless parses the decimal integer string s into T without going
+// through float64, preserving magnitudes beyond 2^53. s may carry a leading
+// sign. ok is false when s is empty or the parse fails (e.g. overflow), letting
+// the caller fall back to the float path.
+func parseIntLossless[T Int | Uint | Float](s string) (T, bool) {
+	if len(s) == 0 {
+		var zero T
+		return zero, false
+	}
+	// Distinguish signed vs unsigned by the presence of a leading '-': an
+	// unsigned integer can never be negative, so signed parsing is only correct
+	// for inputs that carry (or could carry) a sign. We parse signed into int64
+	// and unsigned into uint64, then convert to T.
+	if s[0] == '-' {
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			var zero T
+			return zero, false
+		}
+		return T(v), true
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		var zero T
+		return zero, false
+	}
+	return T(v), true
 }
 
 // RoundTruncStr is like [RoundTrunc] but returns the truncated result as a

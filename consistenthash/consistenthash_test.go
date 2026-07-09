@@ -89,6 +89,34 @@ func TestAddDuplicateIgnored(t *testing.T) {
 	require.Equal(t, 1, m.Len())
 }
 
+// TestWithNodesDedup guards WithNodes against bypassing the dedup that Add
+// performs. The old WithNodes appended raw, so New(id, WithNodes("a","a","b"))
+// stored 4 entries (not 3) and GetN could hand back duplicates, breaking the
+// "distinct nodes" replication contract. This test fails on that code path.
+func TestWithNodesDedup(t *testing.T) {
+	m := New[string](strID, WithNodes("a", "a", "b", "b"))
+	require.Equal(t, 2, m.Len(), "WithNodes must dedup like Add; got %d", m.Len())
+
+	// GetN must return distinct nodes only.
+	top := m.GetN("k", 3)
+	require.Len(t, top, 2, "GetN capped at node count")
+	seen := map[string]bool{}
+	for _, n := range top {
+		require.False(t, seen[n], "GetN returned a duplicate node %q", n)
+		seen[n] = true
+	}
+}
+
+// TestWithNodesAddDedupCross confirms a node added via Add after a duplicate
+// appeared in WithNodes is still rejected — the dedup is shared, not two
+// independent stores.
+func TestWithNodesAddDedupCross(t *testing.T) {
+	m := New[string](strID, WithNodes("a", "a", "b"))
+	require.Equal(t, 2, m.Len())
+	m.Add("a", "b", "c") // "a","b" dup, "c" new
+	require.Equal(t, 3, m.Len(), "Add must dedup against WithNodes-seeded nodes")
+}
+
 func TestBalance(t *testing.T) {
 	m := New[string](strID, WithNodes("n1", "n2", "n3", "n4"))
 	counts := make(map[string]int)

@@ -598,3 +598,99 @@ func TestRoundTrunc(t *testing.T) {
 		fmt.Println(number.RoundTrunc(1234567890123456789.123456789, precisions[i]))
 	}
 }
+
+// TestRoundTruncIntegerPrecision guards the integer short-circuit: for any
+// integer-typed T with precision >= 0, truncation is a no-op and the exact
+// input must be returned losslessly. The old implementation parsed via
+// strconv.ParseFloat, which corrupted int64 magnitudes beyond 2^53 — e.g.
+// RoundTrunc(int64(1<<53+1), 0) silently became 1<<53. This test fails on that
+// code path.
+func TestRoundTruncIntegerPrecision(t *testing.T) {
+	// 1<<53+1 is the smallest integer float64 cannot represent exactly; it is
+	// the canonical boundary where ParseFloat round-tripping loses a unit.
+	const boundary = int64(1<<53 + 1) // 9007199254740993
+
+	// precision >= 0 on an integer must be a no-op, returning the exact value.
+	for _, tc := range []struct {
+		name      string
+		precision int
+	}{
+		{"precision 0", 0},
+		{"precision 1", 1},
+		{"precision 2", 2},
+	} {
+		t.Run("int64/"+tc.name, func(t *testing.T) {
+			got := number.RoundTrunc(boundary, tc.precision)
+			if got != boundary {
+				t.Errorf("RoundTrunc(int64(%d), %d) = %d; want %d (ParseFloat would give %d)",
+					boundary, tc.precision, got, boundary, int64(float64(boundary)))
+			}
+		})
+		t.Run("uint64/"+tc.name, func(t *testing.T) {
+			ub := uint64(boundary)
+			got := number.RoundTrunc(ub, tc.precision)
+			if got != ub {
+				t.Errorf("RoundTrunc(uint64(%d), %d) = %d; want %d", ub, tc.precision, got, ub)
+			}
+		})
+	}
+
+	// Negative precision truncates integer digits and must still be lossless for
+	// large integers (the result is parsed via ParseInt/ParseUint, not ParseFloat).
+	t.Run("int64/negative-precision-lossless", func(t *testing.T) {
+		// 9007199254740993 truncated at -2 digits => 9007199254740900.
+		want := int64(9007199254740900)
+		got := number.RoundTrunc(boundary, -2)
+		if got != want {
+			t.Errorf("RoundTrunc(int64(%d), -2) = %d; want %d", boundary, got, want)
+		}
+	})
+	t.Run("uint64/negative-precision-lossless", func(t *testing.T) {
+		ub := uint64(boundary)
+		want := uint64(9007199254740000) // truncated at -3 digits
+		got := number.RoundTrunc(ub, -3)
+		if got != want {
+			t.Errorf("RoundTrunc(uint64(%d), -3) = %d; want %d", ub, got, want)
+		}
+	})
+
+	// Small integers keep working for both precision signs.
+	t.Run("int/small-positive", func(t *testing.T) {
+		if got := number.RoundTrunc(1234, 0); got != 1234 {
+			t.Errorf("RoundTrunc(int 1234, 0) = %d; want 1234", got)
+		}
+		if got := number.RoundTrunc(1234, -2); got != 1200 {
+			t.Errorf("RoundTrunc(int 1234, -2) = %d; want 1200", got)
+		}
+	})
+
+	// Negative integers: sign preserved, magnitude exact.
+	t.Run("int64/negative-large", func(t *testing.T) {
+		nb := -boundary
+		if got := number.RoundTrunc(nb, 0); got != nb {
+			t.Errorf("RoundTrunc(int64(%d), 0) = %d; want %d", nb, got, nb)
+		}
+	})
+}
+
+// TestRoundTruncFloatUnchanged confirms the integer fix did not perturb the
+// float path: float inputs still round-trip through ParseFloat exactly as
+// before.
+func TestRoundTruncFloatUnchanged(t *testing.T) {
+	cases := []struct {
+		f         float64
+		precision int
+		want      float64
+	}{
+		{3.141592653589793, 2, 3.14},
+		{3.141592653589793, 0, 3},
+		{3.141592653589793, -1, 0},
+		{66, -1, 60},
+		{1.5, 0, 1},
+	}
+	for _, tc := range cases {
+		if got := number.RoundTrunc(tc.f, tc.precision); got != tc.want {
+			t.Errorf("RoundTrunc(%v, %d) = %v; want %v", tc.f, tc.precision, got, tc.want)
+		}
+	}
+}

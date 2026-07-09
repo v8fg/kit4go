@@ -229,13 +229,16 @@ func LastDateTimeOfISOWeek(t time.Time) time.Time {
 	return LastDateTimeOfWeek(t, time.Monday)
 }
 
-// DeltaDateDays returns the real integer days between the end and start.
+// DeltaDateDays returns the signed integer day count from start to end, where
+// each side is snapped to its midnight (00:00:00) boundary. The result is
+// symmetric: swapping start and end flips only the sign, so forward and
+// backward spans of the same pair agree in magnitude.
 //
 //	start: 2022-02-28 10:00:00
-//	end: 2020-03-01 09:00:00
+//	end:   2022-03-02 09:00:00
 //	delta date day: 2
 func DeltaDateDays(start, end time.Time) int {
-	return int(EndTime(end).Sub(StartTime(start)).Hours()/24.0) + 1
+	return int(StartTime(end).Sub(StartTime(start)).Hours() / 24.0)
 }
 
 // DeltaDays returns the days between the end and start.
