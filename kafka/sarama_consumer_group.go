@@ -37,6 +37,7 @@ type saramaConsumerGroup struct {
 	received  atomic.Uint64
 	acked     atomic.Uint64
 	failed    atomic.Uint64
+	recovered atomic.Uint64 // consumer handler panics recovered (observable; L5)
 	rebalance atomic.Uint64
 	bytes     atomic.Uint64
 
@@ -142,10 +143,17 @@ func (s *saramaConsumerGroup) Metrics() ConsumerMetrics {
 		Received:  s.received.Load(),
 		Acked:     s.acked.Load(),
 		Failed:    s.failed.Load(),
+		Recovered: s.recovered.Load(),
 		Rebalance: s.rebalance.Load(),
 		Bytes:     s.bytes.Load(),
 	}
 }
+
+// Recovered returns the total number of consumer-handler panics recovered since
+// the group started. A panicking handler is recovered (counted here), surfaced
+// as a "nack" ConsumerEvent, and the goroutine stays alive for the next message
+// (kit4go library-owned-worker recover convention; mirrors workerpool safeCall).
+func (s *saramaConsumerGroup) Recovered() uint64 { return s.recovered.Load() }
 
 func (s *saramaConsumerGroup) Snapshot() ConsumerSnapshot {
 	return ConsumerSnapshot{

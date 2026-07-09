@@ -17,6 +17,10 @@ import (
 // AutoCommitMarks).
 type franzConsumerGroup struct {
 	opts Options
+	// clMu guards the lazy creation of cl in Consume() against concurrent
+	// Consume/Close callers — without it the `cl == nil` check + `cl = newClient`
+	// write races, leaking or double-creating the kgo client.
+	clMu sync.Mutex
 	cl   *kgo.Client
 
 	closed    atomic.Bool
@@ -38,16 +42,24 @@ func (s *franzConsumerGroup) Consume(ctx context.Context, topics []string, handl
 	}
 	// Create the kgo client lazily here (not in the constructor) so we can wire
 	// the topics at creation time — franz-go requires ConsumeTopics at client
-	// creation for group consuming to work.
+	// creation for group consuming to work. Guard against concurrent Consume /
+	// Close racing the lazy create: only the first caller builds the client.
+	s.clMu.Lock()
+	if s.closed.Load() {
+		s.clMu.Unlock()
+		return ErrProducerClosed
+	}
 	if s.cl == nil {
 		kopts := kgoConsumerGroupOpts(s.opts)
 		kopts = append(kopts, kgo.ConsumeTopics(topics...))
 		cl, err := kgo.NewClient(kopts...)
 		if err != nil {
+			s.clMu.Unlock()
 			return err
 		}
 		s.cl = cl
 	}
+	s.clMu.Unlock()
 	for i := 0; ; i++ {
 		if ctxDone(ctx) {
 			return ctx.Err()
@@ -94,9 +106,14 @@ func (s *franzConsumerGroup) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	// Close the kgo client under clMu so a concurrent Consume() that is still
+	// racing the lazy create observes closed and returns early instead of
+	// orphaning a freshly-built client (which would never be closed).
+	s.clMu.Lock()
 	if s.cl != nil {
 		s.cl.Close()
 	}
+	s.clMu.Unlock()
 	s.fire(ConsumerEvent{Name: "close"})
 	return nil
 }
@@ -140,11 +157,26 @@ func (s *franzConsumerGroup) fire(e ConsumerEvent) {
 
 // franzPartitionConsumer consumes one partition from a fixed offset (no group,
 // no commits). Callback mode (Consume) or channel mode (Messages).
+//
+// In channel mode the pump goroutine spawned by Messages() runs on a dedicated
+// cancellable context (pumpCancel) so that Close() can stop it without leaking
+// — the pump checks ctx.Done() at the top of every iteration. The kgo client is
+// created eagerly in NewPartitionConsumer (topic/partition are known at
+// construction) and never reassigned, so it needs no creation-time guard.
 type franzPartitionConsumer struct {
 	opts Options
 	cl   *kgo.Client
 
-	closed   atomic.Bool
+	closed atomic.Bool
+
+	// pumpInit serialises channel-mode setup: exactly one Messages() call wires
+	// the message channel + the pump's cancellable context and starts the pump.
+	// Close() calls pumpInit with a no-op so it either observes the cancel
+	// func (Messages ran first) or proves the pump never started (Close first).
+	pumpInit   sync.Once
+	pumpStart  atomic.Bool // set true inside pumpInit once the pump is launched
+	pumpCancel context.CancelFunc
+
 	received atomic.Uint64
 	acked    atomic.Uint64
 	failed   atomic.Uint64
@@ -152,7 +184,6 @@ type franzPartitionConsumer struct {
 
 	errChOnce sync.Once
 	errCh     chan error
-	msgChOnce sync.Once
 	msgCh     chan Message
 
 	onEvent atomic.Pointer[func(ConsumerEvent)]
@@ -169,9 +200,14 @@ func (s *franzPartitionConsumer) Messages() <-chan Message {
 	if s.opts.DeliveryMode != "channel" {
 		return nil
 	}
-	s.msgChOnce.Do(func() {
+	s.pumpInit.Do(func() {
 		s.msgCh = make(chan Message, 64)
-		go func() { _ = s.pump(context.Background(), nil, s.msgCh) }()
+		// Use a cancellable context (not context.Background()) so Close() can
+		// stop the pump goroutine — otherwise it blocks on PollFetches forever.
+		ctx, cancel := context.WithCancel(context.Background())
+		s.pumpCancel = cancel
+		s.pumpStart.Store(true)
+		go func() { _ = s.pump(ctx, nil, s.msgCh) }()
 	})
 	return s.msgCh
 }
@@ -229,6 +265,16 @@ func (s *franzPartitionConsumer) pushErr(err error) {
 func (s *franzPartitionConsumer) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
+	}
+	// Synchronise with channel-mode setup: either Messages() ran first (pump is
+	// up and pumpCancel is set) or Close() runs this first (no pump started).
+	s.pumpInit.Do(func() {})
+	// Stop the channel-mode pump BEFORE closing the kgo client: the pump calls
+	// s.cl.PollFetches(ctx), and cancelling its context makes it exit at the
+	// top of its loop. Closing the client first would leave the pump blocked on
+	// a context.Background() it can never escape (goroutine leak).
+	if s.pumpStart.Load() && s.pumpCancel != nil {
+		s.pumpCancel()
 	}
 	if s.cl != nil {
 		s.cl.Close()

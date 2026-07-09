@@ -4,6 +4,7 @@ package kafka
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,10 +34,11 @@ type saramaPartitionConsumer struct {
 	msgChOnce sync.Once
 	msgCh     chan Message
 
-	received atomic.Uint64
-	acked    atomic.Uint64
-	failed   atomic.Uint64
-	bytes    atomic.Uint64
+	received  atomic.Uint64
+	acked     atomic.Uint64
+	failed    atomic.Uint64
+	recovered atomic.Uint64 // consumer handler panics recovered (observable; L5)
+	bytes     atomic.Uint64
 
 	onEvent atomic.Pointer[func(ConsumerEvent)]
 }
@@ -118,7 +120,12 @@ func (s *saramaPartitionConsumer) pump(ctx context.Context, handler MessageHandl
 			s.bytes.Add(uint64(len(cm.Value)))
 			s.fire(ConsumerEvent{Name: "message", Msg: msg})
 			if handler != nil {
-				if err := handler(msg); err != nil {
+				// safeHandlerCall runs the user handler with panic recovery: a
+				// panicking handler is recovered (counted in Recovered()),
+				// surfaced as a "nack" event, and the goroutine stays alive —
+				// kit4go library-owned-worker convention (mirrors workerpool
+				// safeCall). Without this a bad handler crashes the pump.
+				if err := s.safeHandlerCall(handler, msg); err != nil {
 					s.failed.Add(1)
 					s.fire(ConsumerEvent{Name: "nack", Msg: msg, Err: err})
 					continue
@@ -177,11 +184,32 @@ func (s *saramaPartitionConsumer) Close() error {
 
 func (s *saramaPartitionConsumer) Metrics() ConsumerMetrics {
 	return ConsumerMetrics{
-		Received: s.received.Load(),
-		Acked:    s.acked.Load(),
-		Failed:   s.failed.Load(),
-		Bytes:    s.bytes.Load(),
+		Received:  s.received.Load(),
+		Acked:     s.acked.Load(),
+		Failed:    s.failed.Load(),
+		Recovered: s.recovered.Load(),
+		Bytes:     s.bytes.Load(),
 	}
+}
+
+// Recovered returns the total number of consumer-handler panics recovered since
+// the consumer started. A panicking handler is recovered (counted here),
+// surfaced as a "nack" ConsumerEvent, and the pump goroutine stays alive (does
+// NOT re-panic). kit4go library-owned-worker recover convention; mirrors
+// workerpool safeCall.
+func (s *saramaPartitionConsumer) Recovered() uint64 { return s.recovered.Load() }
+
+// safeHandlerCall invokes the user MessageHandler with panic recovery. A panic
+// is turned into a "kafka: consumer handler panic" error, counted in recovered,
+// and the goroutine survives. The error path then records the message as a NACK.
+func (s *saramaPartitionConsumer) safeHandlerCall(handler MessageHandler, msg Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.recovered.Add(1)
+			err = fmt.Errorf("kafka: consumer handler panic: %v", r)
+		}
+	}()
+	return handler(msg)
 }
 
 func (s *saramaPartitionConsumer) Snapshot() ConsumerSnapshot {

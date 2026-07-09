@@ -3,6 +3,8 @@
 package kafka
 
 import (
+	"fmt"
+
 	"github.com/IBM/sarama"
 )
 
@@ -76,7 +78,13 @@ func (h *cgHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.
 		msg := fromSaramaConsumerMessage(cm)
 		h.parent.bumpReceived(len(cm.Value))
 		h.parent.fire(ConsumerEvent{Name: "message", Msg: msg})
-		if err := h.handler(msg); err != nil {
+		// safeHandlerCall runs the user handler with panic recovery: a panicking
+		// handler is recovered (counted in parent.Recovered()), surfaced as a
+		// "nack" event, and the goroutine stays alive for the next message — the
+		// kit4go library-owned-worker recover convention (mirrors workerpool
+		// safeCall). Without this a bad handler crashes the sarama-owned
+		// goroutine and the whole process.
+		if err := h.safeHandlerCall(msg); err != nil {
 			h.parent.failed.Add(1)
 			h.parent.fire(ConsumerEvent{Name: "nack", Msg: msg, Err: err})
 			continue // NACK: do not MarkMessage; re-delivered next session
@@ -86,4 +94,19 @@ func (h *cgHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.
 		h.parent.fire(ConsumerEvent{Name: "ack", Msg: msg})
 	}
 	return nil
+}
+
+// safeHandlerCall invokes the user MessageHandler with panic recovery. A panic
+// is turned into a "kafka: consumer handler panic" error, counted in the
+// parent's Recovered() counter, and the goroutine survives (does NOT re-panic).
+// The error path then records the message as a NACK, mirroring a handler that
+// returned an error.
+func (h *cgHandler) safeHandlerCall(msg Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			h.parent.recovered.Add(1)
+			err = fmt.Errorf("kafka: consumer handler panic: %v", r)
+		}
+	}()
+	return h.handler(msg)
 }

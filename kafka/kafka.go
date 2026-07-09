@@ -265,6 +265,7 @@ type ConsumerMetrics struct {
 	Received  uint64 // messages handed to a handler / Messages() channel
 	Acked     uint64 // handler returned nil (offset committed)
 	Failed    uint64 // handler returned non-nil, or decode error
+	Recovered uint64 // consumer-handler panics recovered (goroutine survives)
 	Rebalance uint64 // consumer-group sessions recreated after a rebalance
 	Bytes     uint64 // bytes received (sum of Value lengths)
 }

@@ -152,11 +152,13 @@ func (s *saramaProducer) SendBatch(ctx context.Context, msgs []Message) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-	}
-	for _, msg := range msgs {
+		// Count per-message INSIDE the loop, immediately after a successful
+		// Input() push. Counting after the loop (the old form) lost every
+		// already-pushed message when ctx cancelled mid-batch: Enqueued stayed
+		// 0 while Success drained them — a metrics inversion (R21-F4).
+		s.enqueued.Add(1)
 		s.bytesEnqueued.Add(uint64(len(msg.Value)))
 	}
-	s.enqueued.Add(n)
 	s.fire(ProducerEvent{Name: "send", Topic: s.topic, Bytes: 0})
 	return nil
 }
