@@ -87,7 +87,14 @@ func WithToken(token string) Option { return func(o *options) { o.token = token 
 
 // WithAutoRenew enables a heartbeat goroutine that extends the TTL while the
 // lock is held. Renewal runs every renewInterval (default TTL/2). If a renewal
-// fails, the lock is reported lost via Lost() and the onLost callback (if set).
+// fails (including transient network errors — the lock is treated as lost to
+// avoid split-brain risk), the lock is reported lost via Lost() and the onLost
+// callback (if set).
+//
+// IMPORTANT: if you enable auto-renew you MUST either select on Lost() or set
+// OnLost; an unconsumed loss means your critical section continues without the
+// lock. A single transient Refresh error is treated as permanent loss (fail-closed
+// to prevent split-brain).
 func WithAutoRenew(on bool) Option { return func(o *options) { o.autoRenew = on } }
 
 // WithRenewInterval overrides the auto-renew interval (default TTL/2).
