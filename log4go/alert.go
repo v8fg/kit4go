@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -83,15 +84,22 @@ func WechatTextFormatter(_ string) AlertFormatter {
 // WebhookAlertSink POSTs alerts to a webhook URL asynchronously. Send is
 // non-blocking and bounded (drops on full queue) so the log path is never
 // blocked and the sink cannot cause OOM.
+//
+// The hot-path config (maxPerSec/maxRetries) is held in atomics so the rate
+// limit and retry budget can be reconfigured live without racing the daemon:
+// SetRateLimit/SetMaxRetries are concurrent-safe with Send and the daemon loop.
 type WebhookAlertSink struct {
-	url        string
-	client     *http.Client
-	formatter  AlertFormatter
-	ch         chan alertMsg
-	once       sync.Once
-	quit       chan struct{}
-	maxRetries int
-	maxPerSec  int
+	url       string
+	client    *http.Client
+	formatter AlertFormatter
+	ch        chan alertMsg
+	once      sync.Once
+	quit      chan struct{}
+	wg        sync.WaitGroup
+	// maxRetries/maxPerSec are read on the hot path (allow()) and by the daemon;
+	// held in atomics so SetMaxRetries/SetRateLimit never race a concurrent Send.
+	maxRetries atomic.Int64
+	maxPerSec  atomic.Int64
 	rmux       sync.Mutex
 	rCount     int
 	rWindow    time.Time
@@ -119,6 +127,7 @@ func NewWebhookAlertSink(url string, queueSize int, formatter AlertFormatter) *W
 		ch:        make(chan alertMsg, queueSize),
 		quit:      make(chan struct{}),
 	}
+	w.wg.Add(1)
 	go w.daemon()
 	return w
 }
@@ -135,11 +144,11 @@ func (w *WebhookAlertSink) Send(level AlertLevel, kind, text string) {
 }
 
 // SetRateLimit caps alerts per second (0 = unlimited). Protects OA webhooks
-// from flooding during sustained overflow.
-func (w *WebhookAlertSink) SetRateLimit(perSec int) { w.maxPerSec = perSec }
+// from flooding during sustained overflow. Safe to call concurrently with Send.
+func (w *WebhookAlertSink) SetRateLimit(perSec int) { w.maxPerSec.Store(int64(perSec)) }
 
 func (w *WebhookAlertSink) allow() bool {
-	if w.maxPerSec <= 0 {
+	if w.maxPerSec.Load() <= 0 {
 		return true
 	}
 	w.rmux.Lock()
@@ -149,17 +158,19 @@ func (w *WebhookAlertSink) allow() bool {
 		w.rWindow = now
 		w.rCount = 0
 	}
-	if w.rCount >= w.maxPerSec {
+	if w.rCount >= int(w.maxPerSec.Load()) {
 		return false
 	}
 	w.rCount++
 	return true
 }
 
-// SetMaxRetries sets how many times a failed POST is retried (default 0).
-func (w *WebhookAlertSink) SetMaxRetries(n int) { w.maxRetries = n }
+// SetMaxRetries sets how many times a failed POST is retried (default 0). Safe
+// to call concurrently with Send and the daemon's retry loop.
+func (w *WebhookAlertSink) SetMaxRetries(n int) { w.maxRetries.Store(int64(n)) }
 
 func (w *WebhookAlertSink) daemon() {
+	defer w.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			recordDaemonPanic("webhook", r)
@@ -168,33 +179,72 @@ func (w *WebhookAlertSink) daemon() {
 	for {
 		select {
 		case m := <-w.ch:
-			ct, body := w.formatter(m.level, m.kind, m.text)
-			for attempt := 0; ; attempt++ {
-				req, err := http.NewRequest(http.MethodPost, w.url, bytes.NewReader(body)) //nolint:gosec // user-configured URL
-				if err != nil {
-					break
-				}
-				req.Header.Set("Content-Type", ct)
-				resp, doErr := w.client.Do(req)
-				if doErr == nil {
-					_ = resp.Body.Close()
-					if resp.StatusCode < 500 {
-						break
-					}
-				}
-				if attempt >= w.maxRetries {
-					break
-				}
-				time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
+			w.post(m)
+		case <-w.quit:
+			// L7: don't silently drop queued alerts. Drain whatever is already
+			// buffered (non-blocking) and attempt delivery before exiting, so a
+			// graceful Close does not lose alerts enqueued before quit.
+			w.drainQueue()
+			return
+		}
+	}
+}
+
+// drainQueue attempts delivery of all alerts buffered in w.ch at the moment of
+// shutdown, without blocking. Producers racing this drain simply see a full
+// queue and drop (Send's default branch), which is acceptable.
+func (w *WebhookAlertSink) drainQueue() {
+	for {
+		select {
+		case m := <-w.ch:
+			w.post(m)
+		default:
+			return
+		}
+	}
+}
+
+// post delivers a single alert with bounded retry. Each retry wait listens on
+// w.quit so Close() interrupts an in-flight retry promptly instead of blocking
+// for up to maxRetries*3.2s.
+func (w *WebhookAlertSink) post(m alertMsg) {
+	ct, body := w.formatter(m.level, m.kind, m.text)
+	maxR := int(w.maxRetries.Load())
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, w.url, bytes.NewReader(body)) //nolint:gosec // user-configured URL
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", ct)
+		resp, doErr := w.client.Do(req)
+		if doErr == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode < 500 {
+				return
 			}
+		}
+		if attempt >= maxR {
+			return
+		}
+		// Bounded exponential backoff that is also interruptible by Close:
+		// without the quit case, Close() would have to wait up to ~3.2s per
+		// remaining attempt before the daemon noticed shutdown.
+		select {
+		case <-time.After(time.Duration(attempt+1) * 200 * time.Millisecond):
 		case <-w.quit:
 			return
 		}
 	}
 }
 
-// Close stops the daemon (pending queued alerts may be dropped).
+// Close stops the daemon. It interrupts any in-flight retry promptly and waits
+// for the daemon to finish draining already-queued alerts (those buffered before
+// Close) before returning, so there are no send-on-closed-channel panics and no
+// stray goroutine outliving the sink.
 func (w *WebhookAlertSink) Close() error {
-	w.once.Do(func() { close(w.quit) })
+	w.once.Do(func() {
+		close(w.quit)
+		w.wg.Wait()
+	})
 	return nil
 }

@@ -99,38 +99,43 @@ const (
 // OverflowStats reports overflow accounting (thread-safe) and emits throttled
 // alerts (standard log by default; optional AlertSink for webhook/OA push) on
 // the first event and every Nth event.
+//
+// alertSink/dropEvery/spillEvery are read on the hot path (IncDropped/
+// IncSpilled). They are held in atomics so SetAlertSink/SetAlertEvery can
+// reconfigure alerting live without racing a concurrent overflow event
+// (matching the onEvent atomic.Pointer pattern used elsewhere in log4go).
 type OverflowStats struct {
 	dropped    uint64
 	spilled    uint64
-	dropEvery  uint64 // log every N drops (0 = only first)
-	spillEvery uint64 // log every N spills
-	alertSink  AlertSink
+	dropEvery  atomic.Uint64 // log every N drops (0 = only first)
+	spillEvery atomic.Uint64 // log every N spills
+	alertSink  atomic.Pointer[AlertSink]
 }
 
 // SetAlertEvery configures throttled overflow logging (every N events).
 func (s *OverflowStats) SetAlertEvery(dropEvery, spillEvery uint64) {
-	s.dropEvery = dropEvery
-	s.spillEvery = spillEvery
+	s.dropEvery.Store(dropEvery)
+	s.spillEvery.Store(spillEvery)
 }
 
 // SetAlertSink installs an alert sink (e.g. WebhookAlertSink for lark/dingtalk/
 // feishu). Nil disables push (standard log only).
 func (s *OverflowStats) SetAlertSink(sink AlertSink) {
-	s.alertSink = sink
+	s.alertSink.Store(&sink)
 }
 
 // IncDropped increments the dropped counter and emits an alert on the first
 // drop and every dropEvery drops.
 func (s *OverflowStats) IncDropped() {
 	n := atomic.AddUint64(&s.dropped, 1)
-	s.alert("DROP", n, s.dropEvery, "queue full; record lost")
+	s.alert("DROP", n, s.dropEvery.Load(), "queue full; record lost")
 }
 
 // IncSpilled increments the spilled counter and emits an alert on the first
 // spill and every spillEvery spills.
 func (s *OverflowStats) IncSpilled() {
 	n := atomic.AddUint64(&s.spilled, 1)
-	s.alert("SPILL", n, s.spillEvery, "overflow buffered to spill store")
+	s.alert("SPILL", n, s.spillEvery.Load(), "overflow buffered to spill store")
 }
 
 func (s *OverflowStats) alert(kind string, n, every uint64, reason string) {
@@ -152,8 +157,8 @@ func (s *OverflowStats) alert(kind string, n, every uint64, reason string) {
 		return
 	}
 	log.Printf("[log4go] overflow %s %s", kind, text)
-	if s.alertSink != nil {
-		s.alertSink.Send(level, kind, text)
+	if p := s.alertSink.Load(); p != nil {
+		(*p).Send(level, kind, text)
 	}
 }
 

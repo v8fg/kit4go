@@ -178,6 +178,21 @@ type KafkaWriter struct {
 
 	run  atomic.Bool // set true once the daemon starts
 	quit chan struct{}
+	// stop, once closed by Stop, unblocks any producer waiting in send (the
+	// OverflowBlock branch) AND wakes the daemon's shutdown branch. Distinct from
+	// quit (the daemon→Stop completion signal): stop is the Stop→daemon/producers
+	// shutdown trigger. Mirrors FileWriter's stop channel.
+	stop chan struct{}
+	// closing is set (atomic) BEFORE Stop closes k.stop. Once set, send stops
+	// attempting to enqueue (fast-exit drop) and drainSpill stops re-injecting
+	// into messages, so nothing sends on messages during shutdown. Stop NEVER
+	// closes messages — closing it would race any concurrent send (close-vs-send
+	// is a true memory race and send-on-closed panics). The daemon drains all
+	// pending records on the stop branch before exiting, so leaving messages open
+	// is correct: any record a racing producer slipped in after closing was set is
+	// either drained or left for GC (no panic, no race). Mirrors FileWriter's
+	// shutdown-safe pattern (file_writer.go:131-139, 795-812).
+	closing atomic.Bool
 }
 
 // DefaultKafkaBatchSize is the SendBatch size applied when KafkaWriterOptions.
@@ -446,13 +461,32 @@ func (k *KafkaWriter) Write(r *Record) error {
 }
 
 // send delivers msg under the overflow policy (drop / block / spill).
+//
+// Shutdown safety: Stop sets k.closing and closes k.stop, but NEVER closes
+// k.messages (see Stop docs). So send can never panic on a closed channel. The
+// closing fast path drops records once shutdown begins (keeping Stop bounded),
+// and every send also selects on k.stop so an OverflowBlock producer is unblocked
+// when the daemon is winding down instead of blocking forever on a channel the
+// daemon has stopped consuming. Mirrors FileWriter.send (file_writer.go:528-568).
 func (k *KafkaWriter) send(msg kafka.Message) {
+	if k.closing.Load() {
+		// Shutdown in progress: drop instead of racing a send against the daemon
+		// winding down. Keeps Stop bounded and avoids any send-after-stop hazard.
+		k.stats.IncDropped()
+		return
+	}
 	switch k.policy {
 	case OverflowBlock:
-		k.messages <- msg
+		select {
+		case k.messages <- msg:
+		case <-k.stop:
+			k.stats.IncDropped()
+		}
 	case OverflowSpill:
 		select {
 		case k.messages <- msg:
+		case <-k.stop:
+			k.stats.IncDropped()
 		default:
 			if k.spiller != nil && k.spiller.Push(msg) {
 				k.stats.IncSpilled()
@@ -463,6 +497,8 @@ func (k *KafkaWriter) send(msg kafka.Message) {
 	default: // OverflowDrop
 		select {
 		case k.messages <- msg:
+		case <-k.stop:
+			k.stats.IncDropped()
 		default:
 			k.stats.IncDropped()
 		}
@@ -517,7 +553,16 @@ func (k *KafkaWriter) failover(msg kafka.Message) {
 }
 
 // drainSpill re-injects recovered records into the channel (non-blocking).
+//
+// Once Stop has set closing, drainSpill is a no-op: the shutdown path is handled
+// by drainSpillToProducer (which sends straight to the producer, bypassing
+// messages), so re-injecting here while the daemon winds down is unnecessary and
+// would race a producer that closing has not yet observed. Gated on closing to
+// match FileWriter.drainSpill.
 func (k *KafkaWriter) drainSpill() {
+	if k.closing.Load() {
+		return
+	}
 	if k.spiller == nil || k.spiller.Len() == 0 {
 		return
 	}
@@ -636,7 +681,9 @@ func (k *KafkaWriter) daemon() {
 		select {
 		case mes, ok := <-k.messages:
 			if !ok {
-				flush() // flush any buffered batch before spill recovery on shutdown
+				// Defensive: messages should never be closed in normal operation
+				// (Stop does not close it). If it ever is, treat as shutdown.
+				k.drainOnShutdown(&batch, flush)
 				k.drainSpillToProducer()
 				k.quit <- struct{}{}
 				return
@@ -656,6 +703,44 @@ func (k *KafkaWriter) daemon() {
 			if k.breaker != nil {
 				k.breaker.evaluate(time.Now()) // cold-path state machine (L4)
 			}
+		case <-k.stop:
+			// Shutdown (Stop closed stop; messages is intentionally NOT closed).
+			// Drain everything still queued + any buffered batch to the producer,
+			// then send the spill store straight through. A racing producer that
+			// slipped a record past closing.Load() is drained here too, so nothing
+			// is lost and nothing sends on a closed channel.
+			k.drainOnShutdown(&batch, flush)
+			k.drainSpillToProducer()
+			k.quit <- struct{}{}
+			return
+		}
+	}
+}
+
+// drainOnShutdown non-blockingly drains every record still pending in the
+// messages channel into the batch (growing *batch, which points at the daemon's
+// slice variable the flush closure also reads — so the two stay in sync), then
+// flushes the whole accumulated batch in one SendBatch. This preserves batch
+// semantics on the shutdown tail (one flush, not N per-record Sends) and is
+// race-free: nothing else touches messages during shutdown. Called only from the
+// daemon, so no concurrent consumer. Mirrors FileWriter.drainQueuedAndSpill.
+func (k *KafkaWriter) drainOnShutdown(batch *[]kafka.Message, flush func()) {
+	for {
+		select {
+		case mes, ok := <-k.messages:
+			if !ok {
+				// channel closed defensively; flush what was accumulated.
+				flush()
+				return
+			}
+			*batch = append(*batch, mes)
+			if len(*batch) >= k.batchSize {
+				flush()
+			}
+			continue
+		default:
+			flush() // send the accumulated (partial) batch in one SendBatch
+			return
 		}
 	}
 }
@@ -721,6 +806,11 @@ func (k *KafkaWriter) Start() (err error) {
 		size = 1024
 	}
 	k.messages = make(chan kafka.Message, size)
+	// stop is created here (with the daemon) rather than in NewKafkaWriter so a
+	// never-Started writer has no goroutine to signal. Close(stop) is the
+	// shutdown trigger for send() and the daemon; quit is the daemon→Stop
+	// completion ack. See the closing field doc.
+	k.stop = make(chan struct{})
 
 	// init the recovery store for spill policy.
 	if k.policy == OverflowSpill {
@@ -785,12 +875,31 @@ func (k *KafkaWriter) Start() (err error) {
 	return err
 }
 
-// Stop stop the kafka writer gracefully (flushes spiller to producer first).
+// Stop stops the kafka writer gracefully: it drains every record still queued
+// in the channel and the entire spill store to the producer before closing it.
+//
+// Race-free ordering (the shutdown-race fix, R20 P0-1):
+//  1. closing=true -> new producers (send) and the daemon's drainSpill stop
+//     touching messages immediately; drainSpill returns early so it can never
+//     re-inject into messages during shutdown.
+//  2. close(stop)  -> unblocks any producer waiting in send's OverflowBlock
+//     branch, AND wakes the daemon's shutdown branch.
+//  3. wait <-quit  -> the daemon has drained every queued message + the entire
+//     spill store (sent straight to the producer via drainSpillToProducer),
+//     flushed any buffered batch, and exited.
+//  4. producer.Close / spiller.Close -> only after the daemon is done sending.
+//
+// Crucially Stop NEVER closes k.messages — nothing does. Closing it would race
+// any concurrent send (close-vs-send is a true memory race and send-on-closed
+// panics). Since closing=true gates send's fast path and the daemon drains all
+// pending records before exiting, leaving messages open is correct. Mirrors
+// FileWriter.Stop (file_writer.go:778-812).
 func (k *KafkaWriter) Stop() {
 	if !k.run.CompareAndSwap(true, false) {
 		return // already stopped, or another Stop in flight — atomic claim avoids a double close
 	}
-	close(k.messages)
+	k.closing.Store(true)
+	close(k.stop)
 	waitQuit("kafka", k.quit, defaultShutdownTimeout)
 	if k.producerNotNil() {
 		if err := k.producer.Close(); err != nil {

@@ -79,6 +79,16 @@ type NetWriter struct {
 	run  atomic.Bool
 	quit chan struct{}
 	stop chan struct{}
+	// closing is set (atomic) BEFORE Stop closes n.stop. Once set, producers
+	// (Write) stop attempting to enqueue and the daemon's drainSpill stops
+	// re-injecting into messages, so nothing sends on messages during shutdown.
+	// Stop NEVER closes messages — closing it would race any concurrent Write
+	// (close-vs-send is a true memory race and send-on-closed panics). The
+	// daemon drains all pending records on the n.stop branch before exiting, so
+	// leaving messages open is correct: any record a racing producer slipped in
+	// after closing was set is either drained or left for GC (no panic, no race).
+	// Mirrors FileWriter's shutdown-safe pattern.
+	closing atomic.Bool
 }
 
 // NewNetWriter builds a NetWriter from options. It does NOT dial yet — the
@@ -143,6 +153,13 @@ func (n *NetWriter) Paused() bool { return n.paused.Load() }
 // It NEVER blocks the caller under drop/spill (the block policy blocks, as the
 // name promises). The record is copied because the bootstrap goroutine returns
 // it to the record pool after Write returns.
+//
+// Shutdown safety: Stop sets n.closing and closes n.stop, but NEVER closes
+// n.messages (see Stop docs). So Write can never panic on a closed channel. The
+// closing fast path drops records once shutdown begins (keeping Stop bounded),
+// and under OverflowBlock Write also selects on n.stop so a producer is unblocked
+// when the daemon is winding down instead of waiting forever on a channel the
+// daemon has stopped consuming. Mirrors FileWriter.send.
 func (n *NetWriter) Write(r *Record) error {
 	if n.paused.Load() {
 		return nil
@@ -150,13 +167,25 @@ func (n *NetWriter) Write(r *Record) error {
 	if r.level > n.level {
 		return nil
 	}
+	if n.closing.Load() {
+		// Shutdown in progress: drop instead of racing a send against the daemon
+		// winding down. Keeps Stop bounded and avoids any send-after-stop hazard.
+		n.stats.IncDropped()
+		return nil
+	}
 	rc := *r // private copy for the daemon
 	switch n.policy {
 	case OverflowBlock:
-		n.messages <- &rc
+		select {
+		case n.messages <- &rc:
+		case <-n.stop:
+			n.stats.IncDropped()
+		}
 	default: // drop / spill
 		select {
 		case n.messages <- &rc:
+		case <-n.stop:
+			n.stats.IncDropped()
 		default:
 			if n.policy == OverflowSpill && n.spiller != nil && n.spiller.Push(&rc) {
 				n.stats.IncSpilled()
@@ -222,9 +251,16 @@ func (n *NetWriter) writeOne(r *Record) error {
 }
 
 // daemon drains the messages channel (and spill store) and writes each record
-// to the remote. It runs for the life of the writer; Stop closes the messages
-// channel to signal shutdown, and the daemon drains any remaining queued +
-// spilled records before exiting.
+// to the remote.
+//
+// Shutdown is driven by n.stop (closed by Stop), NOT by closing n.messages.
+// This is the key to race-free shutdown: nothing ever closes messages, so there
+// is no close-vs-send race with a concurrent Write. When stop fires the daemon
+// drains everything still queued in messages (non-blocking) plus the entire
+// spill store (written directly via writeOne), signals quit, and exits. The
+// drainSpill re-inject path is gated on closing so it never runs during
+// shutdown. The messages !ok branch is defensive only — messages is never closed
+// in normal operation.
 func (n *NetWriter) daemon() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -239,7 +275,8 @@ func (n *NetWriter) daemon() {
 		select {
 		case r, ok := <-n.messages:
 			if !ok {
-				// channel closed (Stop): drain any remaining records, then exit.
+				// Defensive: messages should never be closed in normal operation
+				// (Stop does not close it). If it ever is, treat as shutdown.
 				n.drainAll()
 				n.quit <- struct{}{}
 				return
@@ -256,7 +293,15 @@ func (n *NetWriter) daemon() {
 }
 
 // drainSpill re-injects recovered records from the spill store (non-blocking).
+//
+// Once Stop has set closing, drainSpill is a no-op: the shutdown path is handled
+// by drainAll (which writes directly via writeOne, bypassing messages), so
+// re-injecting here would race the daemon winding down. Gated on closing to
+// match FileWriter.drainSpill.
 func (n *NetWriter) drainSpill() {
+	if n.closing.Load() {
+		return
+	}
 	if n.spiller == nil || n.spiller.Len() == 0 {
 		return
 	}
@@ -270,9 +315,11 @@ func (n *NetWriter) drainSpill() {
 	}
 }
 
-// drainAll flushes queued messages and the spill store on shutdown. It is
-// called after the messages channel is closed, so it must distinguish a real
-// queued record from the zero-value nil returned by a closed channel.
+// drainAll flushes queued messages and the spill store on shutdown. It is called
+// from the daemon's shutdown branch (n.stop, or the defensive messages !ok
+// path). It non-blocking-drains anything still queued in messages, then writes
+// the entire spill store directly via writeOne (bypassing messages so it cannot
+// race a producer that slipped past the closing gate).
 func (n *NetWriter) drainAll() {
 	for {
 		select {
@@ -296,14 +343,29 @@ spill:
 	}
 }
 
-// Stop shuts down the daemon gracefully: it closes the messages channel, the
-// daemon drains queued + spilled records, then closes the conn. Safe to call
-// once; a no-op if the daemon never started.
+// Stop shuts down the daemon gracefully.
+//
+// Race-free ordering (mirrors FileWriter.Stop):
+//  1. closing=true -> new producers (Write) and the daemon's drainSpill stop
+//     touching messages immediately; drainSpill returns early so it can never
+//     re-inject into messages during shutdown.
+//  2. close(stop)  -> unblocks any producer waiting in Write's OverflowBlock
+//     branch, AND wakes the daemon's shutdown branch (it already selects on
+//     n.stop).
+//  3. wait <-quit   -> the daemon has drained every queued message + the entire
+//     spill store (written directly via writeOne) and exited; then the conn is
+//     closed.
+//
+// Crucially Stop NEVER closes n.messages — nothing does. Closing it would race
+// any concurrent Write (close-vs-send is a true memory race and send-on-closed
+// panics). The old code closed messages here, which panicked under concurrent
+// Write+Stop. Safe to call once; a no-op if the daemon never started.
 func (n *NetWriter) Stop() {
 	if !n.run.CompareAndSwap(true, false) {
 		return // already stopped, or another Stop in flight — atomic claim avoids a double close
 	}
-	close(n.messages)
+	n.closing.Store(true)
+	close(n.stop)
 	waitQuit("net", n.quit, defaultShutdownTimeout)
 	n.connMu.Lock()
 	if n.conn != nil {

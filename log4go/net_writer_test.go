@@ -313,3 +313,66 @@ func Test_NetWriter_Metrics(t *testing.T) {
 		t.Error("Metrics.Sent never incremented")
 	}
 }
+
+// Test_NetWriter_ConcurrentWriteStopRace is the R20 P0-2 regression test.
+//
+// BUG: the old Stop() closed n.messages while Write() and drainSpill could be
+// mid-send -> send-on-closed-channel panic (a true memory race under -race).
+// This was especially likely under OverflowBlock, where Write did a bare
+// `n.messages <- &rc` with no shutdown select.
+//
+// This test runs 6 writer goroutines + 1 Stop, 30 iterations, under -race. The
+// OLD code panics (test fails); the NEW code (closing atomic.Bool + close(stop),
+// never close(messages), Write/drainSpill gated on closing) completes cleanly.
+func Test_NetWriter_ConcurrentWriteStopRace(t *testing.T) {
+	// exercise every overflow policy — Block is the most panic-prone (bare send),
+	// Spill exercises drainSpill, Drop is the common case.
+	policies := []string{"block", "spill", "drop"}
+	const iterations = 30
+	const writers = 6
+
+	for _, policy := range policies {
+		t.Run(policy, func(t *testing.T) {
+			for range iterations {
+				// unroutable address is fine: Init is lazy (no dial), and the
+				// daemon's write errors just drop records — we are testing the
+				// shutdown race, not delivery.
+				w := NewNetWriter(NetWriterOptions{
+					Network:          "tcp",
+					Address:          "127.0.0.1:1",
+					BufferSize:       4, // small so the channel fills and block/spill paths hit
+					Timeout:          50 * time.Millisecond,
+					ReconnectBackoff: 10 * time.Millisecond,
+					OverflowPolicy:   policy,
+				})
+				if err := w.Init(); err != nil {
+					t.Fatalf("Init: %v", err)
+				}
+
+				var wg sync.WaitGroup
+				stop := make(chan struct{})
+				for range writers {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						for {
+							select {
+							case <-stop:
+								return
+							default:
+							}
+							// Write must not panic regardless of Stop timing.
+							_ = w.Write(&Record{level: INFO, time: "t", file: "f", msg: "race"})
+						}
+					}()
+				}
+
+				// let writers ramp up and fill the channel before Stop races in
+				time.Sleep(time.Millisecond)
+				w.Stop() // the bug: old code closed messages here -> panic
+				close(stop)
+				wg.Wait()
+			}
+		})
+	}
+}
