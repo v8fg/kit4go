@@ -8,17 +8,37 @@ import (
 )
 
 // CircuitBreaker is the interface used by [Middleware] to optionally wrap each
-// call in a circuit breaker. The breaker package implements this; grpcclient
-// does NOT import breaker (that would create a hard dependency for every
-// caller). Users pass a *breaker.Breaker[T] which satisfies this interface, or
-// any other implementation. A nil breaker on [ClientOptions] disables the
-// integration and calls are issued directly.
+// call in a circuit breaker. grpcclient does NOT import breaker (that would
+// create a hard dependency for every caller). Users adapt a *breaker.Breaker[T]
+// to this interface — the breaker package's Execute returns (T, error), so a
+// thin adapter is needed (e.g. breakerAdapter below). A nil breaker on
+// [ClientOptions] disables the integration and calls are issued directly.
 type CircuitBreaker interface {
 	// Execute runs fn under the breaker's protection. Implementations should
 	// short-circuit with their own ErrCircuitOpen when the breaker is open
 	// rather than invoking fn, and record the outcome of fn for their sliding
 	// window when it is invoked. fn must honour ctx.
 	Execute(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// BreakerAdapter wraps a *breaker.Breaker[T] (which returns (T, error)) into
+// the CircuitBreaker interface (which returns only error). The T value is
+// discarded — grpcclient's invoker returns error only.
+//
+// Usage:
+//
+//	b := breaker.New[any](breaker.WithThreshold(5))
+//	mw := grpcclient.NewMiddleware(grpcclient.ClientOptions{
+//	    Breaker: grpcclient.BreakerAdapter{b},
+//	})
+type BreakerAdapter struct {
+	// ExecuteCtx is the underlying breaker's Execute function.
+	ExecuteCtx func(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// Execute delegates to the wrapped function.
+func (a BreakerAdapter) Execute(ctx context.Context, fn func(ctx context.Context) error) error {
+	return a.ExecuteCtx(ctx, fn)
 }
 
 // LatencyObserver receives the end-to-end duration of an RPC. grpcclient does
