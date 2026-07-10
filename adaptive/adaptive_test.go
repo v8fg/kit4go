@@ -889,3 +889,59 @@ func TestClose_FinalDrainNoStragglersIsHarmless(t *testing.T) {
 	// Idempotent: a second Close must still be safe (no drain on dead queue).
 	require.NoError(t, p.Close())
 }
+
+// TestPool_WorkPanicRecovered proves a panicking user work func is recovered on
+// the library-owned worker goroutine instead of crashing the host: the worker
+// survives, the surrounding jobs still process, the recovery is counted, the
+// onPanic hook fires, and the pool keeps functioning afterward. Mirrors the
+// kit-callback convention (batcher.safeFlush / workerpool.safeCall).
+func TestPool_WorkPanicRecovered(t *testing.T) {
+	var processed atomic.Int64
+	work := func(j int) {
+		if j < 0 {
+			panic("negative job")
+		}
+		processed.Add(1)
+	}
+	p, err := New[int](work,
+		WithMinWorkers[int](1),
+		WithMaxWorkers[int](2),
+		WithLoadMonitor[int](newFake(0.5)),
+		WithSampleInterval[int](50*time.Millisecond),
+	)
+	require.NoError(t, err)
+
+	var saw atomic.Value
+	p.SetOnPanic(func(r any) { saw.Store(r) })
+
+	// Surround the panicking job with normal ones; the worker must survive the
+	// panic and keep draining the rest.
+	require.NoError(t, p.Submit(context.Background(), 1))
+	require.NoError(t, p.Submit(context.Background(), -1)) // panics
+	require.NoError(t, p.Submit(context.Background(), 2))
+	require.NoError(t, p.Submit(context.Background(), 3))
+
+	require.Eventually(t, func() bool { return processed.Load() == 3 }, time.Second, time.Millisecond)
+	require.Equal(t, uint64(1), p.Recovered(), "the panicking job must be recovered and counted once")
+	require.NotNil(t, saw.Load(), "onPanic must fire on the recovered work panic")
+
+	// The pool still functions after the panic: submit, drain, clean close.
+	require.NoError(t, p.Submit(context.Background(), 4))
+	require.Eventually(t, func() bool { return processed.Load() == 4 }, time.Second, time.Millisecond)
+	require.NoError(t, p.Close())
+}
+
+// TestPool_SetOnPanicDisable covers the SetOnPanic(nil) disable branch and the
+// safeWork path that recovers with no hook installed: a panicking job is still
+// recovered (host survives, Recovered climbs) when onPanic is nil.
+func TestPool_SetOnPanicDisable(t *testing.T) {
+	p, err := New[int](func(j int) { panic(j) },
+		WithLoadMonitor[int](newFake(0.5)),
+		WithSampleInterval[int](50*time.Millisecond),
+	)
+	require.NoError(t, err)
+	p.SetOnPanic(nil) // disable: must be a safe no-op
+	require.NoError(t, p.Submit(context.Background(), 1))
+	require.Eventually(t, func() bool { return p.Recovered() == 1 }, time.Second, time.Millisecond)
+	require.NoError(t, p.Close())
+}
