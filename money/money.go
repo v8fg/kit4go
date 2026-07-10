@@ -432,6 +432,13 @@ func mulChecked(a, b int64) (int64, error) {
 	if a == 0 || b == 0 {
 		return 0, nil
 	}
+	// MinInt64 * -1 is the one product whose overflow check below would PANIC
+	// instead of returning ErrOverflow: p = MinInt64 (wraps), and the check
+	// p/b = MinInt64 / -1 is the single integer division Go aborts at runtime.
+	// The true result (MaxInt64 + 1) overflows, so reject it here.
+	if a == math.MinInt64 && b == -1 {
+		return 0, ErrOverflow
+	}
 	p := a * b
 	if p/b != a {
 		return 0, ErrOverflow

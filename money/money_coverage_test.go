@@ -89,6 +89,28 @@ func TestSub_Overflow(t *testing.T) {
 	require.ErrorIs(t, err, ErrOverflow)
 }
 
+// TestMulChecked_MinInt64MinusOne guards the one multiply that used to PANIC
+// instead of returning ErrOverflow: mulChecked(MinInt64, -1) hits MinInt64/-1
+// inside the overflow check, which is the single integer division Go aborts at
+// runtime. The checked-multiply contract is "return ErrOverflow, never panic",
+// so this must surface as an error. (Currently unreachable via the public API
+// — MinInt64 amounts are rejected at construction — but the primitive itself
+// must stay panic-free.)
+func TestMulChecked_MinInt64MinusOne(t *testing.T) {
+	v, err := mulChecked(math.MinInt64, -1)
+	require.ErrorIs(t, err, ErrOverflow, "MinInt64 * -1 must be ErrOverflow, not a panic")
+	require.Equal(t, int64(0), v)
+
+	// The symmetric operand order already worked (no panic): -1 * MinInt64.
+	v2, err2 := mulChecked(-1, math.MinInt64)
+	require.ErrorIs(t, err2, ErrOverflow)
+	require.Equal(t, int64(0), v2)
+
+	// A nearby overflow still detected normally.
+	_, err = mulChecked(math.MaxInt64, math.MaxInt64)
+	require.ErrorIs(t, err, ErrOverflow)
+}
+
 // TestAllocate_NegativeAmountRemainder covers Allocate's negative-amount path:
 // allocating a negative Money distributes a negative remainder (step = -1),
 // exercising the `if remainder < 0 { step = -1 }` branch and the loop.
