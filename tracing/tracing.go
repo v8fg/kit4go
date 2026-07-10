@@ -21,10 +21,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Provider wraps a TracerProvider and its exporter for clean lifecycle.
+// Provider wraps a TracerProvider for clean lifecycle. (The exporter is owned
+// by the SDK's TracerProvider — Shutdown/ForceFlush delegate to it — so the
+// Provider does not hold a separate exporter reference.)
 type Provider struct {
-	tp       *sdktrace.TracerProvider
-	exporter sdktrace.SpanExporter
+	tp *sdktrace.TracerProvider
 }
 
 // Option configures the Provider.
@@ -108,7 +109,7 @@ func New(opts ...Option) (*Provider, error) {
 	)
 	otel.SetTracerProvider(tp)
 
-	return &Provider{tp: tp, exporter: exporter}, nil
+	return &Provider{tp: tp}, nil
 }
 
 // Tracer returns a named tracer from the provider.

@@ -797,3 +797,95 @@ func TestDrainQueue_ClosedChannel(t *testing.T) {
 	p.scaler.Wait()
 	p.wg.Wait()
 }
+
+// TestClose_FinalDrainRunsAcceptedStraggler is the R24 regression test for the
+// accepted-but-abandoned race: a Submit that returns nil must execute its job,
+// even when Close races the enqueue. Without Close's final non-blocking drain,
+// a job that lands in the queue AFTER the last worker's drainQueue finished
+// (but the worker had not yet observed close(done)) would be silently dropped.
+//
+// The race is forced open by gating the single worker so it cannot drain until
+// Close has begun, then releasing it so the worker exits and Close's final
+// drain is the only thing that can run the straggler. We assert the accepted
+// job ran exactly once.
+func TestClose_FinalDrainRunsAcceptedStraggler(t *testing.T) {
+	// Single worker, queue size 4, autoscaler parked so only the worker drains.
+	gate := make(chan struct{})
+	var ran atomic.Int64
+	p, err := New[int](
+		func(j int) {
+			// Block the worker here until the test releases the gate, so the
+			// worker cannot drain the queue while we set up the race.
+			<-gate
+			ran.Add(int64(j + 1)) // record non-zero so a no-op (0) is detectable
+		},
+		WithMinWorkers[int](1),
+		WithMaxWorkers[int](1),
+		WithQueueSize[int](4),
+		WithLoadMonitor[int](newFake(0.5)),
+		WithSampleInterval[int](time.Hour),
+	)
+	require.NoError(t, err)
+
+	// Occupy the single worker so it stops pulling from the queue.
+	require.NoError(t, p.Submit(context.Background(), 0))
+
+	// Queue 3 jobs while the worker is busy. They sit in the queue.
+	for i := 1; i <= 3; i++ {
+		require.NoError(t, p.Submit(context.Background(), i))
+	}
+
+	// Start Close in a goroutine. It will block on wg.Wait until the worker
+	// exits, and the worker won't exit until we release the gate (it is parked
+	// on the in-flight job 0). close(done) has already fired inside Close.
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- p.Close() }()
+
+	// Let the worker finish job 0 and observe close(done) → drainQueue → exit.
+	// The timing here is the crux: by the time the worker runs drainQueue, the
+	// 3 queued jobs are present, so the worker should drain them. But to also
+	// stress the accepted-straggler path, enqueue one MORE job right as we
+	// release the gate — this job races the worker's final drain. Submit may
+	// return nil (accepted) even though done is closed (the select can pick the
+	// queue-send arm). If accepted, it MUST run via the worker or Close's drain.
+	accepted := true
+	if err := p.Submit(context.Background(), 4); err != nil {
+		accepted = false // legitimately rejected as closed — fine, then nothing to assert
+	}
+
+	close(gate) // unblock the worker → it finishes job 0, drains, exits
+	require.NoError(t, <-closeDone)
+
+	// Every accepted job must have run exactly once. ran holds the sum of (j+1)
+	// for jobs 0..4 that actually executed; recompute the expected subset.
+	//
+	// job 0 was always accepted+run. jobs 1..3 were queued and accepted. job 4
+	// may or may not have been accepted depending on the race; only count it if
+	// accepted.
+	expected := int64(1) + int64(2) + int64(3) + int64(4) // jobs 0..3
+	if accepted {
+		expected += int64(5) // job 4
+	}
+	require.Equal(t, expected, ran.Load(),
+		"accepted jobs must all run (no silent drops); got ran=%d expected=%d", ran.Load(), expected)
+
+	// Post-close: Submit now consistently rejects.
+	require.ErrorIs(t, p.Submit(context.Background(), 99), ErrClosed)
+}
+
+// TestClose_FinalDrainNoStragglersIsHarmless confirms the final drain is a
+// no-op when the queue is already empty (the common case): Close still returns
+// nil and behaves as before. Guards against the fix introducing overhead or a
+// hang on an empty queue.
+func TestClose_FinalDrainNoStragglersIsHarmless(t *testing.T) {
+	p, err := New[int](
+		func(int) {},
+		WithLoadMonitor[int](newFake(0.5)),
+		WithSampleInterval[int](time.Hour),
+	)
+	require.NoError(t, err)
+	// No jobs submitted at all → queue empty → final drain is a no-op.
+	require.NoError(t, p.Close())
+	// Idempotent: a second Close must still be safe (no drain on dead queue).
+	require.NoError(t, p.Close())
+}

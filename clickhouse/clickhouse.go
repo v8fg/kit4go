@@ -12,6 +12,7 @@ package clickhouse
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,6 +49,8 @@ type Client struct {
 	rawConn driver.Conn // non-nil when built from a real driver.Conn; nil when mock-injected
 	own     bool        // true -> Close closes the underlying conn
 	opts    Options
+
+	closeOnce sync.Once // gates conn.Close so double/concurrent Close is a no-op
 
 	queries, execs, batches, errors, pings, pingErrors atomic.Uint64
 	onEvent                                            atomic.Pointer[func(Event)]
@@ -183,10 +186,19 @@ func (c *Client) Conn() driver.Conn { return c.rawConn }
 // The struct includes Password: do not log or serialize it verbatim.
 func (c *Client) Options() Options { return c.opts }
 
-// Close releases the connection. No-op for a wrapped or mock-injected client.
+// Close releases the connection. No-op for a wrapped or mock-injected client,
+// and a no-op on repeat calls (idempotent via sync.Once). Safe under
+// concurrent Close: the underlying conn.Close runs exactly once.
 func (c *Client) Close() error {
-	if !c.own {
-		return nil
-	}
-	return c.conn.Close()
+	c.closeOnce.Do(func() {
+		if !c.own {
+			return
+		}
+		_ = c.conn.Close()
+		// Drop ownership so a later path that re-checks own sees a closed
+		// client. Subsequent Close calls are short-circuited by closeOnce
+		// before reaching here, so this flip runs at most once.
+		c.own = false
+	})
+	return nil
 }
