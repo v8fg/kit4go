@@ -76,6 +76,8 @@ func New(ctx context.Context, opts Options) (*Client, error) {
 	}
 	if opts.MinConns > 0 {
 		cfg.MinConns = int32(opts.MinConns)
+	} else {
+		cfg.MinConns = 2
 	}
 	if opts.MaxConnLifetime > 0 {
 		cfg.MaxConnLifetime = opts.MaxConnLifetime
