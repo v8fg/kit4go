@@ -134,3 +134,65 @@ func TestRandStringWithLetterDigits(t *testing.T) {
 		convey.So(random.RandStringWithLetterDigits(66), convey.ShouldHaveLength, 66)
 	})
 }
+
+// TestRandStringWithKind_CombinedBits verifies the kind bitmask selects exactly
+// the documented character groups, including the non-contiguous kind=5
+// (digits+lowercase) that the old maxBits/clear-lowest-bit loop mapped wrong
+// (it produced lowercase+uppercase). Each requested group must appear and each
+// unrequested group must not, over a long draw.
+func TestRandStringWithKind_CombinedBits(t *testing.T) {
+	cases := []struct {
+		kind              int
+		wantDigit         bool
+		wantUpper, wantLo bool
+	}{
+		{1, true, false, false},
+		{2, false, true, false},
+		{4, false, false, true},
+		{3, true, true, false},
+		{5, true, false, true}, // the regression: digits + lowercase
+		{6, false, true, true},
+		{7, true, true, true},
+	}
+	hasRange := func(s string, lo, hi byte) bool {
+		for i := 0; i < len(s); i++ {
+			if s[i] >= lo && s[i] <= hi {
+				return true
+			}
+		}
+		return false
+	}
+	for _, tc := range cases {
+		s := string(random.RandStringWithKind(3000, tc.kind))
+
+		// No character may fall outside the union of requested groups.
+		for i := 0; i < len(s); i++ {
+			c := s[i]
+			ok := (tc.wantDigit && c >= '0' && c <= '9') ||
+				(tc.wantUpper && c >= 'A' && c <= 'Z') ||
+				(tc.wantLo && c >= 'a' && c <= 'z')
+			if !ok {
+				t.Errorf("kind=%d: char %q outside the requested groups", tc.kind, c)
+				break
+			}
+		}
+		if tc.wantDigit && !hasRange(s, '0', '9') {
+			t.Errorf("kind=%d: expected digits, none appeared", tc.kind)
+		}
+		if tc.wantUpper && !hasRange(s, 'A', 'Z') {
+			t.Errorf("kind=%d: expected uppercase, none appeared", tc.kind)
+		}
+		if tc.wantLo && !hasRange(s, 'a', 'z') {
+			t.Errorf("kind=%d: expected lowercase, none appeared", tc.kind)
+		}
+		if !tc.wantDigit && hasRange(s, '0', '9') {
+			t.Errorf("kind=%d: unexpected digits present", tc.kind)
+		}
+		if !tc.wantUpper && hasRange(s, 'A', 'Z') {
+			t.Errorf("kind=%d: unexpected uppercase present", tc.kind)
+		}
+		if !tc.wantLo && hasRange(s, 'a', 'z') {
+			t.Errorf("kind=%d: unexpected lowercase present", tc.kind)
+		}
+	}
+}

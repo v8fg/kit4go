@@ -18,16 +18,6 @@ const (
 	letterIdxMax  = letterIdxMask / letterIdxBits // # of letter indices fitting in 63 bits
 )
 
-// maxBits returns the maximum bits can represent the number, if the number is power of two, plus one.
-//
-// Like: 0->0, 1->1, 2->2, 3->2, 4->3, 5->3, 8->4
-func maxBits(num int) (bits int) {
-	for ; num >= 1; num >>= 1 {
-		bits++
-	}
-	return bits
-}
-
 // RandStringWithLetter only returns a random string(uppercase or lowercase) of length n, with no numbers.
 //
 //	more details ref: https://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-go/31832326#31832326
@@ -109,9 +99,16 @@ func RandStringWithKind(n int, kind int) []byte {
 	if kind <= 0 || kind >= 8 {
 		posIndex = []int{0, 1, 2}
 	} else {
-		for i := maxBits(kind); kind > 0; kind &= kind - 1 {
-			i--
-			posIndex = append(posIndex, i)
+		// kind is a 3-bit mask: bit 0 → digits, bit 1 → uppercase, bit 2 →
+		// lowercase. Include each character group whose bit is set, in bit
+		// order. (The previous maxBits + clear-lowest-bit loop mapped the
+		// lowest set bit to the highest index, which scrambled the groups
+		// whenever the set bits were not contiguous — e.g. kind=5 (bits 0+2,
+		// digits+lowercase) silently produced lowercase+uppercase instead.)
+		for k := range 3 {
+			if kind&(1<<k) != 0 {
+				posIndex = append(posIndex, k)
+			}
 		}
 	}
 
