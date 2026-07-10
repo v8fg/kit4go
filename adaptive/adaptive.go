@@ -115,6 +115,13 @@ type Pool[Job any] struct {
 	wg     sync.WaitGroup // workers
 	scaler sync.WaitGroup // autoscaler goroutine
 
+	// recovered counts user work() panics recovered across every worker;
+	// onPanic is an optional hook fired on each recovery. Workers run work on
+	// library-owned goroutines, so an un-recovered panic would crash the host.
+	// Both default to nil/0, so a pool whose work never panics pays nothing.
+	recovered atomic.Uint64
+	onPanic   atomic.Pointer[func(any)]
+
 	closeOnce sync.Once
 }
 
@@ -323,7 +330,7 @@ func (p *Pool[Job]) worker(stopCh chan struct{}) {
 			if !ok {
 				return
 			}
-			p.work(j)
+			p.safeWork(j)
 		}
 	}
 }
@@ -336,12 +343,47 @@ func (p *Pool[Job]) drainQueue() {
 			if !ok {
 				return
 			}
-			p.work(j)
+			p.safeWork(j)
 		default:
 			return
 		}
 	}
 }
+
+// safeWork runs one job with panic recovery. Workers are library-owned
+// goroutines, so an un-recovered panic in work would crash the host — exactly
+// the do-no-harm failure an autoscaling pool must prevent. A recovered panic is
+// counted in Recovered() and surfaced via onPanic (if set); the worker then
+// continues to the next job (a bad job does not shrink the pool or starve the
+// queue). Mirrors batcher.safeFlush / workerpool.safeCall / hotreload.safeReload.
+func (p *Pool[Job]) safeWork(j Job) {
+	defer func() {
+		if r := recover(); r != nil {
+			p.recovered.Add(1)
+			if hook := p.onPanic.Load(); hook != nil {
+				(*hook)(r)
+			}
+		}
+	}()
+	p.work(j)
+}
+
+// SetOnPanic installs a hook fired (non-blocking) whenever a worker recovers a
+// panic from the user work function. The hook runs on a worker goroutine, so it
+// must not block. Set to nil to disable. A recovered work panic is otherwise
+// silent — the worker keeps draining and the only trace is Recovered() climbing
+// — so wire an alert here for a misbehaving job type.
+func (p *Pool[Job]) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		p.onPanic.Store(nil)
+		return
+	}
+	p.onPanic.Store(&fn)
+}
+
+// Recovered returns the number of user work() panics recovered by workers since
+// the pool was created.
+func (p *Pool[Job]) Recovered() uint64 { return p.recovered.Load() }
 
 // Submit enqueues a job. It returns [ErrClosed] if the pool is shutting down,
 // [ErrFull] if the queue is full (backpressure), or blocks up to ctx deadline.
