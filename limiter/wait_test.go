@@ -43,11 +43,16 @@ func TestSlidingWindow_WaitImmediateSuccess(t *testing.T) {
 }
 
 func TestSlidingWindow_WaitCtxCancelled(t *testing.T) {
-	l := NewLimiter(LimiterOptions{Algorithm: AlgorithmSlidingWindow, Rate: 1, Burst: 1})
-	_ = l.Wait(context.Background())
+	// Frozen clock: the per-second window cannot slide, so a drained limiter
+	// stays at capacity and Wait must time out. With the real clock this was
+	// flaky — landing near a wall-second boundary slid the window inside the
+	// 50ms budget and let Wait succeed.
+	sw := newSlidingWindow(1, time.Second)
+	sw.now = func() time.Time { return time.Unix(1_000_000, 0) }
+	_ = sw.Wait(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := l.Wait(ctx); err == nil {
+	if err := sw.Wait(ctx); err == nil {
 		t.Fatal("should timeout")
 	}
 }
@@ -60,11 +65,16 @@ func TestFixedWindow_WaitImmediateSuccess(t *testing.T) {
 }
 
 func TestFixedWindow_WaitCtxCancelled(t *testing.T) {
-	l := NewLimiter(LimiterOptions{Algorithm: AlgorithmFixedWindow, Rate: 1, Burst: 1})
-	_ = l.Wait(context.Background())
+	// Frozen clock: the window cannot reset, so a drained limiter stays at
+	// capacity and Wait must time out. With the real clock this was flaky —
+	// landing near a wall-second boundary reset the window inside the 50ms
+	// budget and let Wait succeed.
+	fw := newFixedWindow(1, time.Second)
+	fw.now = func() time.Time { return time.Unix(1_000_000, 0) }
+	_ = fw.Wait(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if err := l.Wait(ctx); err == nil {
+	if err := fw.Wait(ctx); err == nil {
 		t.Fatal("should timeout")
 	}
 }
