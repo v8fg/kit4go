@@ -4,6 +4,7 @@ package kafka
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,6 +28,7 @@ type franzConsumerGroup struct {
 	received  atomic.Uint64
 	acked     atomic.Uint64
 	failed    atomic.Uint64
+	recovered atomic.Uint64 // consumer handler panics recovered (mirrors sarama; observable + L5)
 	rebalance atomic.Uint64 // always 0 under franz-go (OnRebalance hook not available in v1.21.4; upgrade to track)
 	bytes     atomic.Uint64
 
@@ -77,7 +79,7 @@ func (s *franzConsumerGroup) Consume(ctx context.Context, topics []string, handl
 			s.received.Add(1)
 			s.bytes.Add(uint64(len(r.Value)))
 			s.fire(ConsumerEvent{Name: "message", Msg: msg})
-			if err := handler(msg); err != nil {
+			if err := s.safeHandler(handler, msg); err != nil {
 				s.failed.Add(1)
 				s.fire(ConsumerEvent{Name: "nack", Msg: msg, Err: err})
 				continue // NACK: do not mark → re-delivered next session
@@ -123,9 +125,32 @@ func (s *franzConsumerGroup) Metrics() ConsumerMetrics {
 		Received:  s.received.Load(),
 		Acked:     s.acked.Load(),
 		Failed:    s.failed.Load(),
+		Recovered: s.recovered.Load(),
 		Rebalance: s.rebalance.Load(),
 		Bytes:     s.bytes.Load(),
 	}
+}
+
+// Recovered returns the number of consumer-handler panics recovered since the
+// group started. Parity with the sarama backend (saramaConsumerGroup.Recovered)
+// so the seamless-switch contract holds: a panicking handler is recovered,
+// counted here, surfaced as a NACK (re-delivered next session), and the loop
+// survives — under BOTH backends.
+func (s *franzConsumerGroup) Recovered() uint64 { return s.recovered.Load() }
+
+// safeHandler invokes the user MessageHandler with panic recovery, mirroring
+// the sarama backend's cgHandler.safeHandlerCall. A panic is counted in
+// recovered and turned into a "kafka: consumer handler panic" error so the
+// caller NACKs the message (re-delivered next session) instead of the panic
+// propagating out of Consume and crashing the caller's consume-loop goroutine.
+func (s *franzConsumerGroup) safeHandler(handler MessageHandler, msg Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.recovered.Add(1)
+			err = fmt.Errorf("kafka: consumer handler panic: %v", r)
+		}
+	}()
+	return handler(msg)
 }
 
 func (s *franzConsumerGroup) Snapshot() ConsumerSnapshot {
@@ -177,10 +202,11 @@ type franzPartitionConsumer struct {
 	pumpStart  atomic.Bool // set true inside pumpInit once the pump is launched
 	pumpCancel context.CancelFunc
 
-	received atomic.Uint64
-	acked    atomic.Uint64
-	failed   atomic.Uint64
-	bytes    atomic.Uint64
+	received  atomic.Uint64
+	acked     atomic.Uint64
+	failed    atomic.Uint64
+	recovered atomic.Uint64 // consumer handler panics recovered (mirrors sarama; observable + L5)
+	bytes     atomic.Uint64
 
 	errChOnce sync.Once
 	errCh     chan error
@@ -231,7 +257,7 @@ func (s *franzPartitionConsumer) pump(ctx context.Context, handler MessageHandle
 			s.bytes.Add(uint64(len(r.Value)))
 			s.fire(ConsumerEvent{Name: "message", Msg: msg})
 			if handler != nil {
-				if err := handler(msg); err != nil {
+				if err := s.safeHandler(handler, msg); err != nil {
 					s.failed.Add(1)
 					s.fire(ConsumerEvent{Name: "nack", Msg: msg, Err: err})
 					continue
@@ -285,11 +311,28 @@ func (s *franzPartitionConsumer) Close() error {
 
 func (s *franzPartitionConsumer) Metrics() ConsumerMetrics {
 	return ConsumerMetrics{
-		Received: s.received.Load(),
-		Acked:    s.acked.Load(),
-		Failed:   s.failed.Load(),
-		Bytes:    s.bytes.Load(),
+		Received:  s.received.Load(),
+		Acked:     s.acked.Load(),
+		Failed:    s.failed.Load(),
+		Recovered: s.recovered.Load(),
+		Bytes:     s.bytes.Load(),
 	}
+}
+
+// Recovered returns the number of consumer-handler panics recovered. Parity
+// with saramaPartitionConsumer.Recovered (see franzConsumerGroup.Recovered).
+func (s *franzPartitionConsumer) Recovered() uint64 { return s.recovered.Load() }
+
+// safeHandler invokes the user MessageHandler with panic recovery, mirroring
+// the sarama backend. See franzConsumerGroup.safeHandler for the rationale.
+func (s *franzPartitionConsumer) safeHandler(handler MessageHandler, msg Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.recovered.Add(1)
+			err = fmt.Errorf("kafka: consumer handler panic: %v", r)
+		}
+	}()
+	return handler(msg)
 }
 
 func (s *franzPartitionConsumer) Snapshot() ConsumerSnapshot {
