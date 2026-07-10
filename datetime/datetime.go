@@ -238,7 +238,19 @@ func LastDateTimeOfISOWeek(t time.Time) time.Time {
 //	end:   2022-03-02 09:00:00
 //	delta date day: 2
 func DeltaDateDays(start, end time.Time) int {
-	return int(StartTime(end).Sub(StartTime(start)).Hours() / 24.0)
+	s := StartTime(start)
+	e := StartTime(end)
+	// Re-create each snapped calendar date as a UTC midnight and diff those.
+	// Diffing the local midnights directly is DST-sensitive: a spring-forward
+	// day is only 23h wall-clock, so two consecutive dates across it subtract
+	// to 23h and int(23/24) wrongly yields 0. Re-expressed in UTC the gap is
+	// exactly 24h per calendar day (UTC has no DST), so the count is exact and
+	// still symmetric (end<start yields a negative day count).
+	sy, sm, sd := s.Date()
+	ey, em, ed := e.Date()
+	sUTC := time.Date(sy, sm, sd, 0, 0, 0, 0, time.UTC)
+	eUTC := time.Date(ey, em, ed, 0, 0, 0, 0, time.UTC)
+	return int(eUTC.Sub(sUTC) / (24 * time.Hour))
 }
 
 // DeltaDays returns the days between the end and start.
