@@ -132,16 +132,18 @@ func (tb *tokenBucket) Wait(ctx context.Context) error {
 	// close. Without this, Wait would spin on 1ms timers (Allow keeps returning
 	// false) until ctx expires — violating the "no-op after Close" contract.
 	if tb.closed.Load() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return ErrLimiterClosed
+		return closedWaitResult(ctx)
 	}
 	// Fast path: try once before setting up the timer.
 	if tb.Allow() {
 		return nil
 	}
 	for {
+		// Re-check each iteration: a Close issued WHILE Wait is blocked at
+		// capacity must unblock it within one poll, not poll until ctx expires.
+		if tb.closed.Load() {
+			return closedWaitResult(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

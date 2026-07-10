@@ -104,6 +104,59 @@ func TestTokenBucket_WaitClosedNoBusyLoop(t *testing.T) {
 	}
 }
 
+// TestAllAlgorithms_WaitClosedDuringBlock covers the Close-DURING-Wait race,
+// which the entry-only check above cannot catch: Close arriving AFTER Wait has
+// already entered its poll loop, blocked at capacity. The loop must re-check
+// `closed` each iteration so a concurrent Close unblocks Wait within one poll
+// instead of polling until ctx expires.
+//
+// Determinism: every algorithm is built with a FROZEN clock (a constant now),
+// so after draining the single token no time advances — no token refills and no
+// per-second window ever slides. Wait therefore blocks indefinitely for all five
+// algorithms regardless of where the test lands on the wall-clock second, and
+// Close is the only thing that can unblock it. (The poll sleep itself still uses
+// real timers; only the token/window math sees the frozen clock.)
+//
+// BEFORE THIS FIX: each Wait's loop only consulted Allow() (false on close but
+// indistinguishable from "at capacity"), so a blocked Wait ignored the Close and
+// polled until ctx expired. This case FAILS the 500ms arm on the old code.
+func TestAllAlgorithms_WaitClosedDuringBlock(t *testing.T) {
+	frozen := func() time.Time { return time.Unix(1_000_000, 0) }
+	cases := map[string]Limiter{
+		"token_bucket":   func() Limiter { l := newTokenBucket(1, 1); l.now = frozen; return l }(),
+		"leaky_bucket":   func() Limiter { l := newLeakyBucket(1, 1); l.now = frozen; return l }(),
+		"gcra":           func() Limiter { l := newGCRA(1, 1); l.now = frozen; return l }(),
+		"sliding_window": func() Limiter { l := newSlidingWindow(1, time.Second); l.now = frozen; return l }(),
+		"fixed_window":   func() Limiter { l := newFixedWindow(1, time.Second); l.now = frozen; return l }(),
+	}
+	for name, l := range cases {
+		t.Run(name, func(t *testing.T) {
+			// Take the only token; with a frozen clock the next never arrives.
+			if !l.Allow() {
+				t.Fatalf("%s: drain Allow failed", name)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			done := make(chan error, 1)
+			go func() { done <- l.Wait(ctx) }()
+
+			// Let Wait enter the poll loop (it is blocked: the clock is frozen).
+			time.Sleep(50 * time.Millisecond)
+			l.Close() // close WHILE Wait is blocked at capacity
+
+			select {
+			case err := <-done:
+				if !errors.Is(err, ErrLimiterClosed) {
+					t.Fatalf("%s: Wait err=%v want ErrLimiterClosed", name, err)
+				}
+			case <-time.After(500 * time.Millisecond):
+				t.Fatalf("%s: Wait did not return within 500ms of a Close issued while blocked — loop ignores concurrent Close", name)
+			}
+		})
+	}
+}
+
 // TestTokenBucket_WaitClosedDoesNotSpinCounters is a complementary guard: it
 // asserts Wait on a closed limiter never reaches the token-acquire path (Denied
 // stays flat). The authoritative old-code-failure proofs are the two tests

@@ -101,15 +101,17 @@ func (lb *leakyBucket) acquire(n int) bool {
 func (lb *leakyBucket) Wait(ctx context.Context) error {
 	// Closed short-circuit: match Allow/TryAcquire (see tokenBucket.Wait).
 	if lb.closed.Load() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return ErrLimiterClosed
+		return closedWaitResult(ctx)
 	}
 	if lb.Allow() {
 		return nil
 	}
 	for {
+		// Re-check each iteration: a Close issued WHILE Wait is blocked at
+		// capacity must unblock it within one poll, not poll until ctx expires.
+		if lb.closed.Load() {
+			return closedWaitResult(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

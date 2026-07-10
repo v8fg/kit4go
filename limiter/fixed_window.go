@@ -92,15 +92,17 @@ func (fw *fixedWindow) acquire(n int) bool {
 func (fw *fixedWindow) Wait(ctx context.Context) error {
 	// Closed short-circuit: match Allow/TryAcquire (see tokenBucket.Wait).
 	if fw.closed.Load() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return ErrLimiterClosed
+		return closedWaitResult(ctx)
 	}
 	if fw.Allow() {
 		return nil
 	}
 	for {
+		// Re-check each iteration: a Close issued WHILE Wait is blocked at
+		// capacity must unblock it within one poll, not poll until ctx expires.
+		if fw.closed.Load() {
+			return closedWaitResult(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
