@@ -14,13 +14,14 @@ import (
 // the next value from vals (cycling), records the number of Load invocations,
 // and can optionally block (to exercise Reload serialization) or fail.
 type mockLoader struct {
-	mu      sync.Mutex
-	vals    []string
-	idx     int
-	calls   atomic.Int64
-	delay   time.Duration // if >0, Load sleeps this long (simulates slow source)
-	fail    bool          // if true, Load returns errLoad
-	failNth int           // if >0, the Nth Load (1-based) fails; afterwards ok
+	mu       sync.Mutex
+	vals     []string
+	idx      int
+	calls    atomic.Int64
+	delay    time.Duration // if >0, Load sleeps this long (simulates slow source)
+	fail     bool          // if true, Load returns errLoad
+	failNth  int           // if >0, the Nth Load (1-based) fails; afterwards ok
+	panicNth int           // if >0, the Nth Load (1-based) panics; afterwards ok
 }
 
 func (m *mockLoader) Load() (string, error) {
@@ -36,6 +37,10 @@ func (m *mockLoader) Load() (string, error) {
 	if m.failNth > 0 && int(m.calls.Load()) == m.failNth {
 		m.failNth = 0 // fail once
 		return "", errLoad
+	}
+	if m.panicNth > 0 && int(m.calls.Load()) == m.panicNth {
+		m.panicNth = 0 // panic once
+		panic("mock loader panic")
 	}
 	v := m.vals[m.idx%len(m.vals)]
 	m.idx++
@@ -280,4 +285,83 @@ func TestStart_DoubleStartIndependent(t *testing.T) {
 	// If the instance-field regression returned, stop1 would have closed
 	// stop2's channel (nil/double-close panic) or stop2's wg.Wait would block
 	// forever on an orphaned goroutine. Reaching here means both are clean.
+}
+
+// TestStart_LoaderPanicRecovered proves the reload goroutine recovers a
+// panicking Loader instead of crashing the host: the last good value stays
+// live, the recovery is counted, and the goroutine keeps ticking past the panic.
+// Call 1 (New) loads "good"; call 2 (first tick) panics; later ticks load again.
+func TestStart_LoaderPanicRecovered(t *testing.T) {
+	m := &mockLoader{vals: []string{"good"}, panicNth: 2}
+	b, err := New[string](m)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := b.Get(); got != "good" {
+		t.Fatalf("Get = %q, want good", got)
+	}
+
+	stop := b.Start(context.Background(), 5*time.Millisecond)
+	time.Sleep(60 * time.Millisecond) // let at least the panicking tick + a few more fire
+	stop()
+
+	if r := b.Recovered(); r == 0 {
+		t.Fatalf("Recovered = %d, want >0 (goroutine Loader panic must be recovered, not crash the host)", r)
+	}
+	// Last good value survived the panic.
+	if got := b.Get(); got != "good" {
+		t.Fatalf("Get after panic = %q, want last good value %q", got, "good")
+	}
+	// The goroutine kept ticking after the recovered panic (more Loads ran).
+	if c := m.calls.Load(); c <= 2 {
+		t.Fatalf("Load calls = %d, want >2 (goroutine must survive the recovered panic and keep reloading)", c)
+	}
+}
+
+// TestSetOnPanic_FiresOnRecovery asserts the onPanic hook receives the
+// recovered panic value, so a stuck source is observable rather than silent.
+func TestSetOnPanic_FiresOnRecovery(t *testing.T) {
+	m := &mockLoader{vals: []string{"good"}, panicNth: 2}
+	b, err := New[string](m)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var saw atomic.Value // stores the recovered value once the hook fires
+	b.SetOnPanic(func(r any) { saw.Store(r) })
+
+	stop := b.Start(context.Background(), 5*time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
+	stop()
+
+	if saw.Load() == nil {
+		t.Fatalf("onPanic hook did not fire on the recovered Loader panic")
+	}
+
+	// Disabling the hook is a no-op (no panic, no further fires); covers the
+	// nil branch and proves a set-then-clear lifecycle is safe.
+	b.SetOnPanic(nil)
+}
+
+// TestReload_SynchronousPanicPropagatesRaw asserts the recover is goroutine-
+// only: a DIRECT (synchronous) Reload must let the Loader panic propagate raw
+// to the caller (kit-callback convention: the synchronous caller owns recovery)
+// and must NOT count it in Recovered().
+func TestReload_SynchronousPanicPropagatesRaw(t *testing.T) {
+	m := &mockLoader{vals: []string{"good"}, panicNth: 2}
+	b, err := New[string](m)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatalf("synchronous Reload swallowed the Loader panic; want raw propagation to caller")
+		}
+		if b.Recovered() != 0 {
+			t.Fatalf("Recovered = %d, want 0 (synchronous panic is not recovered or counted)", b.Recovered())
+		}
+	}()
+	_ = b.Reload() // call 2 -> panics, must propagate raw
 }

@@ -50,6 +50,12 @@ type Buffer[T any] struct {
 	mu    sync.Mutex        // serializes Reload so Load runs at most once at a time
 
 	loader Loader[T]
+
+	// recovered counts Loader panics recovered on the Start goroutine; onPanic
+	// is an optional hook fired on each recovery. Both default to nil/0, so a
+	// Buffer that never Starts (synchronous Reload only) pays nothing.
+	recovered atomic.Uint64
+	onPanic   atomic.Pointer[func(any)]
 }
 
 // New builds a Buffer by calling loader.Load once. It returns an error if the
@@ -100,6 +106,43 @@ func (b *Buffer[T]) Reload() error {
 	return nil
 }
 
+// SetOnPanic installs a hook fired (non-blocking) whenever the Start goroutine
+// recovers a panic from the Loader. The hook runs on the reload goroutine, so
+// it must not block. Set to nil to disable. A recovered Loader panic is
+// otherwise silent — the last good value keeps being served and the only trace
+// is Recovered() climbing — so wire an alert here for a stuck/broken source.
+func (b *Buffer[T]) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		b.onPanic.Store(nil)
+		return
+	}
+	b.onPanic.Store(&fn)
+}
+
+// Recovered returns the number of Loader panics recovered on the Start
+// goroutine since the Buffer was created. Panics from a synchronous Reload
+// (New, or a direct caller) are NOT counted: those propagate raw to the caller.
+func (b *Buffer[T]) Recovered() uint64 { return b.recovered.Load() }
+
+// safeReload runs Reload with panic recovery on the Start goroutine. The Loader
+// runs here on a library-owned goroutine, so a panicking Load is recovered
+// (counted + surfaced via onPanic) rather than crashing the host — the last
+// good value stays live and the next tick retries. Synchronous Reload calls
+// (New, a direct caller) are NOT wrapped: a panic there propagates raw to the
+// caller per the kit-callback convention (the synchronous caller owns the
+// recovery decision). Mirrors batcher.safeFlush / workerpool.safeCall.
+func (b *Buffer[T]) safeReload() {
+	defer func() {
+		if r := recover(); r != nil {
+			b.recovered.Add(1)
+			if hook := b.onPanic.Load(); hook != nil {
+				(*hook)(r)
+			}
+		}
+	}()
+	_ = b.Reload()
+}
+
 // Start spawns a goroutine that calls Reload every interval until stop() is
 // called or ctx is cancelled. The returned stop() is idempotent: calling it
 // more than once is a no-op. stop() blocks until the reload goroutine has
@@ -109,7 +152,10 @@ func (b *Buffer[T]) Reload() error {
 //
 // A Reload failure inside the loop is ignored (the previously published value
 // remains live); callers needing failure visibility should call Reload directly
-// or wrap the Loader.
+// or wrap the Loader. A Loader PANIC inside the loop is recovered (so a buggy
+// source cannot crash the host): the last good value stays live, the next tick
+// retries, the recovery is counted in Recovered(), and the onPanic hook (if
+// set via SetOnPanic) is fired.
 func (b *Buffer[T]) Start(ctx context.Context, interval time.Duration) (stop func()) {
 	// Each Start/stop cycle uses LOCAL bookkeeping (stopCh/stopOnce/wg) so a
 	// second Start cannot overwrite the first's channels and orphan its reload
@@ -129,9 +175,10 @@ func (b *Buffer[T]) Start(ctx context.Context, interval time.Duration) (stop fun
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Ignore the error: a failed reload leaves the last good value
-				// live, which is the desired fail-open behavior for hot config.
-				_ = b.Reload()
+				// safeReload (not Reload): a failing reload leaves the last good
+				// value live (fail-open), AND a panicking Load is recovered so
+				// the goroutine — and the host — survive a broken source.
+				b.safeReload()
 			}
 		}
 	}()
