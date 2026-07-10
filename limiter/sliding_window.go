@@ -108,15 +108,17 @@ func (sw *slidingWindow) acquire(n int) bool {
 func (sw *slidingWindow) Wait(ctx context.Context) error {
 	// Closed short-circuit: match Allow/TryAcquire (see tokenBucket.Wait).
 	if sw.closed.Load() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return ErrLimiterClosed
+		return closedWaitResult(ctx)
 	}
 	if sw.Allow() {
 		return nil
 	}
 	for {
+		// Re-check each iteration: a Close issued WHILE Wait is blocked at
+		// capacity must unblock it within one poll, not poll until ctx expires.
+		if sw.closed.Load() {
+			return closedWaitResult(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

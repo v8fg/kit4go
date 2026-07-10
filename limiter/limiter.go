@@ -19,6 +19,18 @@ var ErrRateLimited = errors.New("limiter: rate limited")
 // TryAcquire are no-ops after Close, so this makes Wait honour that contract.
 var ErrLimiterClosed = errors.New("limiter: closed")
 
+// closedWaitResult is the error a Wait returns when it observes the limiter is
+// closed: ctx.Err() when the context is already done (the more informative
+// condition), otherwise ErrLimiterClosed. Shared by every implementation's
+// entry check and its in-loop re-check, so Close is honoured both before Wait
+// starts and after it has already entered its poll loop blocked at capacity.
+func closedWaitResult(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return ErrLimiterClosed
+}
+
 // Limiter is a rate limiter. All methods are safe for concurrent use.
 //
 // Implementations are deliberately minimal: a non-blocking probe ([Allow]), a

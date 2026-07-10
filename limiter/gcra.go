@@ -92,15 +92,17 @@ func (g *gcraLimiter) acquire(n int) bool {
 func (g *gcraLimiter) Wait(ctx context.Context) error {
 	// Closed short-circuit: match Allow/TryAcquire (see tokenBucket.Wait).
 	if g.closed.Load() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return ErrLimiterClosed
+		return closedWaitResult(ctx)
 	}
 	if g.Allow() {
 		return nil
 	}
 	for {
+		// Re-check each iteration: a Close issued WHILE Wait is blocked at
+		// capacity must unblock it within one poll, not poll until ctx expires.
+		if g.closed.Load() {
+			return closedWaitResult(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
