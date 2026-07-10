@@ -1,6 +1,7 @@
 package shortlink
 
 import (
+	"math"
 	"testing"
 )
 
@@ -110,4 +111,42 @@ func TestMemoryStore_ConcurrentSafe(t *testing.T) {
 		_, _ = store.Load("c")
 	}
 	<-done
+}
+
+// TestIDShortener_SmallAlphabetNoOverflow guards encodeBaseN against the
+// buffer-overflow panic on a small (2-char) alphabet. The old [12]byte buffer
+// was sized only for base62 (11 chars); a 2-char alphabet needs up to 64 chars
+// for MaxUint64, so Encode(MaxUint64) — or Next() past ~4096 — panicked with an
+// index-out-of-range. With the fix the buffer holds the base-2 maximum and
+// Encode/Decode round-trip losslessly.
+func TestIDShortener_SmallAlphabetNoOverflow(t *testing.T) {
+	s := NewIDShortener("01", 0) // base 2: the smallest allowed alphabet
+
+	// Encode(MaxUint64) needs exactly 64 binary digits; must not panic.
+	code := s.Encode(math.MaxUint64)
+	if len(code) != 64 {
+		t.Fatalf("Encode(MaxUint64) base2 len=%d, want 64", len(code))
+	}
+	// Round-trips losslessly.
+	id, err := s.Decode(code)
+	if err != nil {
+		t.Fatalf("Decode err=%v", err)
+	}
+	if id != math.MaxUint64 {
+		t.Fatalf("round-trip id=%d, want MaxUint64", id)
+	}
+
+	// Next() past the old 12-char boundary (4096 = 2^12) must not panic.
+	for range 5000 {
+		_ = s.Next()
+	}
+	// The current counter (5000) encodes without panic and round-trips.
+	c := s.Encode(5000)
+	got, err := s.Decode(c)
+	if err != nil {
+		t.Fatalf("Decode(5000) err=%v", err)
+	}
+	if got != 5000 {
+		t.Fatalf("round-trip 5000: got %d", got)
+	}
 }

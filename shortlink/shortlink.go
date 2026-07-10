@@ -251,7 +251,12 @@ func encodeBaseN(id uint64, alphabet string) string {
 		return string(alphabet[0])
 	}
 	n := uint64(len(alphabet))
-	var buf [12]byte // 2^64 in base62 fits in 11 chars
+	// Worst case is the smallest allowed alphabet (base 2): MaxUint64 is 64
+	// binary digits. base62 needs only 11, but a custom 2-char alphabet is a
+	// valid configuration (WithAlphabet/NewIDShortener accept len > 1), so the
+	// buffer must hold the base-2 maximum or Encode panics on index-out-of-range
+	// once the counter grows past what fits in the old 12-char buffer.
+	var buf [64]byte
 	i := len(buf)
 	for id > 0 {
 		i--
