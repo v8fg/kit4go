@@ -219,6 +219,32 @@ func TestDeltaDateDaysSymmetric(t *testing.T) {
 	}
 }
 
+// TestDeltaDateDays_DST guards the DST fix. The old formula diffed local
+// midnights and divided by 24h, so a spring-forward day (23h wall-clock) made
+// consecutive dates across it count as 0 days (and a 2-day span over it as 1).
+// Re-expressing each date as UTC midnight makes the count exact.
+func TestDeltaDateDays_DST(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skipf("time zone database unavailable, skipping DST test: %v", err)
+	}
+	// US 2022 spring-forward was Mar 13: the Mar 13 calendar day is 23h.
+	cases := []struct {
+		start, end time.Time
+		want       int
+	}{
+		{time.Date(2022, 3, 13, 10, 0, 0, 0, loc), time.Date(2022, 3, 14, 9, 0, 0, 0, loc), 1}, // across the 23h day
+		{time.Date(2022, 3, 12, 10, 0, 0, 0, loc), time.Date(2022, 3, 14, 9, 0, 0, 0, loc), 2}, // 2-day span over DST
+		{time.Date(2022, 11, 6, 10, 0, 0, 0, loc), time.Date(2022, 11, 7, 9, 0, 0, 0, loc), 1}, // fall-back 25h day
+	}
+	for _, c := range cases {
+		if got := datetime.DeltaDateDays(c.start, c.end); got != c.want {
+			t.Errorf("DeltaDateDays(%s -> %s) = %d, want %d (DST)",
+				c.start.Format("2006-01-02"), c.end.Format("2006-01-02"), got, c.want)
+		}
+	}
+}
+
 // TestDeltaDays covers DeltaDays returning fractional day spans.
 func TestDeltaDays(t *testing.T) {
 	type args struct {
