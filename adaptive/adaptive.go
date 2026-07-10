@@ -394,6 +394,12 @@ func (p *Pool[Job]) Workers() int { return int(p.workers.Load()) }
 // indefinitely (stuck network call, held lock, infinite loop) will hang Close.
 // Work MUST be non-blocking or honor a context/deadline internally — Go cannot
 // preempt it. Close's wait bound is: (in-flight jobs) x max(Work duration).
+//
+// Accepted-but-not-yet-consumed jobs are guaranteed to run: after the workers
+// exit, Close does a final non-blocking drain of the queue and runs any
+// stragglers synchronously. This closes the Submit/Close race where a job is
+// enqueued (Submit returns nil) after the last worker's drainQueue has already
+// finished — without this drain such a job would be silently abandoned.
 func (p *Pool[Job]) Close() error {
 	p.closeOnce.Do(func() {
 		p.closed.Store(true)
@@ -401,5 +407,14 @@ func (p *Pool[Job]) Close() error {
 	})
 	p.scaler.Wait() // autoscaler is down before workers, so no more grow/shrink races
 	p.wg.Wait()     // workers finish draining and exit
+
+	// Final drain: a Submit that raced ahead of close(done) can land a job in
+	// p.queue AFTER the last worker's drainQueue returned (so the worker never
+	// saw it) but BEFORE p.closed was observed. Such a job was accepted (Submit
+	// returned nil) so it must run. Workers are gone now, so run stragglers on
+	// the Close caller's goroutine. Non-blocking: only jobs already in the
+	// queue at this instant are touched; Submit now observes p.closed and
+	// rejects, so the drain terminates in finite time.
+	p.drainQueue()
 	return nil
 }

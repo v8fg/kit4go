@@ -47,7 +47,7 @@ func TestSMTPSenderBuildsWithOptions(t *testing.T) {
 		WithPort(587),
 		WithAuth("user", "pass"),
 		WithDefaultFrom("noreply@example.com"),
-		WithSendFunc(func(_ *gomail.Client, m *gomail.Msg) error {
+		WithSendFunc(func(_ context.Context, _ *gomail.Client, m *gomail.Msg) error {
 			capturedMsg = m
 			return nil
 		}),
@@ -71,7 +71,7 @@ func TestSMTPSenderDefaultFromUsedWhenEmpty(t *testing.T) {
 	s, err := NewSMTPSender(
 		WithHost("smtp.example.com"),
 		WithDefaultFrom("default@example.com"),
-		WithSendFunc(func(_ *gomail.Client, m *gomail.Msg) error { return nil }),
+		WithSendFunc(func(_ context.Context, _ *gomail.Client, _ *gomail.Msg) error { return nil }),
 	)
 	require.NoError(t, err)
 	err = s.Send(context.Background(), &Message{
@@ -84,7 +84,7 @@ func TestSMTPSenderDefaultFromUsedWhenEmpty(t *testing.T) {
 func TestSMTPSenderRequiresFrom(t *testing.T) {
 	s, err := NewSMTPSender(
 		WithHost("smtp.example.com"),
-		WithSendFunc(func(_ *gomail.Client, m *gomail.Msg) error { return nil }),
+		WithSendFunc(func(_ context.Context, _ *gomail.Client, _ *gomail.Msg) error { return nil }),
 	)
 	require.NoError(t, err)
 	err = s.Send(context.Background(), &Message{
@@ -102,7 +102,7 @@ func TestSMTPSenderRequiresHost(t *testing.T) {
 func TestSMTPSenderSendValidation(t *testing.T) {
 	s, _ := NewSMTPSender(
 		WithHost("smtp.example.com"),
-		WithSendFunc(func(_ *gomail.Client, m *gomail.Msg) error { return nil }),
+		WithSendFunc(func(_ context.Context, _ *gomail.Client, _ *gomail.Msg) error { return nil }),
 	)
 	// Empty To → validation error before send.
 	err := s.Send(context.Background(), &Message{Subject: "s", Text: "b"})
@@ -118,7 +118,7 @@ func TestSendFuncError(t *testing.T) {
 	s, _ := NewSMTPSender(
 		WithHost("smtp.example.com"),
 		WithDefaultFrom("test@example.com"),
-		WithSendFunc(func(_ *gomail.Client, _ *gomail.Msg) error {
+		WithSendFunc(func(_ context.Context, _ *gomail.Client, _ *gomail.Msg) error {
 			return context.DeadlineExceeded
 		}),
 	)

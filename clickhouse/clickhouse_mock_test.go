@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	ch "github.com/ClickHouse/clickhouse-go/v2"
@@ -277,4 +278,51 @@ func TestNewClient_PingError_ClosesConn(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, 1, mc.pingCalls)
 	require.Equal(t, 1, mc.closeCalls, "failed Ping must close the conn")
+}
+
+// TestClose_IdempotentOwningClient is the R24 regression test: double (and
+// concurrent) Close on an owning client must call conn.Close exactly once.
+// Before the sync.Once gate, the second Close would re-close the driver conn.
+func TestClose_IdempotentOwningClient(t *testing.T) {
+	mc := &fullMockConn{}
+	open := func(_ *ch.Options) (driver.Conn, error) { return mc, nil }
+	c, err := newClient(context.Background(), []Option{WithAddrs("h:9000")}, open)
+	require.NoError(t, err)
+
+	// First close drives conn.Close once.
+	require.NoError(t, c.Close())
+	require.Equal(t, 1, mc.closeCalls, "first Close must close the conn once")
+
+	// Repeat closes must be no-ops, not double-close the driver conn.
+	for range 10 {
+		require.NoError(t, c.Close())
+	}
+	require.Equal(t, 1, mc.closeCalls, "repeat Close must not re-close the conn")
+}
+
+// TestClose_ConcurrentOwningClient exercises concurrent Close: many goroutines
+// racing Close must still result in exactly one conn.Close call.
+func TestClose_ConcurrentOwningClient(t *testing.T) {
+	mc := &fullMockConn{}
+	open := func(_ *ch.Options) (driver.Conn, error) { return mc, nil }
+	c, err := newClient(context.Background(), []Option{WithAddrs("h:9000")}, open)
+	require.NoError(t, err)
+
+	const n = 32
+	var wg sync.WaitGroup
+	wg.Add(n)
+	start := make(chan struct{})
+	for range n {
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = c.Close()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	require.NoError(t, c.Close()) // one more for good measure
+	require.Equal(t, 1, mc.closeCalls,
+		"concurrent Close must drive conn.Close exactly once, got %d", mc.closeCalls)
 }

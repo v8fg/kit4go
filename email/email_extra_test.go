@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	gomail "github.com/wneessen/go-mail"
@@ -24,16 +25,16 @@ func TestNewSMTPSender_DefaultSendFunc(t *testing.T) {
 	require.NotNil(t, s)
 	require.NotNil(t, s.sendFunc, "default sendFunc (DialAndSend) must be wired")
 
-	// Invoking the closure must delegate to DialAndSend and surface an error
-	// (no SMTP server on 127.0.0.1:1). This covers the default-branch closure
-	// body that just calls c.DialAndSend(m).
+	// Invoking the closure must delegate to DialAndSendWithContext and surface
+	// an error (no SMTP server on 127.0.0.1:1). This covers the default-branch
+	// closure body that calls c.DialAndSendWithContext(ctx, m).
 	m := gomail.NewMsg()
 	require.NoError(t, m.From("from@example.com"))
 	require.NoError(t, m.To("to@example.com"))
 	m.Subject("t")
 	m.SetBodyString(gomail.TypeTextPlain, "body")
-	err = s.sendFunc(s.client, m)
-	require.Error(t, err, "default sendFunc should attempt DialAndSend and fail")
+	err = s.sendFunc(context.Background(), s.client, m)
+	require.Error(t, err, "default sendFunc should attempt DialAndSendWithContext and fail")
 }
 
 // TestNewSMTPSender_BadPort covers the gomail.NewClient error path by passing
@@ -54,7 +55,7 @@ func TestNewSMTPSender_BadPort(t *testing.T) {
 func TestSend_FromError(t *testing.T) {
 	s, _ := NewSMTPSender(
 		WithHost("smtp.example.com"),
-		WithSendFunc(func(*gomail.Client, *gomail.Msg) error { return nil }),
+		WithSendFunc(func(context.Context, *gomail.Client, *gomail.Msg) error { return nil }),
 	)
 	err := s.Send(context.Background(), &Message{
 		From:    "not an email",
@@ -71,7 +72,7 @@ func TestSend_ToError(t *testing.T) {
 	s, _ := NewSMTPSender(
 		WithHost("smtp.example.com"),
 		WithDefaultFrom("from@example.com"),
-		WithSendFunc(func(*gomail.Client, *gomail.Msg) error { return nil }),
+		WithSendFunc(func(context.Context, *gomail.Client, *gomail.Msg) error { return nil }),
 	)
 	err := s.Send(context.Background(), &Message{
 		To:      []string{"not an email"},
@@ -87,7 +88,7 @@ func TestSend_CcError(t *testing.T) {
 	s, _ := NewSMTPSender(
 		WithHost("smtp.example.com"),
 		WithDefaultFrom("from@example.com"),
-		WithSendFunc(func(*gomail.Client, *gomail.Msg) error { return nil }),
+		WithSendFunc(func(context.Context, *gomail.Client, *gomail.Msg) error { return nil }),
 	)
 	err := s.Send(context.Background(), &Message{
 		To:      []string{"to@example.com"},
@@ -104,7 +105,7 @@ func TestSend_ReplyToError(t *testing.T) {
 	s, _ := NewSMTPSender(
 		WithHost("smtp.example.com"),
 		WithDefaultFrom("from@example.com"),
-		WithSendFunc(func(*gomail.Client, *gomail.Msg) error { return nil }),
+		WithSendFunc(func(context.Context, *gomail.Client, *gomail.Msg) error { return nil }),
 	)
 	err := s.Send(context.Background(), &Message{
 		To:      []string{"to@example.com"},
@@ -123,7 +124,7 @@ func TestSend_HTMLOnly(t *testing.T) {
 	s, _ := NewSMTPSender(
 		WithHost("smtp.example.com"),
 		WithDefaultFrom("from@example.com"),
-		WithSendFunc(func(*gomail.Client, *gomail.Msg) error {
+		WithSendFunc(func(context.Context, *gomail.Client, *gomail.Msg) error {
 			sent = true
 			return nil
 		}),
@@ -143,7 +144,7 @@ func TestSend_ValidationError(t *testing.T) {
 	s, _ := NewSMTPSender(
 		WithHost("smtp.example.com"),
 		WithDefaultFrom("from@example.com"),
-		WithSendFunc(func(*gomail.Client, *gomail.Msg) error {
+		WithSendFunc(func(context.Context, *gomail.Client, *gomail.Msg) error {
 			t.Fatal("sendFunc must not be called on validation failure")
 			return nil
 		}),
@@ -157,4 +158,68 @@ func TestSend_ValidationError(t *testing.T) {
 	require.ErrorIs(t, s.Send(context.Background(), &Message{
 		To: []string{"x@y.com"}, Subject: "s",
 	}), ErrMissingBody)
+}
+
+// TestSend_PreCancelledContext is the R24 regression test: Send must thread the
+// caller's ctx into the send func. With a custom sendFunc that blocks until ctx
+// is done, a pre-cancelled ctx must let Send return promptly (propagating the
+// context error) rather than blocking for the full SMTP dial timeout. This
+// proves the ctx is actually forwarded instead of being discarded.
+func TestSend_PreCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancelled
+
+	s, _ := NewSMTPSender(
+		WithHost("smtp.example.com"),
+		WithDefaultFrom("from@example.com"),
+		WithSendFunc(func(c context.Context, _ *gomail.Client, _ *gomail.Msg) error {
+			// Block until ctx is done; mirror a dial that honors cancellation.
+			<-c.Done()
+			return c.Err()
+		}),
+	)
+
+	start := time.Now()
+	err := s.Send(ctx, &Message{
+		To:      []string{"to@example.com"},
+		Subject: "s",
+		Text:    "b",
+	})
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, context.Canceled,
+		"a pre-cancelled ctx must surface context.Canceled, not block")
+	// The send func returns the instant ctx is observed done. Allow generous
+	// slack for the scheduler; the point is "not the full dial timeout (~15s)".
+	require.Less(t, elapsed, time.Second,
+		"Send must return promptly on a pre-cancelled ctx, took %v", elapsed)
+}
+
+// TestSend_ThreadsContextToDefaultSendFunc verifies the production default
+// sendFunc closure actually receives the caller's ctx (regression guard that
+// the default branch wiring passes ctx through, not a throwaway).
+func TestSend_ThreadsContextToDefaultSendFunc(t *testing.T) {
+	s, err := NewSMTPSender(WithHost("smtp.example.com"))
+	require.NoError(t, err)
+	require.NotNil(t, s.sendFunc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Invoke the default closure with a pre-cancelled ctx against a
+	// non-listening host. The result must be a fast failure (ctx cancellation
+	// or dial error), never a clean nil — proving ctx is wired into the call.
+	m := gomail.NewMsg()
+	require.NoError(t, m.From("from@example.com"))
+	require.NoError(t, m.To("to@example.com"))
+	m.Subject("t")
+	m.SetBodyString(gomail.TypeTextPlain, "b")
+
+	start := time.Now()
+	err = s.sendFunc(ctx, s.client, m)
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "default sendFunc with a cancelled ctx must not succeed")
+	require.Less(t, elapsed, time.Second,
+		"default sendFunc must honor a cancelled ctx promptly, took %v", elapsed)
 }

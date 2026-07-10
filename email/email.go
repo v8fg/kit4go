@@ -67,7 +67,9 @@ var _ Sender = (*SMTPSender)(nil)
 type SMTPSender struct {
 	client      *gomail.Client
 	defaultFrom string
-	sendFunc    func(*gomail.Client, *gomail.Msg) error
+	// sendFunc carries the caller's ctx so a pre-cancelled/deadlined context
+	// aborts the SMTP dial+send instead of blocking for the full dial timeout.
+	sendFunc func(ctx context.Context, c *gomail.Client, m *gomail.Msg) error
 }
 
 // Option configures SMTPSender.
@@ -81,7 +83,7 @@ type config struct {
 	tls         bool
 	ssl         bool
 	defaultFrom string
-	sendFunc    func(*gomail.Client, *gomail.Msg) error
+	sendFunc    func(context.Context, *gomail.Client, *gomail.Msg) error
 }
 
 // WithHost sets the SMTP server host.
@@ -104,8 +106,10 @@ func WithSSL() Option { return func(c *config) { c.ssl = true } }
 // WithDefaultFrom sets the From address used when Message.From is empty.
 func WithDefaultFrom(from string) Option { return func(c *config) { c.defaultFrom = from } }
 
-// WithSendFunc injects a custom send function (for tests — replaces DialAndSend).
-func WithSendFunc(fn func(*gomail.Client, *gomail.Msg) error) Option {
+// WithSendFunc injects a custom send function (for tests — replaces
+// DialAndSendWithContext). The ctx is the caller's Send context: it lets a
+// pre-cancelled/deadlined context abort the SMTP dial+send.
+func WithSendFunc(fn func(context.Context, *gomail.Client, *gomail.Msg) error) Option {
 	return func(c *config) { c.sendFunc = fn }
 }
 
@@ -151,16 +155,21 @@ func NewSMTPSender(opts ...Option) (*SMTPSender, error) {
 	if cfg.sendFunc != nil {
 		s.sendFunc = cfg.sendFunc
 	} else {
-		s.sendFunc = func(c *gomail.Client, m *gomail.Msg) error {
-			return c.DialAndSend(m)
+		// DialAndSendWithContext threads the caller's ctx into the SMTP dial so a
+		// cancelled/deadlined context aborts the connection instead of blocking
+		// for the full client dial timeout.
+		s.sendFunc = func(ctx context.Context, c *gomail.Client, m *gomail.Msg) error {
+			return c.DialAndSendWithContext(ctx, m)
 		}
 	}
 	return s, nil
 }
 
 // Send sends a message via SMTP. Validates the message, converts to go-mail's
-// MIME format, and sends.
-func (s *SMTPSender) Send(_ context.Context, msg *Message) error {
+// MIME format, and sends. The ctx bounds the SMTP dial+send: a
+// cancelled/deadlined context aborts the connection (go-mail's
+// DialAndSendWithContext) rather than blocking for the full dial timeout.
+func (s *SMTPSender) Send(ctx context.Context, msg *Message) error {
 	if err := msg.Validate(); err != nil {
 		return err
 	}
@@ -201,5 +210,5 @@ func (s *SMTPSender) Send(_ context.Context, msg *Message) error {
 		}
 	}
 
-	return s.sendFunc(s.client, m)
+	return s.sendFunc(ctx, s.client, m)
 }
