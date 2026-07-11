@@ -1,6 +1,7 @@
 package shortlink
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -45,8 +46,20 @@ func FuzzGenerateUnique(f *testing.F) {
 		for i := range n {
 			code, err := s.Generate("https://example.com/u")
 			if err != nil {
+				if errors.Is(err, ErrCodeSpaceExhausted) {
+					// Legitimate: the code space (62^codeLen) cannot hold N
+					// unique codes, or the 4 default retries all collided while
+					// the space was nearly full. This is the documented outcome
+					// of a saturated/oversubscribed code space (see ErrCodeSpace
+					// _Exhausted), not a uniqueness bug — no duplicate was
+					// returned. The codes generated so far are unique (checked
+					// below); stop. The seed (500,2) stays under 62^2=3844 and
+					// never hits this, but a fuzzer can exceed the space (e.g.
+					// n=63, codeLen=1 has only 62 possible codes).
+					return
+				}
 				// A non-recoverable store error is a real failure; the default
-				// MemoryStore never returns one, so any error here is a bug.
+				// MemoryStore never returns one, so any other error here is a bug.
 				t.Fatalf("generate %d: unexpected error: %v", i, err)
 			}
 			if len(code) != codeLen {
