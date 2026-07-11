@@ -11,6 +11,28 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-12
+
+Breaking: gofrs/uuid v1 → v5 + full dependency currency upgrade across all 18
+sub-modules. No wrapper code changes beyond the uuid import-path migration.
+
+### Changed
+
+- **BREAKING** — gofrs/uuid `v1.2.0` → `v5.4.0` (semantic import versioning).
+  The import path changes from `github.com/gofrs/uuid` to
+  `github.com/gofrs/uuid/v5`. `NewV1`/`NewV4` now wrap `uid.Must()` (v5
+  returns `(UUID, error)`; `Must` preserves the existing no-error API, panicking
+  on CSPRNG failure — the same observable behavior as v1 where these could not
+  fail). `Equal` uses `==` (v5 removed `uid.Equal`; `UUID` is comparable).
+- **BREAKING** — `uuid.NewV2` removed (gofrs dropped DCE Security V2 in v4+;
+  no kit4go callers used it).
+- All 18 sub-module client libraries upgraded to latest via `go get -u`
+  (minio-go, mongo-driver, aerospike-client-go, go-elasticsearch,
+  clickhouse-go, pgx, go-redis, sarama/franz-go, grpc, prometheus, etc.).
+  All build/vet/test-race clean; no wrapper interface assertions broke.
+- Root minor dependency bumps: `golang.org/x/net` 0.57, `x/sys` 0.47,
+  `x/text` 0.40, `x/arch` 0.29, `stretchr/objx` 0.5.3.
+
 ## [0.7.1] — 2026-07-11
 
 Security and dependency-currency patch. No API changes.
