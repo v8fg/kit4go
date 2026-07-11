@@ -82,8 +82,17 @@ func FuzzEnabled(f *testing.F) {
 			t.Fatalf("Allow(%q) did not enable the key", key)
 		}
 		flag.Revoke(key)
-		if flag.Enabled(key) != first {
-			t.Fatalf("Revoke(%q) did not restore pre-Allow result: got %v want %v", key, flag.Enabled(key), first)
+		// Revoke leaves the key with no allowlist entry (it undoes both the
+		// Allow above and any constructor entry), so Enabled falls to the
+		// percentage rollout — the documented "percentage-derived answer".
+		// Compare against a no-allowlist flag's read of the same key, not
+		// `first`: `first` was captured while "vip-user" was constructor-
+		// allowlisted, so it is not percentage-derived and is the wrong
+		// baseline for the allowlisted key.
+		baseline := New(WithEnabled(true), WithPercentage(percentage)).Enabled(key)
+		if flag.Enabled(key) != baseline {
+			t.Fatalf("Revoke(%q) did not restore the percentage-derived answer: got %v want %v",
+				key, flag.Enabled(key), baseline)
 		}
 	})
 }
