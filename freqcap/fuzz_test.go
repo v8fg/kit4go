@@ -191,9 +191,12 @@ func FuzzSlidingWindowExpiry(f *testing.F) {
 				window, cap, fills, c.Count(key), allowedPre)
 		}
 
-		// Advance past the window. Every recorded event is now older than the
-		// window, so the model says the in-window set is empty.
-		clk.t = clk.t.Add(time.Duration(gapMs)*time.Millisecond + window)
+		// Advance strictly past the window. Every recorded event is now older
+		// than the window, so the model says the in-window set is empty. The
+		// +1ns matters: freqcap's window is inclusive on the lower edge (an
+		// event exactly `window` old is still counted — the safer choice for a
+		// cap), so advancing by exactly `window` (gapMs==0) leaves the event.
+		clk.t = clk.t.Add(time.Duration(gapMs)*time.Millisecond + window + time.Nanosecond)
 
 		// gapMs is a uint8 so it can be 0; ensure we genuinely crossed the
 		// window boundary. If the advance did not clear the window (gapMs==0
