@@ -3,7 +3,7 @@ package uuid_test
 import (
 	"testing"
 
-	uid "github.com/gofrs/uuid"
+	uid "github.com/gofrs/uuid/v5"
 	"github.com/smartystreets/goconvey/convey"
 
 	"github.com/v8fg/kit4go/uuid"
@@ -87,15 +87,6 @@ func TestNewV1(t *testing.T) {
 		newUUID := uuid.NewV1()
 		convey.So(newUUID, convey.ShouldNotResemble, uid.Nil)
 		convey.So(newUUID.Version(), convey.ShouldEqual, uid.V1)
-	})
-}
-
-func TestNewV2(t *testing.T) {
-	convey.Convey("TestNewV2", t, func() {
-		// generator: invariant check (real generator; no error-path — gomonkey previously asserted a fixed value, now we assert the version/non-nil invariant)
-		newUUID := uuid.NewV2(byte(188))
-		convey.So(newUUID, convey.ShouldNotResemble, uid.Nil)
-		convey.So(newUUID.Version(), convey.ShouldEqual, uid.V2)
 	})
 }
 
