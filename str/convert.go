@@ -106,7 +106,7 @@ func CamelToSnakeWithDelimiter(s, delimiter string) string {
 	sizeRs := len(rs)
 	lastPos := 0
 
-	for i := range sizeRs {
+	for i := 0; i < sizeRs; i++ {
 		if i > 0 && unicode.IsUpper(rs[i]) {
 			if initialism := initialismExtract(s[lastPos:]); len(initialism) != 0 {
 				words = append(words, strings.ToLower(initialism))
