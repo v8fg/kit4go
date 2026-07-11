@@ -36,10 +36,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # kit4go is a multi-module repo: the root module plus three sub-modules
-      # (log4go, postgres, grpcclient), each with its own go.mod. `go build/test
-      # ./...` does NOT descend across module boundaries, so every gate runs
-      # once per module.
+      # kit4go is a multi-module repo: the root module plus 18 sub-modules
+      # (adaptive, aerospike, clickhouse, elasticsearch, etcd, email,
+      # grpcclient, grpcserver, kafka, log4go, metrics, minio, mongo,
+      # postgres, rate, redis, redislock, tracing), each with its own go.mod.
+      # `go build/test ./...` does NOT descend across module boundaries, so
+      # every gate runs once per module.
       - name: Build (all modules)
         run: |
           set -e
