@@ -1,6 +1,6 @@
 module github.com/v8fg/kit4go/minio
 
-go 1.26.2
+go 1.26.5
 
 require (
 	github.com/minio/minio-go/v7 v7.2.1
