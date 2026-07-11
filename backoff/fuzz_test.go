@@ -142,6 +142,12 @@ func FuzzWait_OrderingAndRoundtrip(f *testing.F) {
 		if maxAttempts < 0 || maxAttempts > 1_000_000 {
 			t.Skip()
 		}
+		// New clamps a negative base to 0 (documented), so the Reset roundtrip
+		// invariant below ("first delay == base") only holds for a non-negative
+		// base — a fuzzer-supplied -93ns base becomes 0 inside New.
+		if baseNs < 0 {
+			t.Skip()
+		}
 
 		b := New(
 			WithBase(time.Duration(baseNs)),
@@ -192,17 +198,20 @@ func FuzzWait_OrderingAndRoundtrip(f *testing.F) {
 
 		// Wait mirrors Next's cap; with ctx cancelled it never blocks. After
 		// the Next loop drained the cap, Wait must not admit any further
-		// attempt.
-		waitOK := 0
-		for i := 0; i < maxAttempts+5; i++ {
-			if err := b.Wait(ctx); err != nil {
-				break
+		// attempt. This only holds when a cap is set — an unlimited backoff
+		// (maxAttempts==0) never drains, so Wait keeps succeeding.
+		if maxAttempts > 0 {
+			waitOK := 0
+			for i := 0; i < maxAttempts+5; i++ {
+				if err := b.Wait(ctx); err != nil {
+					break
+				}
+				waitOK++
 			}
-			waitOK++
-		}
-		if waitOK != 0 {
-			t.Fatalf("Wait admitted %d attempts after cap was drained (maxAttempts=%d)",
-				waitOK, maxAttempts)
+			if waitOK != 0 {
+				t.Fatalf("Wait admitted %d attempts after cap was drained (maxAttempts=%d)",
+					waitOK, maxAttempts)
+			}
 		}
 
 		// Invariant 3: Reset is a true roundtrip — counter to 0, first delay
