@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	github.com/bytedance/sonic v1.15.2
 	github.com/goccy/go-json v0.10.6
-	github.com/gofrs/uuid v1.2.0
+	github.com/gofrs/uuid/v5 v5.4.0
 	github.com/json-iterator/go v1.1.12
 	github.com/pquerna/otp v1.5.0
 	github.com/rs/xid v1.6.0

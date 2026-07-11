@@ -3,7 +3,7 @@ package uuid
 import (
 	"encoding/hex"
 
-	uid "github.com/gofrs/uuid"
+	uid "github.com/gofrs/uuid/v5"
 )
 
 // RequestID returns the request ID with UUID V4, in hash-like format, 32 chars.

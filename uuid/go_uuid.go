@@ -1,22 +1,17 @@
 package uuid
 
 import (
-	uid "github.com/gofrs/uuid"
+	uid "github.com/gofrs/uuid/v5"
 )
 
 // Equal returns true if u1 and u2 equals, otherwise returns false.
 func Equal(u1 uid.UUID, u2 uid.UUID) bool {
-	return uid.Equal(u1, u2)
+	return u1 == u2
 }
 
 // NewV1 returns UUID based on current timestamp and MAC address.
 func NewV1() uid.UUID {
-	return uid.NewV1()
-}
-
-// NewV2 returns DCE Security UUID based on POSIX UID/GID.
-func NewV2(domain byte) uid.UUID {
-	return uid.NewV2(domain)
+	return uid.Must(uid.NewV1())
 }
 
 // NewV3 returns UUID based on MD5 hash of namespace UUID and name.
@@ -26,7 +21,7 @@ func NewV3(ns uid.UUID, name string) uid.UUID {
 
 // NewV4 returns random generated UUID.
 func NewV4() uid.UUID {
-	return uid.NewV4()
+	return uid.Must(uid.NewV4())
 }
 
 // NewV5 returns UUID based on SHA-1 hash of namespace UUID and name.
