@@ -48,7 +48,14 @@ type ruleKey struct {
 
 // Machine is a thread-safe finite state machine. Create with New.
 type Machine struct {
-	mu        sync.RWMutex
+	mu sync.RWMutex // guards current/rules/hooks/listeners (data)
+	// sendMu serializes Send calls across the action window. It is held for the
+	// whole Send (lookup → action → commit → hooks) so two concurrent Sends
+	// cannot both observe the same `from` state, run both actions, and clobber
+	// the result — a hazard for side-effecting actions (e.g. charge + refund on
+	// concurrent pay/cancel). mu is still released during the action so it can
+	// call Current/Is/Can without deadlocking; lock order is always sendMu→mu.
+	sendMu    sync.Mutex
 	current   State
 	rules     map[ruleKey]Rule
 	onEnter   map[State]func(ctx any)
@@ -79,21 +86,28 @@ func New(initial State, rules ...Rule) (*Machine, error) {
 // guard, runs the action, and transitions to the target state. On enter/exit
 // hooks and listeners fire after the transition completes.
 //
-// The action runs OUTSIDE the machine lock so it may safely call back into the
-// machine (e.g. Current(), Is(), Can()) without self-deadlocking — sync.RWMutex
-// is not reentrant. The transition state is captured under the lock, the lock is
-// released for the action, then re-acquired to apply or revert the transition.
+// Send is serialized across its full duration (a dedicated sendMu is held from
+// rule lookup through the action, the commit, and the hooks), so concurrent
+// Sends do NOT both observe the same source state and double-execute their
+// actions: the first Send completes its transition (state moves off `from`),
+// and a concurrent Send then sees the new state and either transitions from it
+// or returns ErrNoTransition. This matches FSM semantics — a machine in one
+// state can apply at most one transition at a time — and matters for
+// side-effecting actions (a concurrent pay+cancel must not run both effects).
 //
-// Note: because the state is not committed until after the action succeeds, the
-// machine is treated as in-transition while the action runs. Concurrent Send
-// calls serialize on the lock; the current state remains `from` for the duration
-// of the action.
+// The action and hooks run with the data lock (mu) released so they may call
+// Current/Is/Can without self-deadlocking (RWMutex is not reentrant). They must
+// NOT call Send: sendMu is held for the whole Send, so a re-entrant Send would
+// deadlock. Use Current/Is/Can for read-only callbacks.
 //
 // Returns:
 //   - ErrNoTransition: no rule for (current, event).
 //   - ErrGuardRejected: the guard returned false.
 //   - ErrActionFailed (wrapping): the action returned an error.
 func (m *Machine) Send(event string, ctx any) error {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
+
 	m.mu.Lock()
 	rule, ok := m.rules[ruleKey{m.current, event}]
 	if !ok {
@@ -111,16 +125,17 @@ func (m *Machine) Send(event string, ctx any) error {
 	action := rule.Action
 	m.mu.Unlock()
 
-	// Invoke the action outside the lock. If it returns an error the transition
-	// does not occur — the state stays at `from`.
+	// Invoke the action outside the data lock (sendMu is still held, serializing
+	// concurrent Sends). If it returns an error the transition does not occur —
+	// the state stays at `from`.
 	if action != nil {
 		if err := action(ctx); err != nil {
 			return fmt.Errorf("%w: %w", ErrActionFailed, err)
 		}
 	}
 
-	// Re-acquire the lock to commit the transition and snapshot the hooks so
-	// they fire outside the lock (matching the established hook pattern).
+	// Re-acquire the data lock to commit the transition and snapshot the hooks
+	// so they fire outside the lock (matching the established hook pattern).
 	m.mu.Lock()
 	m.current = to
 	onExit := m.onExit[from]
@@ -128,8 +143,9 @@ func (m *Machine) Send(event string, ctx any) error {
 	listeners := m.listeners
 	m.mu.Unlock()
 
-	// Fire hooks outside the lock so they can call back into the machine
-	// (e.g., Current()) without deadlocking.
+	// Fire hooks outside the data lock so they can call back into the machine
+	// (e.g., Current()) without deadlocking. sendMu is still held (deferred),
+	// so a concurrent Send waits until these complete.
 	if onExit != nil {
 		onExit(ctx)
 	}

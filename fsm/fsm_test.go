@@ -298,3 +298,45 @@ func m_currentForTest(t *testing.T, ctx any) State {
 	}
 	return m.Current()
 }
+
+// TestMachine_ConcurrentSendSerialized guards the sendMu fix: two concurrent
+// Sends from the same state must NOT both run their actions. The first
+// acquires sendMu, runs its action, and commits (state moves off `from`); the
+// second then sees the new state and returns ErrNoTransition. Before the fix
+// both actions ran and the committed state clobbered — a hazard for
+// side-effecting actions (e.g. concurrent pay+cancel both charging).
+func TestMachine_ConcurrentSendSerialized(t *testing.T) {
+	var ran atomic.Int64
+	slow := func(any) error {
+		ran.Add(1)
+		time.Sleep(20 * time.Millisecond) // widen the window so both Sends are in flight
+		return nil
+	}
+	m, err := New(StateIdle,
+		Rule{From: StateIdle, Event: "e1", To: "s1", Action: slow},
+		Rule{From: StateIdle, Event: "e2", To: "s2", Action: slow},
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); errs[0] = m.Send("e1", nil) }()
+	go func() { defer wg.Done(); errs[1] = m.Send("e2", nil) }()
+	wg.Wait()
+
+	if got := ran.Load(); got != 1 {
+		t.Fatalf("actions ran = %d, want 1 (concurrent Sends must serialize: only the first transition's action runs)", got)
+	}
+	successes := 0
+	for _, e := range errs {
+		if e == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successes = %d, want 1 (one transition commits, the other gets ErrNoTransition); errs=%v", successes, errs)
+	}
+}
