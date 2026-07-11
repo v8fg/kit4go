@@ -1,0 +1,8 @@
+go test fuzz v1
+int64(100)
+int64(86400000000000)
+byte('\x18')
+[]byte("\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+float64(0.05)
+uint64(46800)
+float64(60)

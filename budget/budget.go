@@ -135,6 +135,16 @@ func (p *Pacer) buildCurve() {
 	cum := 0.0
 	for i, v := range w {
 		cum += v / sum
+		// cum is mathematically sum(w[0..i])/sum(w) <= 1 (weights are
+		// non-negative), but the iterative float addition can drift a hair
+		// above 1.0. When a trailing weight is 0 the cumulative reaches 1.0
+		// before the last bucket, so the drift lands an interior point above
+		// the pinned endpoint (weight[buckets]=1), breaking monotonicity — a
+		// non-monotonic planned-spend curve would let target spend decrease
+		// within the period. Clamp the drift away.
+		if cum > 1 {
+			cum = 1
+		}
 		p.weight[i+1] = cum
 	}
 	p.weight[p.buckets] = 1 // guard against float drift
@@ -189,6 +199,15 @@ func (p *Pacer) targetFraction(t time.Time) float64 {
 	lo := p.weight[i]
 	hi := p.weight[i+1]
 	frac := idx - float64(i)
+	// frac is the sub-bucket fraction and is mathematically in [0,1), but
+	// float fuzz in (f*buckets) can leave it a hair negative (e.g. when the
+	// product lands just under an integer), which would extrapolate the
+	// interpolation below lo and make TargetSpend negative. Clamp it in.
+	if frac < 0 {
+		frac = 0
+	} else if frac > 1 {
+		frac = 1
+	}
 	return lo + (hi-lo)*frac
 }
 
