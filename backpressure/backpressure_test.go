@@ -171,3 +171,33 @@ func TestGate_SetMaxBelowCurrentDoesNotRejectInflight(t *testing.T) {
 		t.Fatal("should admit again once current drops below max")
 	}
 }
+
+// TestGate_SetMax_ConcurrentSafe guards the max-as-atomic.Int32 fix: SetMax is
+// documented for runtime hot-reload, so it races with TryAcquire/IsOverloaded/
+// Max readers. With max as a plain int32 the race detector flagged a data race
+// here; with atomic.Int32 it is clean. Run under -race.
+func TestGate_SetMax_ConcurrentSafe(t *testing.T) {
+	g := New(100)
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 5000 {
+				g.TryAcquire()
+				g.Release()
+				_ = g.IsOverloaded()
+				_ = g.Max()
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range 5000 {
+			g.SetMax(50)
+			g.SetMax(150)
+		}
+	}()
+	wg.Wait()
+}

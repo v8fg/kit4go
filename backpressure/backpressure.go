@@ -12,7 +12,7 @@ import "sync/atomic"
 
 // Gate is a non-blocking admission gate. Track in-flight work; reject when full.
 type Gate struct {
-	max      int32
+	max      atomic.Int32 // atomic: SetMax (hot-reload) races with TryAcquire/IsOverloaded/Max readers
 	current  atomic.Int32
 	rejected atomic.Uint64
 }
@@ -22,7 +22,9 @@ func New(maxConcurrent int32) *Gate {
 	if maxConcurrent < 0 {
 		maxConcurrent = 0
 	}
-	return &Gate{max: maxConcurrent}
+	g := &Gate{}
+	g.max.Store(maxConcurrent)
+	return g
 }
 
 // TryAcquire attempts to register one in-flight item. Returns true if accepted,
@@ -31,7 +33,7 @@ func New(maxConcurrent int32) *Gate {
 func (g *Gate) TryAcquire() bool {
 	for {
 		cur := g.current.Load()
-		if cur >= g.max {
+		if cur >= g.max.Load() {
 			g.rejected.Add(1)
 			return false
 		}
@@ -63,7 +65,7 @@ func (g *Gate) Current() int32 { return g.current.Load() }
 func (g *Gate) Rejected() uint64 { return g.rejected.Load() }
 
 // IsOverloaded reports whether the gate is at capacity.
-func (g *Gate) IsOverloaded() bool { return g.current.Load() >= g.max }
+func (g *Gate) IsOverloaded() bool { return g.current.Load() >= g.max.Load() }
 
 // SetMax adjusts the capacity at runtime (hot-reload). Does not reject already-
 // in-flight items even if the new max is lower than current.
@@ -71,8 +73,8 @@ func (g *Gate) SetMax(max int32) {
 	if max < 0 {
 		max = 0
 	}
-	g.max = max
+	g.max.Store(max)
 }
 
 // Max returns the configured capacity.
-func (g *Gate) Max() int32 { return g.max }
+func (g *Gate) Max() int32 { return g.max.Load() }
