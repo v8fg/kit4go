@@ -118,9 +118,18 @@ func (h *HyperLogLog) Estimate() float64 {
 	if est <= 2.5*m && zeros > 0 {
 		return m * math.Log(m/float64(zeros))
 	}
-	// Large-range correction for cardinalities approaching 2^32.
+	// Large-range correction. This is a 64-bit-hash HLL, so the collision
+	// space is 2^64 and the correction divisor must be 2^64: with the 2^32
+	// divisor (copied from the 32-bit HLL paper) the term est/2^32 exceeds 1
+	// once the estimate passes ~2^32 (4 billion distinct — the scale HLL
+	// exists for), making Log(negative) return NaN (Inf at exactly 2^32).
+	// math.Ldexp(1,64) is 2^64 as an exact float64 (1<<64 is a constant
+	// overflow). The conservative 2^32 trigger keeps the correction firing
+	// early; with the 2^64 divisor it is negligible until cardinality nears
+	// 2^64, which is the correct behavior for a 64-bit hash.
 	if est > (1.0/30.0)*(1<<32) {
-		return -float64(1<<32) * math.Log(1-est/float64(1<<32))
+		two64 := math.Ldexp(1, 64)
+		return -two64 * math.Log(1-est/two64)
 	}
 	return est
 }
