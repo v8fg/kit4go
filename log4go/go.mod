@@ -1,6 +1,6 @@
 module github.com/v8fg/kit4go/log4go
 
-go 1.26.0
+go 1.26.5
 
 require (
 	github.com/bytedance/sonic v1.15.2

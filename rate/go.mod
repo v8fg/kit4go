@@ -1,6 +1,6 @@
 module github.com/v8fg/kit4go/rate
 
-go 1.26.2
+go 1.26.5
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
