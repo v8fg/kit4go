@@ -33,6 +33,14 @@ func FuzzCacheGetSet(f *testing.F) {
 			require.Equal(t, val, got)
 			return
 		}
+		// A sub-millisecond positive ttl can elapse between Set and the
+		// immediate Get below (Set→Get is microseconds), so "present now" is
+		// non-deterministic — a fuzzer-supplied 92ns ttl is already expired by
+		// the Get. Floor the positive-ttl path at 1ms; smaller ttls are too
+		// ephemeral to assert without an injected clock.
+		if ttl < time.Millisecond {
+			return
+		}
 
 		// Positive ttl: the value is present now...
 		got, err := c.Get(ctx, key)
