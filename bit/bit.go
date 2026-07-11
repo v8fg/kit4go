@@ -87,7 +87,7 @@ func LeftOneBitNum[T Number](num T) T {
 	// num |= num >> 8
 	// num |= num >> 16
 	// num |= num >> 32
-	for i := 0; i <= 5; i++ {
+	for i := range 6 {
 		num |= num >> (1 << i)
 	}
 	return (num + 1) >> 1
@@ -108,7 +108,7 @@ func NextHighestPowerOfTwo[T Number](num T) T {
 	// num |= num >> 8
 	// num |= num >> 16
 	// num |= num >> 32
-	for i := 0; i <= 5; i++ {
+	for i := range 6 {
 		num |= num >> (1 << i)
 	}
 	num++
