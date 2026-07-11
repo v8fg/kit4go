@@ -142,9 +142,29 @@ func TestEstimateLargeRangeCorrection(t *testing.T) {
 	got := h.Estimate()
 	require.False(t, math.IsNaN(got), "corrected estimate must be finite")
 	require.False(t, math.IsInf(got, 0), "corrected estimate must be finite")
-	// The large-range correction is monotonically increasing in the raw estimate,
-	// so the corrected value must exceed the raw estimate.
-	require.Greater(t, got, rawEst)
+	// The correction uses the 2^64 hash space (this is a 64-bit HLL), so at a
+	// raw estimate of ~2e8 — far below 2^64 — the correction is negligible and
+	// the corrected value stays within a hair of the raw estimate. The earlier
+	// 2^32 divisor over-corrected here (and returned NaN/Inf past ~2^32); the
+	// load-bearing invariant is that the branch is reachable and stays finite.
+	require.InDelta(t, rawEst, got, rawEst*1e-6, "corrected estimate must stay near raw at sub-2^64 cardinality")
+}
+
+// TestEstimateLargeRange_NoNaN pins the fix: this is a 64-bit-hash HLL, so a
+// raw estimate past 2^32 (registers pinned to a high rho) must still produce a
+// finite, positive estimate. With the earlier 2^32 large-range divisor (copied
+// from the 32-bit HLL paper) est/2^32 exceeded 1 here and Log(negative)
+// returned NaN — for a structure whose whole purpose is estimating large
+// distinct counts (4B+ is realistic for global streams).
+func TestEstimateLargeRange_NoNaN(t *testing.T) {
+	h, _ := New(14)
+	for i := range h.reg {
+		h.reg[i] = 50 // high rho -> raw estimate well past 2^32
+	}
+	got := h.Estimate()
+	require.False(t, math.IsNaN(got), "estimate must not be NaN for cardinality past 2^32")
+	require.False(t, math.IsInf(got, 0), "estimate must be finite for cardinality past 2^32")
+	require.Positive(t, got)
 }
 
 // A hash whose trailing (64-p) bits are all zero exercises the rho upper-bound
