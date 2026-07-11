@@ -11,6 +11,66 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-11
+
+A quality-hardening release: a multi-round, repo-wide audit (every package
+audited, all fuzz targets run) found and fixed real defects that green CI and
+100% coverage missed — concentrated in concurrency, float-drift edge cases, and
+the callback-panic-recovery gap. No new packages; a few additive observability
+methods. All hot paths remain 0-alloc (verified by `-benchmem`).
+
+### Fixed
+
+- **fsm**: `Send` released the data lock to run the action (so the action could
+  call back into the machine), but a second concurrent `Send` could then observe
+  the same source state, run its own action, and both transitions committed (last
+  writer clobbered). For side-effecting actions (a concurrent pay+cancel) both
+  effects ran yet only one state stuck. A dedicated `sendMu` now serializes
+  `Send` across its full duration while the data lock is still released during
+  the action (callbacks `Current/Is/Can` do not deadlock).
+- **limiter**: `Wait` checked `closed` only at entry, so a `Close` issued while a
+  call was already blocked at capacity left it polling until the context expired.
+  All five algorithms re-check `closed` each poll iteration (the contract).
+- **hotreload / adaptive / kafka(franz-go)**: library-owned goroutines ran user
+  callbacks (`Loader`, `work`, the consumer handler) with no recover — a single
+  panicking callback crashed the host. Recovered + counted (`Recovered()`) +
+  surfaced via `SetOnPanic` (mirrors the existing workerpool/batcher convention);
+  the franz-go backend now matches sarama (which already recovered), so the
+  seamless-switch contract holds and `ConsumerMetrics.Recovered` is no longer
+  structurally always 0 under franz-go.
+- **money**: `mulChecked(math.MinInt64, -1)` panicked instead of returning
+  `ErrOverflow` — `MinInt64 / -1` is the one integer division Go aborts at
+  runtime, hit inside the overflow check.
+- **shortlink**: `encodeBaseN` used a 12-byte buffer sized only for base62; a
+  2-char alphabet (the API allows `len > 1`) needs up to 64 digits for
+  `MaxUint64`, so `IDShortener` with a small alphabet panicked on
+  index-out-of-range past ~4096 or on `Encode(MaxUint64)`.
+- **random**: `RandStringWithKind` mapped the lowest set bit to the highest index,
+  scrambling the character groups whenever the kind bits were not contiguous —
+  `kind=5` (digits+lowercase) produced lowercase+uppercase.
+- **datetime**: `DeltaDateDays` diffed local midnights and divided by 24h, so a
+  DST spring-forward day (23h) made consecutive dates across it count as 0.
+  Each date is re-expressed as UTC midnight before the diff (UTC has no DST).
+- **budget**: the normalized weight curve drifted above 1.0 on a trailing-zero
+  weight (the pinned endpoint then sat below an interior point — a non-monotonic
+  planned-spend curve), and the TargetSpend interpolation fraction went a hair
+  negative (negative target). Both clamped at the domain boundary.
+- **hyperloglog**: the large-range correction used a 2^32 divisor (32-bit HLL
+  paper) on a 64-bit-hash sketch — past ~2^32 distinct the term exceeded 1 and
+  `math.Log(negative)` returned NaN. Now uses 2^64 (the actual hash space).
+- **backpressure**: `Gate.max` was a plain int32 read by `TryAcquire` and written
+  by `SetMax` (documented hot-reload) — a data race. Now `atomic.Int32`.
+
+### Tests
+
+- Six fuzz-harness assumption fixes (shortlink, cache, freqcap, backoff,
+  featureflag) — each held a stronger/incorrect invariant than the package's
+  documented contract, and the fuzzer's saved corpus had broken `go test`.
+- Four new fuzz targets for previously-uncovered, non-trivial invariants:
+  `latency` Quantile monotonicity, `retry` attempt-boundary, `reservoir`
+  size/count, `consistenthash` GetN distinctness/top-1.
+- `number` coverage 94% → 100% (`parseIntLossless` branches).
+
 ## [0.6.0] — 2026-07-08
 
 ### Added
