@@ -11,6 +11,29 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-07-11
+
+Security and dependency-currency patch. No API changes.
+
+### Security
+
+- Bumped the `go` directive 1.26.2 → **1.26.5** across `go.work` + root + all 18
+  sub-modules. go1.26.2's standard library carried six reachable CVEs
+  (crypto/tls GO-2026-5856, net/http GO-2026-4918, crypto/x509 GO-2026-5037,
+  net GO-2026-4971, net/textproto GO-2026-5039, mime GO-2026-5038) — the root
+  cause of the Dependabot alerts. go1.26.5 fixes all six; `govulncheck` now
+  reports 0 affected (was 5–6 per module). Consumers and CI
+  (`setup-go` `go-version-file: go.mod`) build with the patched toolchain.
+
+### Changed
+
+- Root module minor dependency bumps for currency: `golang.org/x/net` 0.56→0.57,
+  `x/sys` 0.46→0.47, `x/text` 0.38→0.40, `x/arch` 0.28→0.29,
+  `stretchr/objx` 0.5.2→0.5.3. `gofrs/uuid` pinned at v1.2.0 (v4 removes
+  `NewV2` and changes `NewV1`/`NewV4` to return `(UUID, error)` — a breaking
+  jump deferred to a future minor). Sub-modules unchanged (no patch upgrades
+  available; already current).
+
 ## [0.7.0] — 2026-07-11
 
 A quality-hardening release: a multi-round, repo-wide audit (every package
