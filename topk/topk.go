@@ -99,8 +99,17 @@ func (t *Tracker) Touch(key string) {
 // Memory stays bounded at O(K): the count map holds the K in-heap keys plus at
 // most (candidateFactor-1)*K candidate keys that are accumulating but have not
 // yet beaten the heap minimum. A non-admitted key retains its accumulated count
-// across TouchN calls so a late heavy-hitter arriving incrementally (one event
-// at a time) can build up and eventually displace an incumbent. Once the
+// across calls WHILE it remains in the candidate set, so a late heavy-hitter
+// can build up and displace an incumbent — but only while the candidate set is
+// not under cap pressure. Under a high-cardinality stream that keeps the
+// candidate cap saturated, a key touched one event at a time (Touch) can be
+// evicted as the smallest candidate before it accumulates enough to beat the
+// heap minimum, resetting to 0 on the next Touch: per-event Touch of a late
+// heavy-hitter interleaved with many distinct cold keys may therefore never
+// surface it (a known limitation of this retain-and-evict heuristic vs a full
+// Space-Saving implementation). For guaranteed detection, batch the increments
+// into a single TouchN whose count exceeds the current minimum — a one-shot
+// TouchN admits in one step, bypassing the accumulate-then-evict cycle. Once the
 // candidate cap is reached the smallest-count candidate is dropped, so a key
 // that is neither in the heap nor among the tracked candidates reports Count 0.
 //
@@ -123,7 +132,8 @@ func (t *Tracker) TouchN(key string, n int64) {
 	}
 
 	// Key not in the set. Accumulate its candidate count (retained across calls
-	// so incremental Touch on a late heavy-hitter can build up).
+	// only while it stays in the candidate set — see TouchN doc for the
+	// starvation caveat under high-cardinality streams).
 	newCount := t.counts[key] + n
 
 	if t.minHeap.Len() < t.k {

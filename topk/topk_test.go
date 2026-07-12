@@ -315,3 +315,32 @@ func TestLateHeavyHitterViaTouch(t *testing.T) {
 		})
 	}
 }
+
+// TestLateHeavyHitter_InterleavedNoiseStarvation documents the retain-and-evict
+// limitation (see TouchN's doc): a heavy key touched one event at a time,
+// interleaved with enough distinct cold keys to keep the candidate cap
+// saturated, is evicted as a candidate before it accumulates past the heap
+// minimum — so per-event Touch never surfaces it. The documented workaround is
+// to batch the increments into a single TouchN that beats the min.
+func TestLateHeavyHitter_InterleavedNoiseStarvation(t *testing.T) {
+	tr := New(2)
+	tr.TouchN("a", 1)
+	tr.TouchN("b", 1) // heap {a:1, b:1}, min = 1
+
+	// Per-event Touch interleaved with high-cardinality cold noise.
+	for round := 0; round < 100; round++ {
+		tr.Touch("heavy")
+		for i := 0; i < 9; i++ {
+			tr.TouchN(fmt.Sprintf("n-%d-%d", round, i), 1)
+		}
+	}
+	for _, e := range tr.Top() {
+		require.NotEqual(t, "heavy", e.Key, "per-event Touch starves a late heavy-hitter under interleaved noise (known limitation)")
+	}
+	require.Less(t, tr.Count("heavy"), int64(2), "heavy never accumulated past the candidate minimum")
+
+	// Workaround: one batched TouchN that beats the min admits it immediately.
+	tr.TouchN("heavy", 100)
+	require.Equal(t, int64(100), tr.Count("heavy"))
+	require.Equal(t, "heavy", tr.Top()[0].Key)
+}
