@@ -11,6 +11,59 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
+Deep quality-hardening pass: 22-round autonomous audit (scenario, invariant,
+memory-model, wrapper, network, lifecycle lenses) over every package. Real bugs
+fixed; E10 fuzz coverage + H6 godoc examples expanded; contract gaps documented.
+
+### Fixed
+
+- **adaptive** — Submit/Close race: a job accepted (Submit returned nil) could be
+  stranded after Close's final drain (no worker drained it). RWMutex mirroring
+  batcher's Add-vs-Close pattern.
+- **kafka** — partition-consumer channel-mode Messages() never closed on Close
+  (both sarama + franz-go). Caller `for range Messages()` blocked forever →
+  goroutine leak + shutdown hang. Pump closes output on exit; sarama pump uses a
+  cancellable context so Close interrupts a blocked send.
+- **httpclient** — non-idempotent POST/PATCH retried on io.EOF/
+  io.ErrUnexpectedEOF (request sent + processed, response lost), bypassing the
+  idempotency guard → double-charge. Added sentButNoResponse check; pre-send
+  dial errors stay retryable.
+- **log4go** — FileWriter.Stop double-close race: concurrent Stop (user Stop
+  racing Logger.Close) both closed w.stop → panic. Guarded with
+  closing.CompareAndSwap (matching Kafka/Net).
+- **ip** — TypeFlagIsLinkLocalMulticast filter was dead (copy-paste). IsPublic
+  classified 0.0.0.0/::/broadcast as public. NumberToIP dropped sign on
+  negative + truncated over-width IPv4. MaskIPToCIDR accepted non-canonical
+  masks.
+- **money** — Div(MinInt64,-1) overflow (SIGFPE amd64, wrap arm64); reachable
+  via arithmetic. Parse double-sign ("+-0.05" → +0.05). Scale float64 drift
+  above 2^53 → ErrOverflow guard.
+- **decimal** — Parse double-sign ("--5" → +5.00).
+- **otp** — VerifySecret rejected lowercase base32 that generators accept.
+- **file** — CopyFile(src,src) destroyed the source (O_TRUNC before read).
+- **hotkey** — per-key []time.Time unbounded; opt-in WithMaxHitsPerKey (D5).
+
+### Added
+
+- E10 fuzz targets: bloom (no-false-negative), countmin (never-under-count), str
+  (CamelToSnake determinism), topk (TouchN heavy-hitter), datetime
+  (DeltaDateDays round-trip), trie (Insert/Get round-trip), ip (MaskIPToCIDR
+  canonical round-trip).
+- Godoc examples: rate, tracing, email, grpcserver.
+
+### Changed
+
+- aerospike Close guarded with sync.Once (template consistency).
+
+### Documented (no behavior change)
+
+- Contract clarifications: fanout.PublishBlocking, batcher.Close, breaker
+  epoch-bleed, topk TouchN starvation, freqcap evictIdleLocked O(maxKeys),
+  datetime UnixToDuration raw-ns-cast, adaptive monitor-blocks-Close, log4go
+  daemon-panic-OverflowBlock, json jsoniter-cycle + sonic-amd64, bit Min/Max
+  overflow, health Check-panic→500, uuid README v1→v5, trie /-trim
+  normalization.
+
 ## [0.8.0] — 2026-07-12
 
 Breaking: gofrs/uuid v1 → v5 + full dependency currency upgrade across all 18
