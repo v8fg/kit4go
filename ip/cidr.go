@@ -1,6 +1,7 @@
 package ip
 
 import (
+	"bytes"
 	"encoding/hex"
 	"net"
 	"strconv"
@@ -83,6 +84,15 @@ func MaskIPToCIDR(ipMask string) string {
 
 	for i := range len(decodeS) {
 		ones += hammingWeight(decodeS[i])
+	}
+	// Reject non-canonical (non-contiguous) masks: a CIDR mask must be leading
+	// ones then trailing zeros. A mask like ffffff01 (a host bit set) is not a
+	// valid CIDR mask — silently mapping it to /25 would over-permit an allowlist
+	// built from the literal mask bytes. Compare against the canonical mask for
+	// the computed prefix length.
+	bitLen := uint8(len(decodeS) * 8)
+	if !bytes.Equal(net.CIDRMask(int(ones), int(bitLen)), decodeS) {
+		return ""
 	}
 
 	return im[0] + "/" + strconv.FormatUint(uint64(ones), 10)

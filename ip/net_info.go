@@ -155,7 +155,7 @@ func GetIPAll(flag Flag, ignoreTypeFlag int) (ips []string) {
 					inet.IP.IsPrivate() && ignoreTypeFlag&TypeFlagIsPrivate == TypeFlagIsPrivate ||
 					inet.IP.IsMulticast() && ignoreTypeFlag&TypeFlagIsMulticast == TypeFlagIsMulticast ||
 					inet.IP.IsInterfaceLocalMulticast() && ignoreTypeFlag&TypeFlagIsInterfaceLocalMulticast == TypeFlagIsInterfaceLocalMulticast ||
-					inet.IP.IsInterfaceLocalMulticast() && ignoreTypeFlag&TypeFlagIsLinkLocalMulticast == TypeFlagIsLinkLocalMulticast ||
+					inet.IP.IsLinkLocalMulticast() && ignoreTypeFlag&TypeFlagIsLinkLocalMulticast == TypeFlagIsLinkLocalMulticast ||
 					inet.IP.IsLinkLocalUnicast() && ignoreTypeFlag&TypeFlagIsLinkLocalUnicast == TypeFlagIsLinkLocalUnicast ||
 					inet.IP.IsGlobalUnicast() && ignoreTypeFlag&TypeFlagIsGlobalUnicast == TypeFlagIsGlobalUnicast {
 					continue
@@ -279,7 +279,15 @@ func IsPrivate(ip net.IP) bool {
 
 // IsPublic checks whether the ip is public or not.
 func IsPublic(ip net.IP) bool {
-	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+	// A public IP is globally routable: exclude the non-routable classes the
+	// stdlib can identify — private, loopback, link-local, multicast, the
+	// unspecified address (0.0.0.0 / ::), and the IPv4 limited broadcast
+	// (255.255.255.255). Without IsUnspecified/IsMulticast the unspecified and
+	// broadcast addresses were misclassified as public (ClientPublicIP would
+	// return 0.0.0.0 from a forged X-Forwarded-For).
+	if ip.IsUnspecified() || ip.IsPrivate() || ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() ||
+		ip.Equal(net.IPv4bcast) {
 		return false
 	}
 	return true

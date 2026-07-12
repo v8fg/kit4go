@@ -210,6 +210,11 @@ func NumberIPv4ToStr(ip uint32) string {
 //	flag=6 to [16]byte
 //	others to the nearest bytes size format.
 func NumberToIP(ip *big.Int, flag Flag) net.IP {
+	if ip == nil || ip.Sign() < 0 {
+		// big.Int.Bytes returns the absolute value, so a negative silently became
+		// a nonsense positive address; reject it. nil is not a number.
+		return nil
+	}
 	ib := ip.Bytes()
 	l := len(ib)
 
@@ -219,6 +224,9 @@ func NumberToIP(ip *big.Int, flag Flag) net.IP {
 
 	switch flag {
 	case FlagV4:
+		if l > net.IPv4len {
+			return nil // does not fit in an IPv4 — don't silently truncate
+		}
 		ib = copyByteFromRight(ib, net.IPv4len)
 	case FlagV6:
 		ib = copyByteFromRight(ib, net.IPv6len)

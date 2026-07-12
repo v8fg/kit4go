@@ -814,7 +814,7 @@ func ExampleNumberToIP() {
 	// [NumberToIP] result:                  255.255.255.255, flag: 4, ip:                                       4294967295
 	// [NumberToIP] result:                      ::ffff:ffff, flag: 6, ip:                                       4294967295
 	// [NumberToIP] result:  ::ffff:ffff:ffff:ffff:ffff:ffff, flag: 1, ip:                    79228162514264337593543950335
-	// [NumberToIP] result:                  255.255.255.255, flag: 4, ip:                    79228162514264337593543950335
+	// [NumberToIP] result:                            <nil>, flag: 4, ip:                    79228162514264337593543950335
 	// [NumberToIP] result:  ::ffff:ffff:ffff:ffff:ffff:ffff, flag: 6, ip:                    79228162514264337593543950335
 	// [NumberToIP] result:                            <nil>, flag: 1, ip:     22300745198530623141535718272648361505980415
 	// [NumberToIP] result:                            <nil>, flag: 4, ip:     22300745198530623141535718272648361505980415
@@ -850,7 +850,7 @@ func ExampleNumberToIPv4() {
 	// [NumberToIPv4] result:                  127.255.255.255, ip:                                       2147483647
 	// [NumberToIPv4] result:                        128.0.0.0, ip:                                       2147483648
 	// [NumberToIPv4] result:                  255.255.255.255, ip:                                       4294967295
-	// [NumberToIPv4] result:                  255.255.255.255, ip:                    79228162514264337593543950335
+	// [NumberToIPv4] result:                            <nil>, ip:                    79228162514264337593543950335
 	// [NumberToIPv4] result:                            <nil>, ip:     22300745198530623141535718272648361505980415
 
 }
