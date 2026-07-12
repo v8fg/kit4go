@@ -442,6 +442,12 @@ func (p *Pool[Job]) Workers() int { return int(p.workers.Load()) }
 // Work MUST be non-blocking or honor a context/deadline internally — Go cannot
 // preempt it. Close's wait bound is: (in-flight jobs) x max(Work duration).
 //
+// Close also joins the autoscaler goroutine: a LoadMonitor.CPU() that blocks
+// (the default gopsutil monitor blocks for SampleInterval per call; a stuck
+// kernel sensor or a custom monitor can block longer) will keep the autoscaler
+// parked mid-sample and hang Close's scaler.Wait. Inject a monitor that bounds
+// its CPU() read (or use a short SampleInterval) if a bounded Close matters.
+//
 // Accepted-but-not-yet-consumed jobs are guaranteed to run: after the workers
 // exit, Close does a final non-blocking drain of the queue and runs any
 // stragglers synchronously, under the write lock so it observes every job from
