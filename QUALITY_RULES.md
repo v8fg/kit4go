@@ -343,6 +343,30 @@ table instead of restating the tool on every rule.
 - **Go**: macOS + Linux; build tags or `t.Skip`.
 - **Sources**: K8s — Strong consensus.
 
+### E10. Fuzz Testing [P1]
+- **Principle**: packages with non-trivial logic (algorithms, parsers, numeric,
+  concurrent state machines) carry at least one `Fuzz*` target that encodes a
+  **real invariant** — not merely "does not panic". The fuzzer explores edge
+  cases (float-drift, buffer overflow, charset edge, off-by-one) that unit
+  tests and coverage metrics systematically miss. Empirically, fuzzing finds
+  the highest-severity bugs per minute invested.
+- **Go**: `func FuzzXxx(f *testing.F)` with `f.Add(seed)` corpus + `f.Fuzz(func(t, ...))`
+  asserting a postcondition. At least one target per package whose invariant is
+  non-trivially guaranteed (interpolation monotonicity, round-trip identity,
+  bounded output, distinct-element count, etc.). Packages whose invariants are
+  mathematically provable (e.g. a pure CMS over-approximation) are exempt.
+- **Before release**: run high-value targets for ≥5 min each (`go test -fuzz -fuzztime=5m`).
+  The fuzzer writes failing inputs to `testdata/fuzz/`, which `go test` then
+  replays — an unfixed corpus breaks the regular test suite until the bug is
+  fixed or the corpus is `git rm`'d.
+- **Gotcha**: a `for i := range N` loop whose body **modifies `i`** (e.g.
+  `i += skip`) silently breaks under range — `range` reassigns `i` each
+  iteration. Use the classic `for i := 0; i < N; i++` when the body mutates
+  the loop variable.
+- **Sources**: Go blog "Fuzzing is testing" (2024); redis-cell float-overflow
+  pattern; kit4go 2026-07 fuzz campaign (16 targets × 5 min, 100M+ execs, found
+  3 real bugs that 100% coverage missed).
+
 ---
 
 ## F. Concurrency Safety (QA)
@@ -640,7 +664,7 @@ instantiation is shown.
 |---|---|---|
 | **Architect** | A, B, J | import analysis, godoc review, `go.mod` diff |
 | **SRE** | D, G, L | `go test -bench -benchmem`, `go vet`, resilience review |
-| **QA** | E, F | `go test -race -cover`, test-file review |
+| **QA** | E, F | `go test -race -cover`, `go test -fuzz`, test-file review |
 | **Developer** | C, H | README check, godoc, example review |
 | **Security** | I | security linter, input-validation & resource-exhaustion audit |
 
