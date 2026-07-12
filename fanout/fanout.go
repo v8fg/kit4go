@@ -111,6 +111,14 @@ func (f *Fanout[T]) Publish(msg T) int {
 // it or ctx is cancelled. Holds a read lock during delivery, but also selects on
 // the fanout's done signal so a Close cannot deadlock against a full subscriber
 // channel under a non-cancellable ctx.
+//
+// Caveat: the read lock is held across the whole delivery, so a subscriber that
+// stops draining its channel cannot be removed while it is the blocked target —
+// Unsubscribe/Cancel need the write lock this method holds. The only escapes are
+// ctx cancellation or Close. Pass a cancellable ctx whenever a subscriber may be
+// cancelled mid-delivery; a non-cancellable ctx combined with a full subscriber
+// that calls Cancel deadlocks. When per-subscriber isolation matters more than
+// at-least-once delivery, prefer Publish (drop-on-full, counted in Dropped).
 func (f *Fanout[T]) PublishBlocking(ctx context.Context, msg T) (int, bool) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()

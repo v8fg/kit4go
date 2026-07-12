@@ -164,6 +164,12 @@ func (b *Batcher[T]) Flush() {
 
 // Close stops accepting items, drains the in-flight buffer, flushes the
 // remainder, and waits for the collector to exit. Safe to call multiple times.
+//
+// Close is bounded only if flushFn is. The collector flushes the remainder
+// synchronously before exiting, so a flushFn that blocks on a stalled
+// downstream (a wedged broker/DB) blocks Close in turn — Close waits on the
+// collector via <-b.closed. Keep flushFn non-blocking and give it its own
+// deadline/context so graceful shutdown cannot hang (L6).
 func (b *Batcher[T]) Close() error {
 	b.once.Do(func() { close(b.done) })
 	<-b.closed
