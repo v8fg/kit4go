@@ -97,6 +97,12 @@ func Parse(s string, scale int) (Decimal, error) {
 	} else if strings.HasPrefix(s, "+") {
 		s = s[1:]
 	}
+	// Reject a second/doubled sign (e.g. "++5", "-+5", "+-5"): big.Int.SetString
+	// accepts a leading sign, so without this guard "+-5" parses as -5.00 and
+	// "--5" cancels to +5.00. Also rejects a bare sign.
+	if len(s) == 0 || s[0] == '+' || s[0] == '-' {
+		return Decimal{}, fmt.Errorf("%w: invalid number %q", ErrParse, s)
+	}
 	parts := strings.SplitN(s, ".", 2)
 	whole := parts[0]
 	frac := ""

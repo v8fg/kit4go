@@ -305,3 +305,25 @@ func TestParseExplicitPlus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(100), m.Amount())
 }
+
+func TestParseRejectsDoubleSign(t *testing.T) {
+	// Doubled/mismatched signs used to slip through (strconv.ParseInt accepts a
+	// leading sign), dropping the intended sign — "+-0.05" parsed as +0.05.
+	for _, bad := range []string{"++1.00", "--1.00", "-+1.00", "+-0.05", "+", "-"} {
+		_, err := Parse("USD", bad)
+		require.ErrorIs(t, err, ErrInvalidAmount, "Parse should reject %q", bad)
+	}
+}
+
+func TestDivMinInt64MinusOne(t *testing.T) {
+	// MinInt64 is reachable via arithmetic (constructors reject it directly):
+	// (MinInt64+1) - 1 == MinInt64.
+	bottom, err := MustFromMinor(math.MinInt64+1, "USD").Sub(MustFromMinor(1, "USD"))
+	require.NoError(t, err)
+	require.Equal(t, int64(math.MinInt64), bottom.Amount())
+	// MinInt64 / -1 is implementation-defined in Go (SIGFPE on amd64, silent wrap
+	// on arm64); it must surface as a uniform ErrOverflow instead of crashing or
+	// wrapping.
+	_, err = bottom.Div(-1, RoundHalfUp)
+	require.ErrorIs(t, err, ErrOverflow)
+}

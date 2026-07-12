@@ -167,6 +167,13 @@ func Parse(code, amount string) (Money, error) {
 	} else if s[0] == '+' {
 		s = s[1:]
 	}
+	// Reject a second/doubled sign (e.g. "++1", "-+1", "+-0.05"): strconv.ParseInt
+	// and big.Int both accept a leading sign, so without this guard "+-0.05"
+	// would lose its intended negative sign (parses as +0.05). Also rejects a
+	// bare sign ("-", "+").
+	if len(s) == 0 || s[0] == '+' || s[0] == '-' {
+		return Money{}, fmt.Errorf("%w: %q", ErrInvalidAmount, amount)
+	}
 	parts := strings.SplitN(s, ".", 2)
 	whole, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || whole < 0 {
@@ -309,6 +316,14 @@ func (m Money) Scale(ratio float64, mode Rounding) (Money, error) {
 func (m Money) Div(divisor int64, mode Rounding) (Money, error) {
 	if divisor == 0 {
 		return Money{}, ErrDivideByZero
+	}
+	if m.amount == math.MinInt64 && divisor == -1 {
+		// MinInt64 / -1 is the one Go integer division whose true quotient
+		// (MaxInt64+1) overflows: it is implementation-defined — a runtime SIGFPE
+		// panic on amd64, a silent wrap to MinInt64 on arm64. Reject it explicitly
+		// so behaviour is uniform. MinInt64 is reachable via arithmetic (e.g.
+		// FromMinor(MinInt64+1).Sub(one)), not only the struct literal.
+		return Money{}, fmt.Errorf("%w: divide overflows", ErrOverflow)
 	}
 	q := m.amount / divisor
 	r := m.amount % divisor

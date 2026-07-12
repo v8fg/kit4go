@@ -234,3 +234,13 @@ func TestRescaleLargeScale(t *testing.T) {
 		t.Fatalf("scale = %d, want 25", r.Scale())
 	}
 }
+
+func TestParseRejectsDoubleSign(t *testing.T) {
+	// Doubled/mismatched signs used to slip through (big.Int.SetString accepts a
+	// leading sign): "+-5" parsed as -5.00, "--5" cancelled to +5.00.
+	for _, bad := range []string{"++5", "--5", "-+5", "+-5", "+", "-"} {
+		if _, err := Parse(bad, 2); err == nil {
+			t.Errorf("Parse(%q) should error", bad)
+		}
+	}
+}
