@@ -111,6 +111,12 @@ func (h *Health) Alive() bool { return h.live.Load() }
 // IsReady evaluates all checkers and returns the readiness report. If cacheTTL
 // > 0 and the cached report is fresh, returns the cache without re-running
 // checks.
+//
+// Checkers run synchronously; a panicking Checker propagates as a panic (per the
+// synchronous-caller-stays-raw convention). Under ReadinessHandler the net/http
+// server recovers it to HTTP 500, so a panicking checker makes the probe
+// not-ready WITHOUT a named entry in the report — keep Checkers error-returning,
+// not panicking.
 func (h *Health) IsReady() Report {
 	if h.cacheTTL > 0 {
 		h.mu.RLock()
