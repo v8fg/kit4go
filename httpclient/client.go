@@ -391,12 +391,18 @@ func (c *Client) DoWithRetry(ctx context.Context, req *http.Request) (*http.Resp
 		}
 		c.fireEvent("request", method, urlStr, status, attempt)
 
-		if !shouldRetry(resp, err) || (resp != nil && !isIdempotent(method)) {
-			// Not retryable, OR a non-idempotent method (POST/PATCH/...) already
-			// got a response — the server may have produced its side effect, so
-			// retrying would duplicate it (double charge / duplicate write).
-			// Transport errors (resp==nil, request never reached the server) are
-			// still retried for every method.
+		if !shouldRetry(resp, err) ||
+			(resp != nil && !isIdempotent(method)) ||
+			(resp == nil && !isIdempotent(method) && sentButNoResponse(err)) {
+			// Not retryable, OR unsafe to retry for a non-idempotent method:
+			//   - it already received a response (the server may have produced its
+			//     side effect — double charge / duplicate write); OR
+			//   - the request was sent but the response was lost (an io.EOF /
+			//     io.ErrUnexpectedEOF reading the response: resp==nil yet the server
+			//     did receive and may have processed the body — same double-charge
+			//     risk as the response-received case).
+			// Genuine pre-send transport errors (connection refused, dial timeout)
+			// never reached the server and stay retryable for every method.
 			return resp, err
 		}
 

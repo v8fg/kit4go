@@ -31,6 +31,18 @@ var idempotentMethods = map[string]bool{
 
 func isIdempotent(method string) bool { return idempotentMethods[method] }
 
+// sentButNoResponse reports whether err indicates the request was delivered to
+// the server but the response was lost (the response stream cut off mid-read —
+// io.EOF / io.ErrUnexpectedEOF). For such errors resp==nil yet the server did
+// receive the request and may have processed its body, so a non-idempotent
+// method must not be retried (double-charge risk). This is the clearest
+// "request reached the server" signal the client can observe; genuine pre-send
+// transport errors (connection refused, dial timeout) are not EOF-class and
+// remain retryable for every method.
+func sentButNoResponse(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
 // retryDelay uses math/rand/v2's top-level Float64 for jitter — concurrent-safe
 // and auto-seeded. A shared *rand.Rand (math/rand) is NOT safe for concurrent
 // use and would race on the retry hot path.
