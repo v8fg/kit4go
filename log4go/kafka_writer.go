@@ -601,6 +601,16 @@ func (k *KafkaWriter) producerNotNil() bool {
 func (k *KafkaWriter) daemon() {
 	defer func() {
 		if r := recover(); r != nil {
+			// Known limitation (mirrored in file/net daemons): the recover counts
+			// the panic but does NOT set closing nor close(k.stop). Under
+			// OverflowBlock, once the daemon is dead and the channel is full, a
+			// subsequent send blocks forever on `k.messages <- msg` (the <-k.stop
+			// arm never fires) — and since send runs on the shared bootstrap
+			// goroutine, every later log call blocks too (a do-no-harm gap vs L2).
+			// Drop/Spill policies (the default) are unaffected: their `default`
+			// arm drains/spills. Fix: close k.stop here (via a shared sync.Once so
+			// Stop's close is idempotent) + set closing, so Block producers unblock
+			// — coordinated with Stop's run-CAS and the R20 shutdown ordering.
 			recordDaemonPanic("kafka", r)
 		}
 	}()
