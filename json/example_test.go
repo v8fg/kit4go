@@ -41,8 +41,8 @@ func ExampleMarshal() {
 
 // ExampleBackend demonstrates runtime introspection of the compiled backend
 // (selected at build time via tags: stdlib by default, go_json / jsoniter /
-// sonic otherwise). MarshalIndent and Valid share the same backend and are
-// shown here since the output is stable across all four.
+// sonic otherwise). PKG/Backend() vary by tag, so this is a non-output example;
+// MarshalIndent and Valid produce identical bytes across all four backends.
 func ExampleBackend() {
 	fmt.Println("pkg:", json.PKG)
 	fmt.Println("backend:", json.Backend())
@@ -58,14 +58,4 @@ func ExampleBackend() {
 	// Valid reports whether a byte slice is well-formed JSON.
 	fmt.Println("valid:", json.Valid([]byte(`{"name":"kit","age":1}`)))
 	fmt.Println("valid:", json.Valid([]byte("not-json")))
-
-	// Output:
-	// pkg: encoding/json
-	// backend: stdlib
-	// {
-	//   "name": "kit",
-	//   "age": 1
-	// }
-	// valid: true
-	// valid: false
 }

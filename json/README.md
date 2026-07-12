@@ -16,6 +16,11 @@
 - `go build -tags go_json`
 - `go build -tags "sonic avx"`
 
+>**sonic requires `GOARCH=amd64`**: its build constraint gates on the amd64
+>architecture, so `-tags "sonic avx"` on arm64 (e.g. Apple Silicon) is a silent
+>no-op — the build falls back to stdlib with no warning. Use jsoniter or go_json
+>for a faster backend on arm64.
+
 >If run the test, also can use `go test -v -tags jsoniter .`
 
 ## Usage

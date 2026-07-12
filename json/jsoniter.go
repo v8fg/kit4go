@@ -12,6 +12,11 @@ const PKG = "jsoniter"
 func Backend() string { return "jsoniter" }
 
 var (
+	// json is the jsoniter backend configured for stdlib compatibility. NOTE:
+	// jsoniter is NOT a true drop-in for cyclic values — unlike encoding/json and
+	// goccy (which return a "cycle" error), jsoniter has no cycle guard and
+	// recurses until the goroutine stack overflows (a fatal, unrecoverable
+	// crash). Do not Marshal self-referential / graph structures under this tag.
 	json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 	// Marshal is exported by kit4go/json package.
