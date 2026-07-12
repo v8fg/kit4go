@@ -689,3 +689,30 @@ func Test_FileWriter_SetOnEvent_ErrorEvent(t *testing.T) {
 		t.Fatal("error event never fired from writeOne error path")
 	}
 }
+
+// Test_FileWriter_Stop_ConcurrentSafe is the regression for the Stop double-
+// close race: before the closing.CompareAndSwap guard, two concurrent Stops
+// both passed the messages!=nil check and double-closed w.stop (panic) while
+// also racing w.messages (read vs nil-write). The CAS makes Stop idempotent —
+// exactly one caller proceeds.
+func Test_FileWriter_Stop_ConcurrentSafe(t *testing.T) {
+	for iter := 0; iter < 50; iter++ {
+		fw, _ := newAsyncFileWriter(t, FileWriterOptions{})
+		if err := fw.Init(); err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond) // let the daemon start
+
+		const n = 8
+		var wg sync.WaitGroup
+		wg.Add(n)
+		for range n {
+			go func() {
+				defer wg.Done()
+				fw.Stop()
+			}()
+		}
+		wg.Wait()
+		fw.Stop() // idempotent extra: a no-op, must not panic
+	}
+}

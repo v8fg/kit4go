@@ -793,10 +793,19 @@ func (w *FileWriter) flushSync() error {
 // racing producer slipped in after closing was set is either drained by the
 // daemon or left in an unbuffered-to-GC channel (no panic, no race).
 func (w *FileWriter) Stop() {
-	if !w.async || w.messages == nil {
+	if !w.async {
 		return
 	}
-	w.closing.Store(true)
+	// CAS gates Stop: exactly one caller proceeds (mirrors Kafka/Net run.CAS), so
+	// concurrent Stop — a user Stop racing Logger.Close's per-writer Stop — can't
+	// double-close w.stop or race w.messages. async is immutable post-build, so
+	// the bare read is safe.
+	if !w.closing.CompareAndSwap(false, true) {
+		return
+	}
+	if w.messages == nil {
+		return // async but never started (no daemon)
+	}
 	close(w.stop)
 	waitQuit("file", w.quit, defaultShutdownTimeout)
 	w.messages = nil
