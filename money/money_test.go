@@ -207,6 +207,28 @@ func TestOverflowGuards(t *testing.T) {
 	require.ErrorIs(t, err, ErrOverflow)
 }
 
+// TestScalePrecisionGuard locks in the float64-precision fix: float64 cannot
+// represent every integer beyond 2^53, so before the guard Scale silently
+// returned a corrupted amount (2^53+1 rounded to 2^53). It must now fail loud.
+func TestScalePrecisionGuard(t *testing.T) {
+	// Amount just beyond the exactly-representable band: float64 collapses it
+	// before the multiply even at an identity-ish ratio.
+	overAmount := MustFromMinor((1<<53)+1, "USD")
+	_, err := overAmount.Scale(0.15, RoundHalfUp)
+	require.ErrorIs(t, err, ErrOverflow)
+
+	// Amount representable, but the scaled product leaves the band.
+	atBand := MustFromMinor(1<<53, "USD")
+	_, err = atBand.Scale(2.0, RoundHalfUp)
+	require.ErrorIs(t, err, ErrOverflow)
+
+	// Just under the band with an identity ratio stays exact (no drift).
+	under := MustFromMinor((1<<53)-1, "USD")
+	out, err := under.Scale(1.0, RoundHalfUp)
+	require.NoError(t, err)
+	require.Equal(t, int64((1<<53)-1), out.Amount())
+}
+
 func TestSignChecks(t *testing.T) {
 	require.True(t, MustFromMinor(0, "USD").IsZero())
 	require.True(t, MustFromMinor(5, "USD").IsPositive())

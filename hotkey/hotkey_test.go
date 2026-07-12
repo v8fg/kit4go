@@ -266,3 +266,36 @@ func TestCountDoesNotGrowMapR13F2(t *testing.T) {
 	}
 	require.Equal(t, 1, d.Len(), "absent-key Count probes added no entries")
 }
+
+func TestMaxHitsPerKeyCap(t *testing.T) {
+	clk := &fakeClock{t: time.Unix(4000, 0)}
+	d := New(time.Second, 5, WithMaxHitsPerKey(10), WithClock(clk.now))
+	for range 100 {
+		d.Touch("heavy")
+	}
+	// The cap bounds retained timestamps; Count reflects the cap, not the true
+	// 100 hits — rank-correct under-counting for an extreme heavy hitter.
+	require.Equal(t, 10, d.Count("heavy"))
+
+	// Keys below the cap stay exact.
+	for range 3 {
+		d.Touch("light")
+	}
+	require.Equal(t, 3, d.Count("light"))
+
+	// The heavy key still ranks #1.
+	top := d.Top()
+	require.Len(t, top, 2)
+	require.Equal(t, "heavy", top[0].Key)
+	require.Equal(t, 10, top[0].Count)
+}
+
+func TestMaxHitsPerKeyZeroIsUnbounded(t *testing.T) {
+	// Default (0) disables the cap: Count stays exact for a sustained hitter.
+	clk := &fakeClock{t: time.Unix(5000, 0)}
+	d := New(time.Second, 5, WithClock(clk.now))
+	for range 1000 {
+		d.Touch("k")
+	}
+	require.Equal(t, 1000, d.Count("k"))
+}

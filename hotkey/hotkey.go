@@ -45,12 +45,13 @@ type HotKey struct {
 // clock under the lock; Touch is the hot path and may contend under very high
 // key-cardinality — shard detectors if that becomes a bottleneck.
 type Detector struct {
-	mu      sync.Mutex
-	window  time.Duration
-	topK    int
-	maxKeys int
-	clock   func() time.Time
-	keys    map[string][]time.Time // ascending timestamps
+	mu            sync.Mutex
+	window        time.Duration
+	topK          int
+	maxKeys       int
+	maxHitsPerKey int
+	clock         func() time.Time
+	keys          map[string][]time.Time // ascending timestamps
 }
 
 // Option configures a Detector.
@@ -65,6 +66,19 @@ type Option func(*Detector)
 // without bound. Pass WithMaxKeys(0) explicitly to restore fully unbounded
 // tracking; this matches the convention in package freqcap.
 func WithMaxKeys(n int) Option { return func(d *Detector) { d.maxKeys = n } }
+
+// WithMaxHitsPerKey caps the number of timestamps retained for a single key.
+// A sustained heavy hitter would otherwise store every hit in the window, so the
+// hotter a key the more memory it burns — the detector's own target workload.
+// The cap bounds per-key memory at maxHitsPerKey timestamps; once reached the
+// oldest hits are dropped, so Count/Top slightly under-count extreme heavy
+// hitters (still rank-correct: a key over the cap is still reported as hot).
+//
+// 0 (the zero value, also the default) disables the cap. That keeps Count exact,
+// which is fine when per-key hit volume is bounded by the window duration; for
+// unbounded-rate heavy hitters where memory is a concern, set an explicit cap or
+// pair with countmin for an approximate backend.
+func WithMaxHitsPerKey(n int) Option { return func(d *Detector) { d.maxHitsPerKey = n } }
 
 // WithClock injects a clock for tests.
 func WithClock(f func() time.Time) Option { return func(d *Detector) { d.clock = f } }
@@ -99,6 +113,11 @@ func (d *Detector) Touch(key string) {
 	ts := d.keys[key]
 	ts = trimBefore(ts, now.Add(-d.window))
 	ts = append(ts, now)
+	if d.maxHitsPerKey > 0 && len(ts) > d.maxHitsPerKey {
+		// Bound per-key storage (D5): a sustained heavy hitter cannot grow its
+		// slice past the cap. Drop the oldest hits; the cap is on retained volume.
+		ts = ts[len(ts)-d.maxHitsPerKey:]
+	}
 	d.keys[key] = ts
 	d.evictIdleLocked(now)
 }

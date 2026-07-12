@@ -275,11 +275,24 @@ func (m Money) Mul(factor int64) (Money, error) {
 
 // Scale multiplies the amount by a non-integer ratio (e.g. 1.07 for 7% tax, or
 // 0.15 for a 15% take rate) and rounds to the currency's minor unit.
+//
+// The scaled product is formed in float64, which represents every integer only
+// within [-2^53, 2^53]. Beyond that band the amount or the product cannot be
+// held exactly and the minor-unit result would be silently wrong, so such
+// magnitudes return ErrOverflow instead of a corrupted value. 2^53 minor units
+// is ~$90T — beyond any realistic amount for this library, but a money type that
+// advertises exactness must fail loud, not drift.
 func (m Money) Scale(ratio float64, mode Rounding) (Money, error) {
 	if math.IsNaN(ratio) || math.IsInf(ratio, 0) {
 		return Money{}, fmt.Errorf("%w: bad ratio", ErrInvalidAmount)
 	}
+	if math.Abs(float64(m.amount)) >= 1<<53 {
+		return Money{}, fmt.Errorf("%w: scale amount magnitude exceeds 2^53 minor units", ErrOverflow)
+	}
 	scaled := float64(m.amount) * ratio
+	if math.Abs(scaled) >= 1<<53 {
+		return Money{}, fmt.Errorf("%w: scale result magnitude exceeds 2^53 minor units", ErrOverflow)
+	}
 	rounded, err := roundFloatToInt64(scaled, mode)
 	if err != nil {
 		return Money{}, err
