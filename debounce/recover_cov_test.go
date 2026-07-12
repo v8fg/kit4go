@@ -4,6 +4,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestDebounce_SetOnPanic(t *testing.T) {
@@ -27,13 +29,10 @@ func TestDebounce_FlushRecoversPanic(t *testing.T) {
 	d.SetOnPanic(func(any) { fired.Store(true) })
 	d.Call()
 	d.Flush()
-	time.Sleep(50 * time.Millisecond)
-	if !fired.Load() {
-		t.Fatal("onPanic should have fired")
-	}
-	if d.Recovered() != 1 {
-		t.Fatalf("Recovered = %d, want 1", d.Recovered())
-	}
+	// Flush runs the recovering fn on a fresh goroutine; poll for the hook
+	// instead of a fixed sleep so the assertion survives scheduling latency (E5).
+	require.Eventually(t, func() bool { return fired.Load() && d.Recovered() == 1 },
+		500*time.Millisecond, 5*time.Millisecond)
 }
 
 func TestThrottle_SetOnPanic(t *testing.T) {
@@ -56,13 +55,10 @@ func TestThrottle_CallPanicRecovered(t *testing.T) {
 	th := NewThrottle(time.Millisecond, func() { panic("boom") })
 	th.SetOnPanic(func(any) { fired.Store(true) })
 	th.Call()
-	time.Sleep(50 * time.Millisecond)
-	if !fired.Load() {
-		t.Fatal("onPanic should have fired")
-	}
-	if th.Recovered() != 1 {
-		t.Fatalf("Recovered = %d, want 1", th.Recovered())
-	}
+	// Call spawns a safeFire goroutine; poll for the hook instead of a fixed
+	// sleep so the assertion survives scheduling latency (E5).
+	require.Eventually(t, func() bool { return fired.Load() && th.Recovered() == 1 },
+		500*time.Millisecond, 5*time.Millisecond)
 }
 
 func TestDebounce_LastArgEmpty(t *testing.T) {

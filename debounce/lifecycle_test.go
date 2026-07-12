@@ -4,6 +4,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Regression: fn must not fire after Close. Before the fix the AfterFunc
@@ -27,8 +29,13 @@ func TestDebounce_FlushFiresOnce(t *testing.T) {
 	d := New(50*time.Millisecond, func() { n.Add(1) })
 	defer d.Close()
 	d.Call()
-	d.Flush()                         // timer pending -> fire once, AfterFunc stopped
-	time.Sleep(80 * time.Millisecond) // past `after`; a double-fire would show 2
+	d.Flush() // timer pending -> fire once, AfterFunc stopped
+	// Poll for the Flush goroutine instead of a fixed sleep (E5). Once fn fires
+	// once it stays at 1: the AfterFunc was stopped, so Flush's goroutine is the
+	// sole source. A double-fire (timer + Flush both running) would leave n==2,
+	// caught by the final exact-count assertion below.
+	require.Eventually(t, func() bool { return n.Load() >= 1 },
+		500*time.Millisecond, 5*time.Millisecond)
 	if got := n.Load(); got != 1 {
 		t.Fatalf("fn fired %d times, want 1", got)
 	}
