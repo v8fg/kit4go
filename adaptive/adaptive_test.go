@@ -945,3 +945,51 @@ func TestPool_SetOnPanicDisable(t *testing.T) {
 	require.Eventually(t, func() bool { return p.Recovered() == 1 }, time.Second, time.Millisecond)
 	require.NoError(t, p.Close())
 }
+
+// TestClose_SubmitRaceNoOrphan is the regression for the Submit/Close race: a
+// Submit concurrent with Close must never report a job accepted (nil) that is
+// then silently dropped. Submit holds the read lock across its closed-check +
+// queue send, and Close's final drain holds the write lock, so every accepted
+// job is observed by the drain. Before the lock, a Submit whose select landed a
+// job in the queue AFTER Close's final drain orphaned it (no worker left).
+func TestClose_SubmitRaceNoOrphan(t *testing.T) {
+	for iter := 0; iter < 50; iter++ {
+		var ran atomic.Int64
+		p, err := New[int](
+			func(int) { ran.Add(1) },
+			WithMinWorkers[int](2), WithMaxWorkers[int](4),
+			WithQueueSize[int](4),
+			WithSampleInterval[int](time.Microsecond),
+			WithLoadMonitor[int](newFake(0.5)),
+		)
+		require.NoError(t, err)
+
+		const submitters = 12
+		const perSub = 40
+		var accepted atomic.Int64
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		wg.Add(submitters + 1)
+		for range submitters {
+			go func() {
+				defer wg.Done()
+				<-start
+				for i := 0; i < perSub; i++ {
+					if err := p.Submit(context.Background(), i); err == nil {
+						accepted.Add(1)
+					}
+				}
+			}()
+		}
+		go func() {
+			defer wg.Done()
+			<-start
+			p.Close()
+		}()
+		close(start)
+		wg.Wait()
+
+		require.Equal(t, accepted.Load(), ran.Load(),
+			"iter %d: %d accepted jobs but only %d ran (orphan)", iter, accepted.Load(), ran.Load())
+	}
+}

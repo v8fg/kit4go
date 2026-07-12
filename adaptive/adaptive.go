@@ -114,6 +114,7 @@ type Pool[Job any] struct {
 	done   chan struct{}  // closed by Close: autoscaler + workers exit, Submit rejects
 	wg     sync.WaitGroup // workers
 	scaler sync.WaitGroup // autoscaler goroutine
+	mu     sync.RWMutex   // Close's final drain (W) vs Submit/TrySubmit's check+send (R)
 
 	// recovered counts user work() panics recovered across every worker;
 	// onPanic is an optional hook fired on each recovery. Workers run work on
@@ -391,6 +392,8 @@ func (p *Pool[Job]) Recovered() uint64 { return p.recovered.Load() }
 // Backpressure model: Submit blocks while the queue is full (bounded by ctx).
 // For non-blocking submit, use [Pool.TrySubmit].
 func (p *Pool[Job]) Submit(ctx context.Context, j Job) error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if p.closed.Load() {
 		return ErrClosed
 	}
@@ -410,6 +413,8 @@ func (p *Pool[Job]) Submit(ctx context.Context, j Job) error {
 // TrySubmit enqueues without blocking. Returns (true, nil) on success; false
 // (with ErrFull or ErrClosed) if the queue is full or the pool is closed.
 func (p *Pool[Job]) TrySubmit(j Job) (bool, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	if p.closed.Load() {
 		return false, ErrClosed
 	}
@@ -439,9 +444,12 @@ func (p *Pool[Job]) Workers() int { return int(p.workers.Load()) }
 //
 // Accepted-but-not-yet-consumed jobs are guaranteed to run: after the workers
 // exit, Close does a final non-blocking drain of the queue and runs any
-// stragglers synchronously. This closes the Submit/Close race where a job is
-// enqueued (Submit returns nil) after the last worker's drainQueue has already
-// finished — without this drain such a job would be silently abandoned.
+// stragglers synchronously, under the write lock so it observes every job from
+// an in-flight Submit (which holds the read lock across its closed-check + send).
+// This closes the Submit/Close race where a job is enqueued (Submit returns nil)
+// after the last worker's drainQueue has already finished — without it such a
+// job would be silently abandoned. (A Work func must not Submit to its own pool
+// — re-entrant Submit during Close's drain would self-deadlock on the lock.)
 func (p *Pool[Job]) Close() error {
 	p.closeOnce.Do(func() {
 		p.closed.Store(true)
@@ -450,13 +458,14 @@ func (p *Pool[Job]) Close() error {
 	p.scaler.Wait() // autoscaler is down before workers, so no more grow/shrink races
 	p.wg.Wait()     // workers finish draining and exit
 
-	// Final drain: a Submit that raced ahead of close(done) can land a job in
-	// p.queue AFTER the last worker's drainQueue returned (so the worker never
-	// saw it) but BEFORE p.closed was observed. Such a job was accepted (Submit
-	// returned nil) so it must run. Workers are gone now, so run stragglers on
-	// the Close caller's goroutine. Non-blocking: only jobs already in the
-	// queue at this instant are touched; Submit now observes p.closed and
-	// rejects, so the drain terminates in finite time.
+	// Final drain under the write lock: an in-flight Submit holds the read lock
+	// across its closed-check + queue send, so this drain cannot miss an
+	// accepted job. A Submit that has not yet sent observes closed (rejects); one
+	// mid-send finishes before the drain runs. Without the lock a Submit whose
+	// select landed a job in the queue AFTER this drain would orphan it (no
+	// worker left). Non-blocking drain; the lock only excludes in-flight Submits.
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.drainQueue()
 	return nil
 }
