@@ -26,6 +26,11 @@ func HasOppositeSigns[T Number](x, y T) bool {
 // diff = x - y
 // x > y, y + (diff &  0) => y
 // x < y, y + (diff & -1) => x
+//
+// Caveat: this subtraction bithack overflows when x-y exceeds the int range
+// (e.g. opposite-sign extremes near MinInt/MaxInt), producing a wrong result.
+// For general-purpose min/max prefer the Go 1.21+ min/max builtins, which are
+// branch-based and overflow-safe.
 func Min[T ~int](x, y T) T {
 	x = x - y
 	y += x & (x >> (intSize - 1))
@@ -38,6 +43,9 @@ func Min[T ~int](x, y T) T {
 // diff = x - y
 // x > y, x - (diff &  0) => x
 // x < y, x - (diff & -1) => y
+//
+// Caveat: same overflow-unsafe subtraction bithack as Min — see its doc. For
+// general-purpose max prefer the Go 1.21+ max builtin.
 func Max[T ~int](x, y T) T {
 	y = x - y
 	x -= y & (y >> (intSize - 1))
