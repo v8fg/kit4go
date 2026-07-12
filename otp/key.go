@@ -102,6 +102,10 @@ func RandomSecret(length int) (secret string) {
 // NoPadding format. It returns true only for a non-empty, well-formed base32
 // secret.
 //
+// Case is normalized to uppercase before decoding, matching the code generators
+// (HOTPCode/TOTPCode uppercase the secret internally) — so a lowercase secret
+// the authenticator would honor is not rejected by this format gate.
+//
 // This is a base32 FORMAT check only — it does NOT validate secret strength,
 // length, or entropy. An all-zero secret that happens to be valid base32 still
 // passes; callers provisioning 2FA must additionally enforce a minimum length
@@ -109,7 +113,7 @@ func RandomSecret(length int) (secret string) {
 // secret is rejected as false (the bare base32 decoder would otherwise accept
 // "" as valid, which would let a caller gate provisioning on an empty secret).
 func VerifySecret(secret string) bool {
-	secret = strings.TrimSpace(secret)
+	secret = strings.ToUpper(strings.TrimSpace(secret))
 	if secret == "" {
 		return false
 	}

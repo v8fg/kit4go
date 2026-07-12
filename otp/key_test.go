@@ -86,6 +86,13 @@ func TestVerifySecret(t *testing.T) {
 		convey.So(otp.VerifySecret("7ZDW4TVCYM"), convey.ShouldBeTrue)
 		convey.So(otp.VerifySecret("JBSWY3DPEHPK3PXP"), convey.ShouldBeTrue)
 
+		// Regression (R39): VerifySecret must accept a lowercase secret that the
+		// generators honor (HOTPCode/TOTPCode uppercase internally). Previously it
+		// rejected lowercase, diverging from the generators' acceptance set.
+		convey.So(otp.VerifySecret("jbswy3dpehpk3pxp"), convey.ShouldBeTrue)
+		convey.So(otp.VerifySecret("7zdw4tvcym"), convey.ShouldBeTrue)
+		convey.So(otp.VerifySecret("  jbswy3dpehpk3pxp  "), convey.ShouldBeTrue)
+
 		// Regression (F6): an empty or whitespace-only secret previously passed
 		// because the bare base32 decoder accepts "" as valid, which would let
 		// a caller gate 2FA provisioning on an empty secret. Now rejected.
