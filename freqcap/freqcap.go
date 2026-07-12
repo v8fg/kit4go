@@ -189,6 +189,14 @@ func (c *Counter) Len() int {
 // and Allow denies the new event instead of dropping a live entity. A former
 // oldest-start eviction loop lived here; it was removed because under the soft
 // cap it could only ever drop live keys — exactly the over-delivery bug.
+//
+// Cost: this is an O(maxKeys) scan run on the fresh-key Allow path (the
+// documented "Allow triggers idle pruning" contract). Under a distinct-key
+// flood against a saturated cap (maxKeys live entities, then more distinct
+// keys) every denied Allow scans the whole map under c.mu, amplifying lock
+// contention and capping lock-throughput. For a high-cardinality adversarial
+// key space, shard counters (key%N → N Counters) or use an approximate backend
+// (countmin) so the per-instance map stays small.
 func (c *Counter) evictIdleLocked(now time.Time) {
 	cutoff := now.Add(-c.window)
 	for k, ts := range c.keys {
