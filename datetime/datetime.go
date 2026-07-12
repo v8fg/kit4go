@@ -73,12 +73,17 @@ func TimeStr2UnixMilli(layout, value string, loc *time.Location) (int64, error) 
 	return parseTime.UnixMilli(), nil
 }
 
-// UnixToDuration converts the seconds to the corresponding duration time.Duration.
+// UnixToDuration casts an int64 nanosecond count to a time.Duration (a raw
+// type conversion — time.Duration is itself an int64 of nanoseconds). It does
+// NOT multiply by time.Second: pass a nanosecond value, or pre-convert seconds
+// with sec*int64(time.Second). Misnamed for historical reasons.
 func UnixToDuration(sec int64) time.Duration {
 	return time.Duration(sec)
 }
 
-// UnixMilliToDuration converts the milliseconds to the corresponding duration time.Duration.
+// UnixMilliToDuration casts an int64 nanosecond count to a time.Duration (a raw
+// type conversion). It does NOT multiply by time.Millisecond: pass a nanosecond
+// value, or pre-convert milliseconds with msec*int64(time.Millisecond).
 func UnixMilliToDuration(msec int64) time.Duration {
 	return time.Duration(msec)
 }
