@@ -42,8 +42,11 @@ func New[V any](opts ...Option[V]) *Trie[V] {
 	return t
 }
 
-// segment splits a key into trie segments by "/". Override with a custom
-// segmenter if a different delimiter is needed.
+// segments splits a key into trie segments by "/", trimming leading/trailing
+// "/". Keys that differ only in leading/trailing "/" ("/0", "0", "0/", "//0//")
+// therefore map to the SAME entry — the path-style normalization suits the
+// URL/domain-routing use, but means a generic string key is not stored verbatim
+// (Insert("0") and Insert("/0") overwrite the same node).
 func segments(key string) []string {
 	key = strings.Trim(key, "/")
 	if key == "" {
