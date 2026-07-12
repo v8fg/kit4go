@@ -187,3 +187,38 @@ func TestFranzgoKfake_PartitionConsumer(t *testing.T) {
 		t.Errorf("partition consumed %d, want >=1", got)
 	}
 }
+
+// Regression: a caller ranging over Messages() (channel mode) must unblock when
+// Close stops the pump. Before the fix msgCh was never closed.
+func TestFranzgoKfake_PartitionConsumerChannelMode_RangeUnblocksOnClose(t *testing.T) {
+	_, addrs := kfakeCluster(t)
+	pcon, err := NewPartitionConsumer(
+		WithBrokers(addrs...),
+		WithTopic("pcc"),
+		WithPartition(0),
+		WithOffset(OffsetOldest),
+		WithDeliveryMode("channel"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := pcon.Messages()
+	if ch == nil {
+		t.Fatal("Messages() should be non-nil in channel mode")
+	}
+	rangeDone := make(chan struct{})
+	go func() {
+		for range ch { // must exit when Close closes ch
+		}
+		close(rangeDone)
+	}()
+	time.Sleep(100 * time.Millisecond) // let the ranger + pump park
+	if err := pcon.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-rangeDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("range over Messages() did not unblock after Close (channel never closed)")
+	}
+}

@@ -239,6 +239,12 @@ func (s *franzPartitionConsumer) Messages() <-chan Message {
 }
 
 func (s *franzPartitionConsumer) pump(ctx context.Context, handler MessageHandler, out chan Message) error {
+	if out != nil {
+		// Channel mode: the pump is the sole sender to out, so closing it on exit
+		// lets a caller ranging over Messages() unblock when the stream ends or
+		// Close cancels the pump. Skipped in callback mode (out == nil).
+		defer close(out)
+	}
 	for i := 0; ; i++ {
 		if ctxDone(ctx) {
 			return ctx.Err()

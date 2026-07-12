@@ -29,10 +29,11 @@ type saramaPartitionConsumer struct {
 	mu     sync.Mutex
 	closed bool
 
-	errChOnce sync.Once
-	errCh     chan error
-	msgChOnce sync.Once
-	msgCh     chan Message
+	errChOnce  sync.Once
+	errCh      chan error
+	msgChOnce  sync.Once
+	msgCh      chan Message
+	pumpCancel context.CancelFunc // set inside msgChOnce; cancelling stops the channel-mode pump so Close closes msgCh and a ranging caller unblocks
 
 	received  atomic.Uint64
 	acked     atomic.Uint64
@@ -98,8 +99,13 @@ func (s *saramaPartitionConsumer) Messages() <-chan Message {
 	}
 	s.msgChOnce.Do(func() {
 		s.msgCh = make(chan Message, 64)
+		// Cancellable ctx (not Background) so Close can stop the pump — otherwise
+		// a pump blocked sending to a full msgCh can never be interrupted and the
+		// caller ranging over Messages() hangs after Close.
+		ctx, cancel := context.WithCancel(context.Background())
+		s.pumpCancel = cancel
 		go func() {
-			_ = s.pump(context.Background(), nil, s.msgCh)
+			_ = s.pump(ctx, nil, s.msgCh)
 		}()
 	})
 	return s.msgCh
@@ -109,6 +115,12 @@ func (s *saramaPartitionConsumer) Messages() <-chan Message {
 // handler per message; channel mode (out != nil) forwards to out. It returns
 // when ctx is cancelled or the stream closes.
 func (s *saramaPartitionConsumer) pump(ctx context.Context, handler MessageHandler, out chan Message) error {
+	if out != nil {
+		// Channel mode: the pump is the sole sender to out, so closing it on exit
+		// lets a caller ranging over Messages() unblock when the stream ends or
+		// Close stops the pump. Skipped in callback mode (out == nil).
+		defer close(out)
+	}
 	for {
 		select {
 		case cm, ok := <-s.pc.Messages():
@@ -174,6 +186,13 @@ func (s *saramaPartitionConsumer) Close() error {
 	}
 	s.closed = true
 	s.mu.Unlock()
+	// Synchronise with channel-mode setup: if Messages() started the pump, stop
+	// it before closing sarama's channels so a send blocked on a full msgCh
+	// unblocks and the pump exits to close msgCh (mirrors the franz-go backend).
+	s.msgChOnce.Do(func() {})
+	if s.pumpCancel != nil {
+		s.pumpCancel()
+	}
 	err := s.pc.Close()
 	if err2 := s.consumer.Close(); err2 != nil && err == nil {
 		err = err2

@@ -136,3 +136,37 @@ func TestMapOffsetInitial(t *testing.T) {
 		}
 	}
 }
+
+// Regression: a caller ranging over Messages() must unblock when Close stops
+// the pump. Before the fix the wrapper-owned channel was never closed, so the
+// range hung forever after Close (goroutine leak + shutdown hang).
+func TestPartitionConsumer_ChannelMode_RangeUnblocksOnClose(t *testing.T) {
+	mc := mocks.NewConsumer(t, mockAsyncCfg())
+	mc.ExpectConsumePartition("t", 0, sarama.OffsetNewest).ExpectMessagesDrainedOnClose()
+
+	c, err := newSaramaPartitionConsumer(
+		Options{Brokers: []string{"x"}, Topic: "t", Partition: 0, Offset: OffsetNewest, DeliveryMode: "channel"}.withDefaults(),
+		mockConsumerFactory(mc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := c.Messages()
+	if ch == nil {
+		t.Fatal("Messages() in channel mode should be non-nil")
+	}
+	rangeDone := make(chan struct{})
+	go func() {
+		for range ch { // must exit when Close closes ch
+		}
+		close(rangeDone)
+	}()
+	time.Sleep(50 * time.Millisecond) // let the ranger park on the empty channel
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-rangeDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("range over Messages() did not unblock after Close (channel never closed)")
+	}
+}
