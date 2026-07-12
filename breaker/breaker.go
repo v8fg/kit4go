@@ -66,6 +66,11 @@ type Breaker[T any] struct {
 	// Half-open probe tracking. halfOpenCount is the number of probe slots
 	// taken; halfOpenSuccess the number that have succeeded. Both atomic so
 	// probes can admit/complete without taking mu.
+	//
+	// Edge: completion keys on state==HalfOpen at the record site, not on the
+	// admitting epoch, so a probe that outlasts a trip+cooldown (a fn ignoring
+	// its ctx longer than OpenDuration) credits the next epoch's counter. Bounded
+	// — the next failure re-trips. Keep probe deadlines under OpenDuration.
 	halfOpenSuccess atomic.Int32
 	halfOpenCount   atomic.Int32
 
