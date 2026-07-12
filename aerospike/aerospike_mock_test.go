@@ -6,6 +6,8 @@ package aerospike
 // methods and cannot be constructed directly).
 
 import (
+	"sync/atomic"
+
 	as "github.com/aerospike/aerospike-client-go/v8"
 )
 
@@ -26,6 +28,7 @@ type mockAPI struct {
 	deleteFn    func(*as.WritePolicy, *as.Key) (bool, as.Error)
 	batchGetFn  func(*as.BatchPolicy, []*as.Key, ...string) ([]*as.Record, as.Error)
 	closeCalled bool
+	closeCount  atomic.Int64
 
 	puts, gets, deletes int
 }
@@ -62,7 +65,10 @@ func (m *mockAPI) BatchGet(p *as.BatchPolicy, keys []*as.Key, binNames ...string
 	return []*as.Record{}, nil
 }
 
-func (m *mockAPI) Close() { m.closeCalled = true }
+func (m *mockAPI) Close() {
+	m.closeCalled = true
+	m.closeCount.Add(1) // atomic: safe under concurrent wrapper Close (sync.Once test)
+}
 
 // compile-time: mockAPI satisfies asAPI.
 var _ asAPI = (*mockAPI)(nil)

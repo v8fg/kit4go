@@ -15,6 +15,7 @@ package aerospike
 
 import (
 	"errors"
+	"sync"
 	"sync/atomic"
 
 	as "github.com/aerospike/aerospike-client-go/v8"
@@ -58,6 +59,7 @@ type Client struct {
 
 	puts, gets, deletes, errors atomic.Uint64
 	onEvent                     atomic.Pointer[func(Event)]
+	closeOnce                   sync.Once
 }
 
 // New connects to the cluster eagerly (NewClientWithPolicy connects + pings the
@@ -147,12 +149,16 @@ func (c *Client) BatchGet(policy *as.BatchPolicy, keys []*as.Key, binNames ...st
 	return recs, nil
 }
 
-// Close releases the underlying client. No-op for a wrapped or mock-injected client.
+// Close releases the underlying client. No-op for a wrapped or mock-injected
+// client. Idempotent and concurrent-safe via sync.Once — coalesces at the
+// wrapper layer (matching the clickhouse template) rather than relying on the
+// upstream client's own close guard.
 func (c *Client) Close() {
-	if !c.own {
-		return
-	}
-	c.api.Close()
+	c.closeOnce.Do(func() {
+		if c.own {
+			c.api.Close()
+		}
+	})
 }
 
 // Client returns the underlying *as.Client for anything the wrapper does not

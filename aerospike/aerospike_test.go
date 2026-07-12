@@ -2,6 +2,7 @@ package aerospike
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,6 +129,33 @@ func TestClose_OwnedCallsAPIClose(t *testing.T) {
 	cli := &Client{api: m, own: true} // white-box owning client over the mock
 	cli.Close()
 	assert.True(t, m.closeCalled)
+}
+
+// Idempotent Close: a second call does not re-invoke the underlying client.
+func TestClose_IdempotentOwningClient(t *testing.T) {
+	m := &mockAPI{}
+	cli := &Client{api: m, own: true}
+	cli.Close()
+	cli.Close()
+	cli.Close()
+	assert.Equal(t, int64(1), m.closeCount.Load(), "underlying Close called exactly once")
+}
+
+// Concurrent Close is safe and coalesces to exactly one underlying call.
+func TestClose_ConcurrentOwningClient(t *testing.T) {
+	m := &mockAPI{}
+	cli := &Client{api: m, own: true}
+	const n = 64
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for range n {
+		go func() {
+			defer wg.Done()
+			cli.Close()
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, int64(1), m.closeCount.Load(), "underlying Close called exactly once under %d-way concurrency", n)
 }
 
 func TestOptions_ReturnsResolved(t *testing.T) {
