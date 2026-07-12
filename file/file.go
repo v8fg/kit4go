@@ -75,6 +75,16 @@ func CopyFile(src string, dst string) (err error) {
 		}
 	}
 
+	// Guard against src == dst: Create(dst) opens with O_TRUNC, so a self-copy
+	// truncates the source before io.Copy reads it, destroying the data (cp
+	// refuses the self-copy). Compare on absolute paths — catches "x" vs "./x";
+	// hardlinks to the same inode under different paths are not detected.
+	if absSrc, e1 := filepath.Abs(src); e1 == nil {
+		if absDst, e2 := filepath.Abs(dst); e2 == nil && absSrc == absDst {
+			return fmt.Errorf("file: source %q and destination %q are the same file", src, dst)
+		}
+	}
+
 	dstFh, err := DefaultFS.Create(dst)
 	if err != nil {
 		return err
@@ -84,10 +94,15 @@ func CopyFile(src string, dst string) (err error) {
 	}(dstFh)
 
 	var size int64
-	if size, err = DefaultFS.Copy(dstFh, srcFh); err != nil || size != srcInfo.Size() {
-		err = fmt.Errorf("copy failed: %d of %d, err: %w", size, srcInfo.Size(), err)
+	if size, err = DefaultFS.Copy(dstFh, srcFh); err != nil {
+		return fmt.Errorf("copy failed: %d of %d: %w", size, srcInfo.Size(), err)
 	}
-	return err
+	if size != srcInfo.Size() {
+		// Short copy with no I/O error (e.g. a reader that hit EOF early) — do
+		// not hand a nil error to %w (it would render as "%!w(<nil>)").
+		return fmt.Errorf("copy failed: short copy: %d of %d bytes", size, srcInfo.Size())
+	}
+	return nil
 }
 
 // CopyDir recursively copies all files from src to dst，attributes will be ignored.

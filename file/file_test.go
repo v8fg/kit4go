@@ -420,3 +420,26 @@ func TestListFiles(t *testing.T) {
 		convey.So(err, convey.ShouldBeError)
 	})
 }
+
+// TestCopyFile_SrcEqDst_DoesNotDestroySource is the regression for the
+// self-copy data-loss bug: CopyFile(x, x) used to truncate the source via
+// O_TRUNC before io.Copy read it, destroying the data. It must now reject the
+// self-copy with an error and leave the source intact.
+func TestCopyFile_SrcEqDst_DoesNotDestroySource(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	const content = "ORIGINAL-DATA"
+	if err := os.WriteFile(src, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.CopyFile(src, src); err == nil {
+		t.Fatal("CopyFile(src, src) should error (same file), got nil")
+	}
+	got, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read src after failed self-copy: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("source destroyed by self-copy: got %q, want %q", string(got), content)
+	}
+}
