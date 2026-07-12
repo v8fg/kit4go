@@ -19,8 +19,10 @@ import (
 // ErrClosed is returned by Submit after Close.
 var ErrClosed = errors.New("workerpool: closed")
 
-// Job is a unit of work. The function receives the worker context (cancelled on
-// shutdown) and returns a result or error.
+// Job is a unit of work. The function receives the context passed to Submit
+// (the submitter's per-call ctx) and returns a result or error. Close does not
+// cancel an in-flight job: it drains queued jobs and lets the running job finish
+// (or until the submitter cancels its own ctx).
 type Job[T any] func(ctx context.Context) (T, error)
 
 // Result holds the outcome of a job.

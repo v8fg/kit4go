@@ -117,7 +117,11 @@ func (s *Semaphore) Acquire(ctx context.Context, n int) error {
 	}
 }
 
-// takeLocked removes n tokens from the channel. Caller holds wmu.
+// takeLocked removes n tokens from the channel. Caller holds wmu, so the take
+// is atomic w.r.t. other WEIGHTED callers; unit-permit callers take the fast
+// path without wmu and may drain a token mid-loop, so a large weighted take can
+// briefly block here holding wmu until a token returns. Bounded — no deadlock,
+// no token-count corruption.
 func (s *Semaphore) takeLocked(n int) {
 	for range n {
 		<-s.ch
