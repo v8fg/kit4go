@@ -61,3 +61,9 @@ func (s *Stack[T]) ToSlice() []T {
 	copy(out, s.items)
 	return out
 }
+
+// WithCapacity builds an empty Stack with a pre-allocated backing slice of the
+// given capacity — avoids slice growth/realloc during a known-size push sequence.
+func WithCapacity[T any](cap int) *Stack[T] {
+	return &Stack[T]{items: make([]T, 0, cap)}
+}

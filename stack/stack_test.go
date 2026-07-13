@@ -98,3 +98,11 @@ func BenchmarkStackPop(b *testing.B) {
 		s.Pop()
 	}
 }
+
+func TestWithCapacity(t *testing.T) {
+	s := stack.WithCapacity[int](100)
+	require.True(t, s.IsEmpty())
+	s.Push(1)
+	s.Push(2)
+	require.Equal(t, 2, s.Len())
+}
