@@ -77,3 +77,24 @@ func TestZeroValue(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 1, v)
 }
+
+// --- benchmarks ---
+
+func BenchmarkStackPush(b *testing.B) {
+	s := stack.New[int]()
+	b.ResetTimer()
+	for b.Loop() {
+		s.Push(1)
+	}
+}
+
+func BenchmarkStackPop(b *testing.B) {
+	s := stack.New[int]()
+	for range 100000 {
+		s.Push(1)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		s.Pop()
+	}
+}

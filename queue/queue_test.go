@@ -104,3 +104,24 @@ func TestFIFOOrder(t *testing.T) {
 	}
 	require.Equal(t, []int{0, 1, 2, 3, 4}, got)
 }
+
+// --- benchmarks ---
+
+func BenchmarkQueueEnqueue(b *testing.B) {
+	q := queue.New[int]()
+	b.ResetTimer()
+	for b.Loop() {
+		q.Enqueue(1)
+	}
+}
+
+func BenchmarkQueueDequeue(b *testing.B) {
+	q := queue.New[int]()
+	for range 100000 {
+		q.Enqueue(1)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		q.Dequeue()
+	}
+}
