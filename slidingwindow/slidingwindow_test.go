@@ -125,3 +125,39 @@ func TestTimeWindowCapFull(t *testing.T) {
 	require.Equal(t, 3, tw.Count())
 	require.Equal(t, 9.0, tw.Sum()) // 2+3+4
 }
+
+func TestNewPanic(t *testing.T) {
+	require.Panics(t, func() { slidingwindow.New(0) })
+	require.Panics(t, func() { slidingwindow.New(-1) })
+}
+
+func TestPushUpdatesMinMax(t *testing.T) {
+	w := slidingwindow.New(5)
+	w.Push(10)
+	// After first Push, hasMinMax is false → Min/Max triggers ensureMinMax.
+	// After that, subsequent pushes with hasMinMax=true update minVal/maxVal.
+	require.Equal(t, 10.0, w.Min())
+	require.Equal(t, 10.0, w.Max())
+	w.Push(5) // v < minVal → update
+	require.Equal(t, 5.0, w.Min())
+	w.Push(20) // v > maxVal → update
+	require.Equal(t, 20.0, w.Max())
+}
+
+func TestLen(t *testing.T) {
+	w := slidingwindow.New(3)
+	require.Equal(t, 0, w.Len())
+	w.Push(1)
+	require.Equal(t, 1, w.Len())
+}
+
+func TestNewTimeWindowPanic(t *testing.T) {
+	require.Panics(t, func() { slidingwindow.NewTimeWindow(0, 100) })
+}
+
+func TestNewTimeWindowDefaultCap(t *testing.T) {
+	tw := slidingwindow.NewTimeWindow(60*time.Second, 0) // defaults to 1024
+	require.NotNil(t, tw)
+	tw.Push(1.0, time.Unix(1000, 0))
+	require.Equal(t, 1, tw.Count())
+}

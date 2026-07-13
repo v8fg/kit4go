@@ -162,3 +162,11 @@ func TestGrowExtendN(t *testing.T) {
 	bs.Set(64)
 	require.True(t, bs.Test(64))
 }
+
+func TestGrowExtendNOnly(t *testing.T) {
+	// New(100): creates 2 words (covers 0-127), n=100.
+	// Set(120): word already exists (120/64=1 < 2), but 120 >= n(100) → extend n.
+	bs := bitset.New(100)
+	bs.Set(120)
+	require.True(t, bs.Test(120))
+}

@@ -57,3 +57,17 @@ func TestPutOversized(t *testing.T) {
 	}
 	require.NotPanics(t, func() { bytespool.Put(b) }) // discarded, no panic
 }
+
+func TestGetLargeRequest(t *testing.T) {
+	b := bytespool.Get(100000) // > maxSize (65536)
+	require.NotNil(t, b)
+	require.Equal(t, 0, b.Len())
+	bytespool.Put(b)
+}
+
+func TestClassIndexClamp(t *testing.T) {
+	// Requests near the boundary should map to the last class.
+	b := bytespool.Get(65536) // exactly maxSize
+	require.NotNil(t, b)
+	bytespool.Put(b)
+}

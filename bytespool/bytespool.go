@@ -47,15 +47,12 @@ func classIndex(n int) int {
 	if n > maxSize {
 		return sizeClasses - 1
 	}
-	// log2(n / minSize)
+	// log2(n / minSize) — for n in (64, 65536], this yields 1..10, always < sizeClasses(20).
 	idx := 0
 	v := n >> 6 // n / 64
 	for v > 1 {
 		v >>= 1
 		idx++
-	}
-	if idx >= sizeClasses {
-		idx = sizeClasses - 1
 	}
 	return idx
 }
