@@ -11,6 +11,7 @@ package syncutil
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 )
 
 // OrDone returns a channel that forwards values from src until src is closed or
@@ -77,9 +78,10 @@ func Merge[T any](ctx context.Context, channels ...<-chan T) <-chan T {
 // number of consumer goroutines.
 type Promise[T any] struct {
 	done chan struct{}
-	once sync.Once
+	set  atomic.Bool
 	val  T
 	err  error
+	mu   sync.Mutex
 }
 
 // NewPromise creates a Promise.
@@ -89,24 +91,32 @@ func NewPromise[T any]() *Promise[T] {
 
 // Set stores the value and unblocks all Get callers. Panics on a second Set/SetErr.
 func (p *Promise[T]) Set(v T) {
-	p.once.Do(func() {
-		p.val = v
-		close(p.done)
-	})
+	if !p.set.CompareAndSwap(false, true) {
+		panic("syncutil: Promise.Set/SetErr called more than once")
+	}
+	p.mu.Lock()
+	p.val = v
+	close(p.done)
+	p.mu.Unlock()
 }
 
 // SetErr stores an error and unblocks all Get callers. Panics on a second Set/SetErr.
 func (p *Promise[T]) SetErr(err error) {
-	p.once.Do(func() {
-		p.err = err
-		close(p.done)
-	})
+	if !p.set.CompareAndSwap(false, true) {
+		panic("syncutil: Promise.Set/SetErr called more than once")
+	}
+	p.mu.Lock()
+	p.err = err
+	close(p.done)
+	p.mu.Unlock()
 }
 
 // Get blocks until Set/SetErr is called or ctx is cancelled.
 func (p *Promise[T]) Get(ctx context.Context) (T, error) {
 	select {
 	case <-p.done:
+		p.mu.Lock()
+		defer p.mu.Unlock()
 		return p.val, p.err
 	case <-ctx.Done():
 		var zero T

@@ -128,6 +128,44 @@ func TestPromise_SetTwicePanics(t *testing.T) {
 	require.Panics(t, func() { p.Set(2) })
 }
 
+func TestPromise_SetThenSetErrPanics(t *testing.T) {
+	p := syncutil.NewPromise[int]()
+	p.Set(1)
+	require.Panics(t, func() { p.SetErr(context.Canceled) })
+}
+
+func TestPromise_SetErrTwicePanics(t *testing.T) {
+	p := syncutil.NewPromise[int]()
+	p.SetErr(context.Canceled)
+	require.Panics(t, func() { p.SetErr(context.DeadlineExceeded) })
+}
+
+// TestOrDone_CancelWhileSending: ctx cancels while OrDone has a value but no
+// receiver — covers the dst-send ctx.Done() arm.
+func TestOrDone_CancelWhileSending(t *testing.T) {
+	src := make(chan int, 1)
+	src <- 42
+	ctx, cancel := context.WithCancel(context.Background())
+	_ = syncutil.OrDone(ctx, src) // no receiver — send blocks
+
+	time.Sleep(20 * time.Millisecond) // let the goroutine reach dst <- v
+	cancel()
+	time.Sleep(20 * time.Millisecond) // let it exit via ctx.Done()
+}
+
+// TestMerge_CancelWhileSending: ctx cancels while Merge is trying to send to
+// out with no receiver — covers the out-send ctx.Done() arm.
+func TestMerge_CancelWhileSending(t *testing.T) {
+	src := make(chan int, 1)
+	src <- 99
+	ctx, cancel := context.WithCancel(context.Background())
+	_ = syncutil.Merge(ctx, src) // no receiver — send blocks
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+}
+
 func TestPromise_Done(t *testing.T) {
 	p := syncutil.NewPromise[int]()
 	select {
