@@ -65,14 +65,13 @@ type Breaker[T any] struct {
 
 	// Half-open probe tracking. halfOpenCount is the number of probe slots
 	// taken; halfOpenSuccess the number that have succeeded. Both atomic so
-	// probes can admit/complete without taking mu.
-	//
-	// Edge: completion keys on state==HalfOpen at the record site, not on the
-	// admitting epoch, so a probe that outlasts a trip+cooldown (a fn ignoring
-	// its ctx longer than OpenDuration) credits the next epoch's counter. Bounded
-	// — the next failure re-trips. Keep probe deadlines under OpenDuration.
+	// probes can admit/complete without taking mu. halfOpenGen is the half-open
+	// epoch (incremented on each Open→HalfOpen transition); a probe's success or
+	// failure credits/trips only if its captured epoch matches the current one, so
+	// a probe that outlasts a trip+cooldown cannot bleed into the next epoch.
 	halfOpenSuccess atomic.Int32
 	halfOpenCount   atomic.Int32
+	halfOpenGen     atomic.Int32
 
 	// Lifetime metrics, all atomic.
 	total      atomic.Uint64
@@ -209,11 +208,14 @@ func (b *Breaker[T]) Execute(ctx context.Context, fn func(ctx context.Context) (
 		return zero, err
 	}
 
+	// Capture the half-open epoch at admission for gen-gating record calls.
+	probeGen := b.halfOpenGen.Load()
+
 	// Respect a pre-cancelled context: count it as a failure (callers that
 	// cancel on timeout should not be able to mask downstream trouble).
 	if err := ctx.Err(); err != nil {
 		b.total.Add(1)
-		b.recordFailure()
+		b.recordFailure(probeGen)
 		return zero, err
 	}
 
@@ -238,26 +240,26 @@ func (b *Breaker[T]) Execute(ctx context.Context, fn func(ctx context.Context) (
 		v, err := func() (vv T, e error) {
 			defer func() {
 				if r := recover(); r != nil {
-					b.recordFailure()
+					b.recordFailure(probeGen)
 					panic(r) // re-throw: raw-panic contract preserved.
 				}
 			}()
 			return fn(ctx)
 		}()
 		if err != nil {
-			b.recordFailure()
+			b.recordFailure(probeGen)
 			return v, err
 		}
-		b.recordSuccess()
+		b.recordSuccess(probeGen)
 		return v, nil
 	}
 
 	v, err := fn(ctx)
 	if err != nil {
-		b.recordFailure()
+		b.recordFailure(probeGen)
 		return v, err
 	}
-	b.recordSuccess()
+	b.recordSuccess(probeGen)
 	return v, nil
 }
 
@@ -317,6 +319,7 @@ func (b *Breaker[T]) toHalfOpenOrReject() error {
 	}
 	// Flip to HalfOpen and arm the probe counters.
 	b.state.Store(int32(StateHalfOpen))
+	b.halfOpenGen.Add(1) // new epoch — stale probes from the previous HalfOpen can't credit this one
 	b.halfOpenSuccess.Store(0)
 	b.halfOpenCount.Store(1) // current call takes the first slot
 	b.mu.Unlock()
@@ -325,16 +328,19 @@ func (b *Breaker[T]) toHalfOpenOrReject() error {
 
 // recordSuccess updates counters for a successful call and may transition
 // HalfOpen→Closed.
-func (b *Breaker[T]) recordSuccess() {
+func (b *Breaker[T]) recordSuccess(gen int32) {
 	b.success.Add(1)
 	b.consecFail.Store(0)
 
 	switch BreakerState(b.state.Load()) {
 	case StateHalfOpen:
-		// A successful probe: once MaxRequests of them land in a row, the
-		// downstream is healthy again — return to Closed and reset the window.
-		if uint32(b.halfOpenSuccess.Add(1)) >= b.opts.MaxRequests {
-			b.toClosed()
+		// Credit only if the probe belongs to the current half-open epoch: a
+		// probe admitted in a previous epoch that outlasted a trip+cooldown
+		// must not bleed its success into this epoch's recovery count.
+		if b.halfOpenGen.Load() == gen {
+			if uint32(b.halfOpenSuccess.Add(1)) >= b.opts.MaxRequests {
+				b.toClosed()
+			}
 		}
 	case StateClosed:
 		b.recordWindow(true)
@@ -343,14 +349,17 @@ func (b *Breaker[T]) recordSuccess() {
 }
 
 // recordFailure updates counters for a failed call and may trip the breaker.
-func (b *Breaker[T]) recordFailure() {
+func (b *Breaker[T]) recordFailure(gen int32) {
 	b.failures.Add(1)
 	b.consecFail.Add(1)
 
 	switch BreakerState(b.state.Load()) {
 	case StateHalfOpen:
-		// Any failed probe is enough evidence the downstream is still broken.
-		b.toOpen()
+		// Trip only if the probe belongs to the current epoch — a stale failure
+		// from a previous half-open must not trip this epoch's fresh probes.
+		if b.halfOpenGen.Load() == gen {
+			b.toOpen()
+		}
 	case StateClosed:
 		b.recordWindow(false)
 		// Re-read state in case another goroutine tripped while we held the
