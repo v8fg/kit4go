@@ -116,3 +116,46 @@ func TestMergeSingle(t *testing.T) {
 	merged := interval.Merge([]interval.Interval[int]{interval.MustNew(1, 5)})
 	require.Len(t, merged, 1)
 }
+
+func TestMergeContained(t *testing.T) {
+	// cur fully contained in last → cur.End <= last.End → no extend.
+	merged := interval.Merge([]interval.Interval[int]{
+		interval.MustNew(0, 10),
+		interval.MustNew(2, 5),
+	})
+	require.Len(t, merged, 1)
+	require.Equal(t, 0, merged[0].Start)
+	require.Equal(t, 10, merged[0].End)
+}
+
+func TestMergeNoOverlap(t *testing.T) {
+	merged := interval.Merge([]interval.Interval[int]{
+		interval.MustNew(0, 5),
+		interval.MustNew(10, 15),
+	})
+	require.Len(t, merged, 2)
+}
+
+func TestMergeSameStart(t *testing.T) {
+	// Two intervals with the same Start — exercises the SortFunc > and == arms.
+	merged := interval.Merge([]interval.Interval[int]{
+		interval.MustNew(5, 10),
+		interval.MustNew(5, 8),
+	})
+	require.Len(t, merged, 1)
+	require.Equal(t, 5, merged[0].Start)
+	require.Equal(t, 10, merged[0].End)
+}
+
+func TestMergeReverseOrder(t *testing.T) {
+	// Input in reverse Start order — exercises the SortFunc < arm.
+	merged := interval.Merge([]interval.Interval[int]{
+		interval.MustNew(20, 30),
+		interval.MustNew(10, 15),
+		interval.MustNew(0, 5),
+	})
+	require.Len(t, merged, 3)
+	require.Equal(t, 0, merged[0].Start)
+	require.Equal(t, 10, merged[1].Start)
+	require.Equal(t, 20, merged[2].Start)
+}

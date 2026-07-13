@@ -33,9 +33,13 @@ func New[K, V comparable]() *BiMap[K, V] {
 }
 
 // FromMap builds a BiMap from a regular map. Returns an error if two keys map to
-// the same value (violates the one-to-one invariant).
+// the same value (violates the one-to-one invariant). Both backing maps are
+// pre-sized to len(m) to avoid rehashing.
 func FromMap[K, V comparable](m map[K]V) (*BiMap[K, V], error) {
-	bm := New[K, V]()
+	bm := &BiMap[K, V]{
+		forward: make(map[K]V, len(m)),
+		reverse: make(map[V]K, len(m)),
+	}
 	for k, v := range m {
 		if err := bm.Insert(k, v); err != nil {
 			return nil, err

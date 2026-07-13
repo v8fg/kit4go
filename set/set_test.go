@@ -187,6 +187,53 @@ func TestIsDisjointNil(t *testing.T) {
 	require.True(t, set.IsDisjoint(set.New(1), nil))
 }
 
+// --- in-place mutation ---
+
+func TestAddAll(t *testing.T) {
+	a := set.New(1, 2)
+	b := set.New(2, 3, 4)
+	a.AddAll(b)
+	require.True(t, a.ContainsAll(1, 2, 3, 4))
+	require.Equal(t, 4, a.Len())
+	// nil safe.
+	a.AddAll(nil)
+	require.Equal(t, 4, a.Len())
+}
+
+func TestRetainAll(t *testing.T) {
+	a := set.New(1, 2, 3, 4)
+	b := set.New(2, 4, 6)
+	removed := a.RetainAll(b)
+	require.Equal(t, 2, removed) // 1 and 3 removed
+	require.True(t, a.ContainsAll(2, 4))
+	require.False(t, a.Contains(1))
+	// nil other → all removed.
+	a2 := set.New(1, 2)
+	removed2 := a2.RetainAll(nil)
+	require.Equal(t, 2, removed2)
+	require.True(t, a2.IsEmpty())
+}
+
+func TestRemoveAll(t *testing.T) {
+	a := set.New(1, 2, 3, 4)
+	b := set.New(2, 4)
+	removed := a.RemoveAll(b)
+	require.Equal(t, 2, removed)
+	require.True(t, a.ContainsAll(1, 3))
+	require.False(t, a.Contains(2))
+	// nil other → nothing removed.
+	a2 := set.New(1, 2)
+	require.Equal(t, 0, a2.RemoveAll(nil))
+	require.Equal(t, 2, a2.Len())
+}
+
+func TestWithCapacity(t *testing.T) {
+	s := set.WithCapacity[int](100)
+	require.Equal(t, 0, s.Len())
+	s.Add(1, 2, 3)
+	require.Equal(t, 3, s.Len())
+}
+
 // --- benchmarks ---
 
 func BenchmarkSetAdd(b *testing.B) {
@@ -249,5 +296,48 @@ func BenchmarkSetDifference(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		set.Difference(a, c)
+	}
+}
+
+func BenchmarkSetAddAll(b *testing.B) {
+	a := set.New[int]()
+	c := set.New[int]()
+	for i := range 500 {
+		a.Add(i)
+		c.Add(i + 250)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		dst := set.WithCapacity[int](1000)
+		dst.AddAll(a)
+		dst.AddAll(c)
+	}
+}
+
+func BenchmarkSetRetainAll(b *testing.B) {
+	a := set.New[int]()
+	c := set.New[int]()
+	for i := range 500 {
+		a.Add(i)
+		c.Add(i + 250)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		clone := a.Clone()
+		clone.RetainAll(c)
+	}
+}
+
+func BenchmarkSetRemoveAll(b *testing.B) {
+	a := set.New[int]()
+	c := set.New[int]()
+	for i := range 500 {
+		a.Add(i)
+		c.Add(i + 250)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		clone := a.Clone()
+		clone.RemoveAll(c)
 	}
 }

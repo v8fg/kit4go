@@ -19,11 +19,18 @@ type Set[T comparable] struct {
 	m map[T]struct{}
 }
 
-// New builds a Set from the given values. Duplicates are collapsed.
+// New builds a Set from the given values. Duplicates are collapsed. The backing
+// map is pre-sized to len(vals) to avoid rehashing during construction.
 func New[T comparable](vals ...T) *Set[T] {
 	s := &Set[T]{m: make(map[T]struct{}, len(vals))}
 	s.Add(vals...)
 	return s
+}
+
+// WithCapacity builds an empty Set with a pre-sized backing map for the given
+// number of elements — avoids rehashing when the final size is known.
+func WithCapacity[T comparable](cap int) *Set[T] {
+	return &Set[T]{m: make(map[T]struct{}, cap)}
 }
 
 // From builds a Set from a slice (convenience for New(s...)).
@@ -125,9 +132,16 @@ func (s *Set[T]) Clone() *Set[T] {
 
 // --- Set algebra (functional, return new sets) ---
 
-// Union returns a new Set containing all elements from the given sets.
+// Union returns a new Set containing all elements from the given sets. The
+// backing map is pre-sized to the total element count to avoid rehashing.
 func Union[T comparable](sets ...*Set[T]) *Set[T] {
-	out := New[T]()
+	total := 0
+	for _, s := range sets {
+		if s != nil {
+			total += len(s.m)
+		}
+	}
+	out := WithCapacity[T](total)
 	for _, s := range sets {
 		if s == nil {
 			continue
@@ -139,17 +153,17 @@ func Union[T comparable](sets ...*Set[T]) *Set[T] {
 	return out
 }
 
-// Intersect returns a new Set of elements present in BOTH a and b.
+// Intersect returns a new Set of elements present in BOTH a and b. The backing
+// map is pre-sized to the smaller set (upper bound on the result).
 func Intersect[T comparable](a, b *Set[T]) *Set[T] {
-	out := New[T]()
 	if a == nil || b == nil {
-		return out
+		return WithCapacity[T](0)
 	}
-	// Iterate the smaller set for fewer lookups.
 	small, big := a, b
 	if len(b.m) < len(a.m) {
 		small, big = b, a
 	}
+	out := WithCapacity[T](len(small.m))
 	for v := range small.m {
 		if _, ok := big.m[v]; ok {
 			out.m[v] = struct{}{}
@@ -158,12 +172,13 @@ func Intersect[T comparable](a, b *Set[T]) *Set[T] {
 	return out
 }
 
-// Difference returns a new Set of elements in a but NOT in b (a − b).
+// Difference returns a new Set of elements in a but NOT in b (a − b). The
+// backing map is pre-sized to len(a) (upper bound).
 func Difference[T comparable](a, b *Set[T]) *Set[T] {
-	out := New[T]()
 	if a == nil {
-		return out
+		return WithCapacity[T](0)
 	}
+	out := WithCapacity[T](len(a.m))
 	for v := range a.m {
 		if b == nil {
 			out.m[v] = struct{}{}
@@ -177,8 +192,16 @@ func Difference[T comparable](a, b *Set[T]) *Set[T] {
 }
 
 // SymmetricDifference returns a new Set of elements in a or b but not both (a Δ b).
+// Pre-sized to len(a)+len(b) (upper bound).
 func SymmetricDifference[T comparable](a, b *Set[T]) *Set[T] {
-	out := New[T]()
+	cap := 0
+	if a != nil {
+		cap += len(a.m)
+	}
+	if b != nil {
+		cap += len(b.m)
+	}
+	out := WithCapacity[T](cap)
 	if a != nil {
 		for v := range a.m {
 			if b == nil || !b.Contains(v) {
@@ -194,6 +217,47 @@ func SymmetricDifference[T comparable](a, b *Set[T]) *Set[T] {
 		}
 	}
 	return out
+}
+
+// --- In-place mutation (zero-allocation hot paths) ---
+
+// AddAll adds all elements from other into this set (in-place union).
+func (s *Set[T]) AddAll(other *Set[T]) {
+	if other == nil {
+		return
+	}
+	for v := range other.m {
+		s.m[v] = struct{}{}
+	}
+}
+
+// RetainAll removes elements NOT in other (in-place intersection). Returns the
+// number of elements removed.
+func (s *Set[T]) RetainAll(other *Set[T]) int {
+	removed := 0
+	for v := range s.m {
+		if other == nil || !other.Contains(v) {
+			delete(s.m, v)
+			removed++
+		}
+	}
+	return removed
+}
+
+// RemoveAll removes elements that ARE in other (in-place difference). Returns
+// the number of elements removed.
+func (s *Set[T]) RemoveAll(other *Set[T]) int {
+	removed := 0
+	if other == nil {
+		return 0
+	}
+	for v := range other.m {
+		if _, ok := s.m[v]; ok {
+			delete(s.m, v)
+			removed++
+		}
+	}
+	return removed
 }
 
 // --- Predicates ---
