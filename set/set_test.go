@@ -157,6 +157,8 @@ func TestIsDisjoint(t *testing.T) {
 	require.True(t, set.IsDisjoint(set.New(1, 2), set.New(3, 4)))
 	require.False(t, set.IsDisjoint(set.New(1, 2), set.New(2, 3)))
 	require.True(t, set.IsDisjoint(set.New[int](), set.New(1))) // empty is disjoint
+	// Swap branch: b smaller than a → iterate b as the small set.
+	require.True(t, set.IsDisjoint(set.New(1, 2, 3, 4), set.New(5, 6)))
 }
 
 func TestEqual(t *testing.T) {
@@ -165,4 +167,87 @@ func TestEqual(t *testing.T) {
 	require.True(t, set.Equal(set.New[int](), set.New[int]()))
 	require.False(t, set.Equal[int](nil, set.New(1)))
 	require.True(t, set.Equal[int](nil, nil))
+	require.False(t, set.Equal(set.New(1), nil))              // a non-nil, b nil
+	require.False(t, set.Equal(set.New(1, 2), set.New(1, 3))) // same len, diff elements
+}
+
+// --- nil-safe coverage (100% gap) ---
+
+func TestDifferenceNilA(t *testing.T) {
+	require.True(t, set.Difference[int](nil, set.New(1)).IsEmpty())
+}
+
+func TestIsSubsetNilSup(t *testing.T) {
+	require.False(t, set.IsSubset(set.New(1), nil))    // non-empty sub, nil sup → false
+	require.True(t, set.IsSubset(set.New[int](), nil)) // empty sub, nil sup → true
+}
+
+func TestIsDisjointNil(t *testing.T) {
+	require.True(t, set.IsDisjoint[int](nil, set.New(1)))
+	require.True(t, set.IsDisjoint(set.New(1), nil))
+}
+
+// --- benchmarks ---
+
+func BenchmarkSetAdd(b *testing.B) {
+	s := set.New[int]()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			s.Add(i)
+			i++
+		}
+	})
+}
+
+func BenchmarkSetContains(b *testing.B) {
+	s := set.New[int]()
+	for i := range 1000 {
+		s.Add(i)
+	}
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			s.Contains(500)
+		}
+	})
+}
+
+func BenchmarkSetUnion(b *testing.B) {
+	a := set.New[int]()
+	c := set.New[int]()
+	for i := range 500 {
+		a.Add(i)
+		c.Add(i + 250)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		set.Union(a, c)
+	}
+}
+
+func BenchmarkSetIntersect(b *testing.B) {
+	a := set.New[int]()
+	c := set.New[int]()
+	for i := range 500 {
+		a.Add(i)
+		c.Add(i + 250)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		set.Intersect(a, c)
+	}
+}
+
+func BenchmarkSetDifference(b *testing.B) {
+	a := set.New[int]()
+	c := set.New[int]()
+	for i := range 500 {
+		a.Add(i)
+		c.Add(i + 250)
+	}
+	b.ResetTimer()
+	for b.Loop() {
+		set.Difference(a, c)
+	}
 }
