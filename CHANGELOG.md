@@ -11,9 +11,10 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
-Deep quality-hardening pass: 22-round autonomous audit (scenario, invariant,
-memory-model, wrapper, network, lifecycle lenses) over every package. Real bugs
-fixed; E10 fuzz coverage + H6 godoc examples expanded; contract gaps documented.
+Deep quality-hardening pass: 30+-round autonomous audit (scenario, invariant,
+memory-model, wrapper, network, lifecycle lenses) over every package + all 18
+sub-modules. Real bugs fixed; E10 fuzz coverage + H6 godoc examples expanded;
+contract gaps documented.
 
 ### Fixed
 
@@ -42,6 +43,11 @@ fixed; E10 fuzz coverage + H6 godoc examples expanded; contract gaps documented.
 - **otp** — VerifySecret rejected lowercase base32 that generators accept.
 - **file** — CopyFile(src,src) destroyed the source (O_TRUNC before read).
 - **hotkey** — per-key []time.Time unbounded; opt-in WithMaxHitsPerKey (D5).
+- **breaker** — half-open epoch-bleed: a probe admitted in one half-open epoch
+  that outlasted a trip+cooldown credited/tripped the next epoch's counters
+  (premature close / spurious re-trip). Fixed via a generation counter
+  (halfOpenGen) incremented on each Open→HalfOpen transition; recordSuccess/
+  Failure credit/trip only if the probe's captured epoch matches the current.
 
 ### Added
 
