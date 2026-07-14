@@ -4,6 +4,8 @@ use (
 	.
 	./adaptive
 	./aerospike
+	./cert
+	./cert/lego
 	./clickhouse
 	./elasticsearch
 	./email
