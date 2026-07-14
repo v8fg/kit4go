@@ -4,6 +4,8 @@
 // Go's built-in map iterates in random order, which breaks reproducible output
 // (e.g. JSON marshaling, configuration diffs, golden-file tests). omap preserves
 // insertion order: Set, Keys, Values, and Each visit keys in first-add order.
+//
+// Not safe for concurrent use — protect with a sync.RWMutex.
 package omap
 
 // Map is a map from K to V that preserves insertion order.

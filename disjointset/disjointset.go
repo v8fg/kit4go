@@ -4,6 +4,9 @@
 //
 // Use cases: connected-components, Kruskal's minimum spanning tree, cycle
 // detection in undirected graphs, equivalence clustering, network connectivity.
+//
+// Not safe for concurrent use — protect with a sync.Mutex (Find's path
+// compression mutates the parent map).
 package disjointset
 
 // UnionFind is a disjoint-set forest over comparable element keys.

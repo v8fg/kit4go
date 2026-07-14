@@ -107,3 +107,42 @@ func TestRunRecoversPanic(t *testing.T) {
 		convey.So(fmt.Sprintf("%v", saw.Load()), convey.ShouldContainSubstring, "boom")
 	})
 }
+
+// TestRunRecoversHookPanic is the regression test for L1: a panicking user
+// hook (OnPanic) fires INSIDE recoverTick's recovering frame, where a single
+// recover() cannot catch a second panic. The hook dispatch must be guarded so a
+// buggy alerting hook never kills the renewal loop.
+func TestRunRecoversHookPanic(t *testing.T) {
+	convey.Convey("a panicking OnPanic hook does not kill the renewal loop", t, func() {
+		mgr := NewMockACMEManager(t)
+		w := NewMockDirWriter(t)
+		mgr.EXPECT().GetCertificate(mock.Anything).Run(func(*tls.ClientHelloInfo) {
+			panic("backend-boom")
+		}).Maybe()
+		w.EXPECT().Write(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		c := newWithSeams(Config{
+			Domains:       []string{"a.com"},
+			Dir:           t.TempDir(),
+			CheckInterval: 10 * time.Millisecond,
+		}, mgr, w)
+
+		// A panicking OnPanic hook — pre-fix this escaped recoverTick and killed
+		// the loop (the second panic was not caught).
+		c.SetOnPanic(func(any) { panic("hook-boom") })
+
+		stop := c.Start(context.Background())
+		time.Sleep(60 * time.Millisecond) // let several panic+hook-panic ticks run
+
+		stopped := make(chan struct{})
+		go func() { stop(); close(stopped) }()
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Stop hung — a panicking hook killed the loop (L1 regression)")
+		}
+
+		convey.So(c.Metrics().Panics, convey.ShouldBeGreaterThan, uint64(0))
+		convey.So(c.Metrics().Ticks, convey.ShouldBeGreaterThan, uint64(1))
+	})
+}

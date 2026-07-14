@@ -9,7 +9,10 @@
 // herd: N requests for the same key race to compute it — only one runs).
 package singleflight
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // Result holds the outcome of a Do call.
 type Result[V any] struct {
@@ -45,7 +48,12 @@ func New[K comparable, V any]() *Group[K, V] {
 // Do for the same key runs fn again.
 //
 // Shared is true when this caller received another caller's result.
-func (g *Group[K, V]) Do(key K, fn func() (V, error)) Result[V] {
+//
+// Panic safety: if fn panics, the panic is recovered, recorded as Result.Err
+// (shared with all in-flight waiters), and the in-flight entry is released — a
+// panicking fn never deadlocks waiters or starves the key (unlike a naive
+// singleflight that skips wg.Done on panic). The panic does NOT propagate.
+func (g *Group[K, V]) Do(key K, fn func() (V, error)) (result Result[V]) {
 	g.mu.Lock()
 	if c, ok := g.m[key]; ok {
 		g.mu.Unlock()
@@ -57,12 +65,22 @@ func (g *Group[K, V]) Do(key K, fn func() (V, error)) Result[V] {
 	g.m[key] = c
 	g.mu.Unlock()
 
+	// Defer guarantees waiters are released and the entry is cleaned up on EVERY
+	// exit path — including a fn panic, which would otherwise skip wg.Done (dead-
+	// locking waiters) and delete (permanently starving the key). The panic is
+	// converted to c.err so the leader and all waiters share it as Result.Err.
+	defer func() {
+		if r := recover(); r != nil {
+			c.err = fmt.Errorf("singleflight: fn panicked for key %v: %v", key, r)
+		}
+		c.wg.Done() // release any waiters
+		g.mu.Lock()
+		if g.m[key] == c {
+			delete(g.m, key) // no caching
+		}
+		g.mu.Unlock()
+		result = Result[V]{Value: c.val, Err: c.err, Shared: false}
+	}()
 	c.val, c.err = fn() // sole executor
-	c.wg.Done()         // release any waiters
-
-	g.mu.Lock()
-	delete(g.m, key) // no caching
-	g.mu.Unlock()
-
-	return Result[V]{Value: c.val, Err: c.err, Shared: false}
+	return
 }

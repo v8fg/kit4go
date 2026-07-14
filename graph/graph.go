@@ -9,6 +9,9 @@
 // Typical use: dependency resolution — TopoSort orders nodes so every edge
 // points from an earlier node to a later one; a cycle (ErrCycle) means the
 // dependencies are unsatisfiable.
+//
+// Not safe for concurrent use — protect with a sync.RWMutex (RLock for the
+// read-only traversals, Lock for AddEdge/RemoveEdge).
 package graph
 
 import (

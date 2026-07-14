@@ -73,13 +73,19 @@ func (c *Client) runTick(ctx context.Context) {
 	c.refreshAll(ctx)
 }
 
-// recoverTick is the deferred recover for the renewal loop.
+// recoverTick is the deferred recover for the renewal loop. We are already
+// inside the recovering frame, so the OnPanic hook dispatch is wrapped in its
+// own recover — a second panic from the hook must not escape and kill the loop
+// (recover() catches only one panic per frame).
 func (c *Client) recoverTick() {
 	if r := recover(); r != nil {
 		c.panics.Add(1)
 		c.fireEvent(Event{Name: EventPanic, Err: fmt.Errorf("cert: renewal loop panic: %v", r)})
 		if p := c.onPanic.Load(); p != nil {
-			(*p)(r)
+			func() {
+				defer func() { _ = recover() }() // a panicking alert hook must not kill the loop
+				(*p)(r)
+			}()
 		}
 	}
 }

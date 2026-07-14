@@ -187,18 +187,29 @@ func TestEnsureCertSingleFlight(t *testing.T) {
 		mgr := NewMockACMEManager(t)
 		w := NewMockDirWriter(t)
 		cert := selfSignedCert(t, domain, true, 90*24*time.Hour)
-		mgr.EXPECT().GetCertificate(mock.Anything).Return(cert, nil).Once()
+		// Gate the obtain so all 100 callers pile up behind the single in-flight
+		// call — singleflight dedups OVERLAPPING calls only, and an instant mock
+		// returns before later callers arrive (they'd then re-run fn). Holding the
+		// leader open guarantees exactly one obtain + one write. (Same pattern as
+		// TestRunRecoversPanic / TestDoDeduplicates.)
+		gate := make(chan struct{})
+		mgr.EXPECT().GetCertificate(mock.Anything).Run(func(*tls.ClientHelloInfo) {
+			<-gate
+		}).Return(cert, nil).Once()
 		w.EXPECT().Write(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 		c := newWithSeams(Config{Domains: []string{domain}, Dir: t.TempDir()}, mgr, w)
 
 		var wg sync.WaitGroup
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				_ = c.EnsureCert(context.Background(), domain)
 			}()
 		}
+		// Let the callers register against the in-flight call before releasing it.
+		time.Sleep(20 * time.Millisecond)
+		close(gate)
 		wg.Wait()
 		convey.So(c.Metrics().Issued, convey.ShouldEqual, uint64(1))
 		convey.So(c.Metrics().Written, convey.ShouldEqual, uint64(1))

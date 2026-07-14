@@ -155,11 +155,16 @@ func (c *Client) SetOnEvent(fn func(Event)) {
 }
 
 // fireEvent is the single chokepoint for hook dispatch. When onEvent is nil
-// (the default) the call collapses to a single nil compare.
+// (the default) the call collapses to a single nil compare. The hook is invoked
+// under a recover so a panicking user hook can never escape into the renewal
+// loop (a buggy alerting/metrics hook must not kill renewal — the L contract).
 func (c *Client) fireEvent(evt Event) {
-	if p := c.onEvent.Load(); p != nil {
-		(*p)(evt)
+	p := c.onEvent.Load()
+	if p == nil {
+		return
 	}
+	defer func() { _ = recover() }() // a panicking event hook is swallowed, not propagated
+	(*p)(evt)
 }
 
 // SetOnPanic installs a hook invoked with the recovered value whenever the

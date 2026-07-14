@@ -146,3 +146,48 @@ func TestDoConcurrentNoRace(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestDoPanicDoesNotDeadlock is the regression test for the panic-safety P1: if
+// fn panics, waiters must NOT hang (wg.Done must run) and the key must be
+// cleaned (no permanent starvation). The panic surfaces as Result.Err.
+func TestDoPanicDoesNotDeadlock(t *testing.T) {
+	g := singleflight.New[string, int]()
+	var runs atomic.Int64
+
+	const n = 5
+	results := make([]singleflight.Result[int], n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := range n {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i] = g.Do("k", func() (int, error) {
+				runs.Add(1)
+				panic("boom")
+			})
+		}(i)
+	}
+	close(start)
+
+	// Pre-fix: waiters hung forever on a wg.Done that never ran.
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Do deadlocked on a panicking fn — waiters hung (P1 regression)")
+	}
+
+	require.NotZero(t, runs.Load(), "fn ran at least once (the leader)")
+	for _, r := range results {
+		require.Error(t, r.Err, "panic surfaced as Result.Err, not a hang")
+		require.Contains(t, r.Err.Error(), "boom")
+	}
+
+	// The key was cleaned up — a later Do re-runs fn (not starved by a dead entry).
+	r2 := g.Do("k", func() (int, error) { return 7, nil })
+	require.NoError(t, r2.Err)
+	require.Equal(t, 7, r2.Value)
+}

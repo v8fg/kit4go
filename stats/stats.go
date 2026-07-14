@@ -1,7 +1,8 @@
 // Package stats provides basic descriptive statistics over float64 slices:
 // Mean, Median, Mode, Variance, StdDev, Percentile, Min, Max, Sum, Range.
 //
-// All functions return NaN for empty input. Pure standard library.
+// All functions return NaN for empty input, except Sum which returns 0 (the
+// additive identity over no elements). Pure standard library.
 package stats
 
 import (
