@@ -41,9 +41,12 @@ func certInfo(domain string, leaf *x509.Certificate) *Info {
 //   - "write": the cert+key files for a domain were (re)written to [Config.Dir].
 //   - "skip":  a loop tick left the on-disk cert unchanged (not yet due).
 //   - "error": an obtain or write attempt failed; Err is non-nil.
+//   - "panic": the renewal loop recovered a panic; Err carries the panic value.
+//     The loop keeps running — this signals a bug to investigate (see OnPanic).
 //
 // Domain is the hostname the event pertains to. Cert is non-nil for issue,
-// renew and write; nil for skip and error. Err is non-nil only for "error".
+// renew and write; nil for skip, error and panic. Err is non-nil only for
+// "error" and "panic".
 type Event struct {
 	Name   string
 	Domain string
@@ -58,4 +61,5 @@ const (
 	EventWrite = "write"
 	EventSkip  = "skip"
 	EventError = "error"
+	EventPanic = "panic"
 )

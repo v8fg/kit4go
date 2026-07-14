@@ -33,6 +33,10 @@ type Metrics struct {
 	Failed uint64
 	// Ticks is the number of renewal-loop refresh passes executed.
 	Ticks uint64
+	// Panics is the number of panics recovered inside the renewal loop. A
+	// non-zero value means the ACME backend, parser, or writer panicked but was
+	// caught so the loop kept running — investigate via the OnPanic hook.
+	Panics uint64
 }
 
 // Client issues, renews and writes HTTPS certificates via an ACME certificate
@@ -63,11 +67,18 @@ type Client struct {
 	written atomic.Uint64
 	failed  atomic.Uint64
 	ticks   atomic.Uint64
+	panics  atomic.Uint64
 
 	// onEvent, when non-nil, is invoked for every issuance/renewal/write/skip/
 	// error outcome. Set via SetOnEvent and read with an atomic load, so the
 	// default (nil) is zero-overhead on the hot path.
 	onEvent atomic.Pointer[func(Event)]
+
+	// onPanic, when non-nil, is invoked with the recovered value when the
+	// renewal loop catches a panic. Set via SetOnPanic; nil (the default) is a
+	// single Load on the recover path — zero overhead when no panic occurs.
+	// Mirrors the library-owned-worker convention used by workerpool/batcher/etc.
+	onPanic atomic.Pointer[func(any)]
 }
 
 // New constructs a [Client] from cfg, filling zero fields with the package
@@ -151,6 +162,19 @@ func (c *Client) fireEvent(evt Event) {
 	}
 }
 
+// SetOnPanic installs a hook invoked with the recovered value whenever the
+// renewal loop catches a panic. Pass nil to disable. The hook is for alerting
+// (a recovered panic is a bug worth investigating) and must be non-blocking: it
+// fires on the loop goroutine. Mirrors the library-owned-worker convention.
+func (c *Client) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		c.onPanic.Store(nil)
+		return
+	}
+	f := fn
+	c.onPanic.Store(&f)
+}
+
 // failEvent records a failed obtain/parse/write for domain: it bumps the failed
 // counter, fires an "error" event carrying err, and returns err for propagation.
 func (c *Client) failEvent(domain string, err error) error {
@@ -168,6 +192,7 @@ func (c *Client) Metrics() Metrics {
 		Written: c.written.Load(),
 		Failed:  c.failed.Load(),
 		Ticks:   c.ticks.Load(),
+		Panics:  c.panics.Load(),
 	}
 }
 

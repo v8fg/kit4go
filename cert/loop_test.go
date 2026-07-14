@@ -2,6 +2,9 @@ package cert
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,5 +60,50 @@ func TestStartStop(t *testing.T) {
 		time.Sleep(60 * time.Millisecond) // let a few ticks run
 		stop()
 		convey.So(c.Metrics().Ticks, convey.ShouldBeGreaterThanOrEqualTo, uint64(1))
+	})
+}
+
+// TestRunRecoversPanic is the regression test for the renewal-loop P0: a panic
+// in the ACME backend (or parser/writer) must be recovered so the loop keeps
+// renewing — it must NOT die (leaving certs to expire) and Stop must NOT hang.
+func TestRunRecoversPanic(t *testing.T) {
+	convey.Convey("a panic in the renewal loop is recovered; the loop survives, Stop returns, and the hook fires", t, func() {
+		mgr := NewMockACMEManager(t)
+		w := NewMockDirWriter(t)
+		// GetCertificate panics on every call — simulates a buggy/ACME-backend panic.
+		mgr.EXPECT().GetCertificate(mock.Anything).Run(func(*tls.ClientHelloInfo) {
+			panic("boom")
+		}).Maybe()
+		w.EXPECT().Write(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+		c := newWithSeams(Config{
+			Domains:       []string{"a.com"},
+			Dir:           t.TempDir(),
+			CheckInterval: 10 * time.Millisecond,
+		}, mgr, w)
+
+		var saw atomic.Value // captures the recovered panic value
+		c.SetOnPanic(func(r any) { saw.Store(r) })
+
+		stop := c.Start(context.Background())
+		time.Sleep(60 * time.Millisecond) // let several panicking ticks run
+
+		// Stop MUST return (the pre-fix bug hung here because close(done) was
+		// skipped after the panic). Fail fast instead of hanging the suite.
+		stopped := make(chan struct{})
+		go func() { stop(); close(stopped) }()
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Stop hung — renewal-loop P0 regression")
+		}
+
+		convey.So(c.Metrics().Panics, convey.ShouldBeGreaterThan, uint64(0))
+		convey.So(c.Metrics().Ticks, convey.ShouldBeGreaterThan, uint64(1))
+		// singleflight v0.21.0 wraps a panicking fn in newPanicError (an error whose
+		// message embeds the original panic value + stack) and re-panics; the
+		// recovered value's %v therefore contains the original "boom".
+		convey.So(saw.Load(), convey.ShouldNotBeNil)
+		convey.So(fmt.Sprintf("%v", saw.Load()), convey.ShouldContainSubstring, "boom")
 	})
 }
