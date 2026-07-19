@@ -9,6 +9,10 @@ import "slices"
 
 // Chunk splits s into sub-slices of at most size elements. The last chunk may
 // be shorter. Returns nil if size <= 0 or s is empty.
+//
+// Each chunk aliases s's backing array (cap == len, so appending to one chunk
+// cannot corrupt another, but mutating an element in s changes the chunk and
+// vice versa). Copy a chunk (slices.Clone) if you need an independent snapshot.
 func Chunk[T any](s []T, size int) [][]T {
 	if size <= 0 || len(s) == 0 {
 		return nil
@@ -85,7 +89,8 @@ func GroupBy[T any, K comparable](s []T, keyFn func(T) K) map[K][]T {
 }
 
 // Window returns all contiguous sub-slices of length n. Returns nil if n <= 0
-// or n > len(s).
+// or n > len(s). Like Chunk, each window aliases s's backing array — copy if you
+// need an independent snapshot.
 func Window[T any](s []T, n int) [][]T {
 	if n <= 0 || n > len(s) {
 		return nil

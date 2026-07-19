@@ -56,11 +56,9 @@ type Config struct {
 	Email string `json:"email" mapstructure:"email"`
 
 	// Staging selects the Let's Encrypt staging directory. Strongly recommended
-	// for first runs and tests to avoid production rate limits. Tri-state:
-	// StagingSet records whether Staging was configured explicitly, so a
-	// deliberate false is honoured rather than overwritten with the default.
-	Staging    bool `json:"staging" mapstructure:"staging"`
-	StagingSet bool `json:"-" mapstructure:"-"`
+	// for first runs and tests to avoid production rate limits. There is no
+	// default: Staging stays false unless set, so a deliberate false is honoured.
+	Staging bool `json:"staging" mapstructure:"staging"`
 
 	// DirectoryURL overrides the ACME directory (e.g. a private ACME CA such as
 	// Pebble for local testing). When non-empty it wins over Staging.
@@ -162,8 +160,14 @@ func validDomain(s string) bool {
 		return false
 	}
 	for _, r := range s {
+		// Reject path separators / control chars so a domain can never escape
+		// Config.Dir via the <domain>.crt filename (defense-in-depth; on POSIX
+		// the joined filename is already a single component).
 		switch r {
-		case ' ', '/', ':':
+		case ' ', '/', '\\', ':':
+			return false
+		}
+		if r < 0x20 || r == 0x7f {
 			return false
 		}
 	}

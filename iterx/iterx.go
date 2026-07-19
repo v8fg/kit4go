@@ -1,6 +1,7 @@
 // Package iterx provides functional combinators over Go 1.23+ range-over-func
 // iterators ([iter.Seq] / [iter.Seq2]): Map, Filter, Take, Drop, Collect,
-// Reduce, Chain, Zip, Range. Pure standard library.
+// Reduce, Chain, Zip, Range. Depends only on the sibling [tuple] package (no
+// external dependencies).
 //
 // The combinators are lazy — Map/Filter/Take/Drop/Chain/Zip return an iter.Seq
 // that pulls from the source only when iterated. Collect and Reduce are the

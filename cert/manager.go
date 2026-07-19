@@ -22,10 +22,13 @@ type ACMEManager interface {
 	// call at a 5-minute internal timeout regardless of the caller's context.
 	GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error)
 	// HTTPHandler returns a handler that serves ACME http-01 challenge
-	// responses; it must be reachable on port 80 for HTTP-01 to work.
+	// responses; it must be reachable on port 80 for HTTP-01 to work. May return
+	// nil for non-HTTP-01 backends (e.g. a DNS-01 lego backend) — callers must
+	// nil-check before installing it on a mux.
 	HTTPHandler(fallback http.Handler) http.Handler
 	// TLSConfig returns a *tls.Config wired to GetCertificate, for in-process
-	// HTTPS serving (secondary mode).
+	// HTTPS serving (secondary mode). May return nil for backends that do not
+	// serve TLS in-process (e.g. DNS-01) — callers must nil-check.
 	TLSConfig() *tls.Config
 }
 

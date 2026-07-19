@@ -206,6 +206,11 @@ func (c *Client) Metrics() Metrics {
 // needed. Concurrent calls for the same domain are single-flight deduped. It is
 // the per-domain entry point used by the renewal loop and is also exported for
 // ad-hoc use (e.g. forcing issuance at startup).
+//
+// Note: unlike the renewal loop (which recovers backend panics so a failure
+// never stops renewal), ad-hoc EnsureCert does NOT recover — a panicking ACME
+// backend propagates to the caller. If you call it from your own goroutine,
+// defer-recover there if that goroutine must survive.
 func (c *Client) EnsureCert(ctx context.Context, domain string) error {
 	_, err, _ := c.sf.Do(domain, func() (any, error) {
 		return nil, c.obtainAndWrite(ctx, domain)
