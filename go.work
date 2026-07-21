@@ -23,3 +23,13 @@ use (
 	./redislock
 	./tracing
 )
+
+// Pin the legacy all-in-one google.golang.org/genproto to a recent version.
+// Pre-split versions (e.g. v0.0.0-20210602) still CONTAIN the googleapis/{api,rpc}
+// packages, which collide with the split modules google.golang.org/genproto/
+// googleapis/{api,rpc} that etcd/grpcclient/grpcserver require, producing
+// "ambiguous import" build failures in the merged workspace graph (an old
+// genproto leaks in transitively via go.etcd.io/etcd/api/v3 v3.5.0). At recent
+// versions the all-in-one module is empty for googleapis/* (the packages live
+// only in the split modules), so the collision disappears.
+replace google.golang.org/genproto => google.golang.org/genproto v0.0.0-20260720211330-0afa2a65878a
