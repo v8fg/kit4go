@@ -45,6 +45,13 @@ func FuzzHOTPCode(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, rawSecret []byte, counter uint64) {
+		// Real OTP secrets are tens of bytes; cap the input so the fuzzer spends
+		// its budget on algorithmic edge cases, not HMAC throughput over multi-MB
+		// keys (linearly bounded but slow — uncapped, the fuzzer would explore
+		// ever-larger secrets and time out the target).
+		if len(rawSecret) > 256 {
+			t.Skip()
+		}
 		secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(rawSecret)
 
 		code, err := otp.HOTPCode(secret, counter)
@@ -81,6 +88,11 @@ func FuzzTOTPCode(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, rawSecret []byte) {
+		// See FuzzHOTPCode: cap the secret size so the fuzzer explores algorithmic
+		// edge cases, not HMAC throughput over multi-MB keys (which times out).
+		if len(rawSecret) > 256 {
+			t.Skip()
+		}
 		secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(rawSecret)
 
 		code, err := otp.TOTPCodeCustom(secret, fixedFuzzTime, nil)
