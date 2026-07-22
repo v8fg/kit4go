@@ -11,10 +11,40 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
-Deep quality-hardening pass: 30+-round autonomous audit (scenario, invariant,
-memory-model, wrapper, network, lifecycle lenses) over every package + all 18
-sub-modules. Real bugs fixed; E10 fuzz coverage + H6 godoc examples expanded;
-contract gaps documented.
+Two bodies of work pending release:
+
+1. **Generic-primitive expansion + cert sub-module** — 10 new pure-stdlib root
+   packages filling Go stdlib gaps, plus a new `cert` ACME sub-module (with a
+   nested `cert/lego` DNS-01 backend). See Added.
+2. **Deep quality-hardening pass** — 30+-round autonomous audit (scenario,
+   invariant, memory-model, wrapper, network, lifecycle lenses) over every
+   package + all sub-modules. Real bugs fixed; E10 fuzz coverage + H6 godoc
+   examples expanded; contract gaps documented.
+
+### Added
+
+- **New root packages (pure stdlib)** — `sliceutil` (Chunk/Flatten/Deduplicate/
+  Partition/GroupBy/Window/...), `maputil` (Merge/Invert/FromSlice/ToSlice),
+  `stats` (Mean/Median/Mode/Variance/StdDev/Percentile/...), `multimap`
+  (one-to-many `map[K][]V`), `iterx` (Go 1.23 iter.Seq/Seq2 combinators:
+  Map/Filter/Take/Drop/Collect/Reduce/Chain/Zip/Range), `memoize` (thread-safe
+  memoization; `MemoizeErr` caches only successes), `graph` (directed graph:
+  BFS/DFS/TopoSort/HasCycle), `disjointset` (union-find, path compression +
+  union by rank), `omap` (insertion-ordered map), `singleflight` (concurrent
+  in-flight call dedup; panic-safe — converts a panicking fn to `Result.Err` and
+  never deadlocks waiters). Root package count 76 → 86. Each 100% coverage,
+  -race, golangci-lint v2 clean, README + example + bench.
+- **`cert` sub-module** (new isolated module `github.com/v8fg/kit4go/cert`) —
+  ACME HTTPS certificate issuance + proactive renewal loop wrapping
+  golang.org/x/crypto/acme/autocert: atomic directory writer (cert 0644 / key
+  0600, temp+fsync+rename), Metrics + SetOnEvent/SetOnPanic hooks, in-process
+  TLS serving. Nested `cert/lego` module adds a DNS-01 backend (wildcard certs)
+  via go-acme/lego v4. Sub-module count 18 → 20.
+- E10 fuzz targets: bloom (no-false-negative), countmin (never-under-count), str
+  (CamelToSnake determinism), topk (TouchN heavy-hitter), datetime
+  (DeltaDateDays round-trip), trie (Insert/Get round-trip), ip (MaskIPToCIDR
+  canonical round-trip), stats (Percentile bounds / Median==P50 / Variance>=0).
+- Godoc examples: rate, tracing, email, grpcserver.
 
 ### Fixed
 
@@ -48,18 +78,33 @@ contract gaps documented.
   (premature close / spurious re-trip). Fixed via a generation counter
   (halfOpenGen) incremented on each Open→HalfOpen transition; recordSuccess/
   Failure credit/trip only if the probe's captured epoch matches the current.
-
-### Added
-
-- E10 fuzz targets: bloom (no-false-negative), countmin (never-under-count), str
-  (CamelToSnake determinism), topk (TouchN heavy-hitter), datetime
-  (DeltaDateDays round-trip), trie (Insert/Get round-trip), ip (MaskIPToCIDR
-  canonical round-trip).
-- Godoc examples: rate, tracing, email, grpcserver.
+- **cert** — renewal loop had no `recover`: a panic in the ACME backend/parser/
+  writer killed the loop goroutine (Stop hung via skipped `close(done)`, certs
+  would expire). Each tick now runs under a recover (`runTick`/`recoverTick`);
+  Start defers `close(done)` so Stop always returns; `SetOnPanic`/`Metrics.Panics`
+  + an `EventPanic` event surface recovered panics. A second guard means a
+  panicking user hook (OnEvent/OnPanic) also cannot kill the loop.
+- **singleflight** — `Do` had no defer around `fn()`, so a panicking fn skipped
+  `wg.Done` + entry cleanup → all concurrent waiters deadlocked forever AND the
+  key was permanently starved (every later `Do` on it blocked). Rewrote with a
+  named-return defer that always releases waiters + cleans up, converting the
+  panic to `Result.Err`.
+- **workspace** — adding `cert` to `go.work` broke the etcd/grpcclient/
+  grpcserver build ("ambiguous import: genproto/googleapis/{api,rpc} in multiple
+  modules"): the legacy all-in-one `google.golang.org/genproto` (still containing
+  googleapis/*, pulled via etcd/api/v3 v3.5.0) collided with the split modules
+  etcd/grpc require. A `go.work` `replace` pins the all-in-one to a recent
+  version (googleapis/* removed → empty), resolving the collision.
 
 ### Changed
 
 - aerospike Close guarded with sync.Once (template consistency).
+- **cert** — `Config.StagingSet` removed (dead field: documented as a tri-state
+  guard but `withDefaults` never read it); `Staging` is a plain bool. `ACMEManager`
+  interface now documents that `HTTPHandler`/`TLSConfig` may return nil for
+  non-HTTP-01 backends (e.g. DNS-01). `EnsureCert` documents that the ad-hoc
+  path does not recover (unlike the loop). `validDomain` also rejects `\` and
+  control chars (path-traversal defense-in-depth).
 
 ### Documented (no behavior change)
 
