@@ -76,13 +76,14 @@ func (t *Trie[V]) Insert(key string, val V) {
 	cur.hasValue = true
 }
 
-// Get returns the value for an exact key match.
+// Get returns the value for an exact key match. Zero-alloc on the read path:
+// it walks the key's "/" segments lazily (descendKey) instead of materialising
+// a []string.
 func (t *Trie[V]) Get(key string) (V, bool) {
-	segs := segments(key)
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	cur := t.descend(segs)
-	if cur == nil || !cur.hasValue {
+	cur, ok := t.descendKey(key)
+	if !ok || !cur.hasValue {
 		var zero V
 		return zero, false
 	}
@@ -98,32 +99,54 @@ func (t *Trie[V]) Has(key string) bool {
 // LongestPrefix returns the value of the longest configured key that is a prefix
 // of the query. For example, if keys "a", "a/b", and "a/b/c" are inserted, a
 // query for "a/b/c/d" matches "a/b/c". Returns false if no prefix matches.
+//
+// Walks the query's "/" segments lazily (no []string) and returns the matched
+// prefix as a substring of the (trimmed) query — allocation-free on the read
+// path apart from the unavoidable substring header.
 func (t *Trie[V]) LongestPrefix(query string) (V, string, bool) {
-	segs := segments(query)
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	cur := t.root
 	var bestVal V
-	var bestKey string
-	var found bool
-	// Walk the query path; track the last node that has a value.
-	path := make([]string, 0, len(segs))
-	for _, s := range segs {
-		child, ok := cur.children[s]
+	bestKey := ""
+	found := false
+	// Empty-key prefix: Insert("", v) stores a value at the root.
+	if cur.hasValue {
+		bestVal = cur.value
+		found = true // bestKey stays "" for the empty prefix
+	}
+	trimmed := strings.Trim(query, "/")
+	rest := trimmed
+	consumed := 0 // bytes consumed from trimmed, including each segment's trailing '/'
+	for rest != "" {
+		i := strings.IndexByte(rest, '/')
+		seg := rest
+		segStep := len(rest)
+		if i >= 0 {
+			seg = rest[:i]
+			segStep = i + 1
+		}
+		child, ok := cur.children[seg]
 		if !ok {
 			break
 		}
 		cur = child
-		path = append(path, s)
+		consumed += segStep
 		if cur.hasValue {
 			bestVal = cur.value
-			bestKey = strings.Join(path, "/")
+			// Matched prefix = trimmed up to the end of this segment, dropping
+			// the segment's trailing '/' for a clean key (matches Join semantics).
+			end := consumed
+			if i >= 0 {
+				end = consumed - 1
+			}
+			bestKey = trimmed[:end]
 			found = true
 		}
-	}
-	// Also check the root (empty prefix) — it has a value only if Insert("", v) was called.
-	if !found && t.root.hasValue {
-		return t.root.value, "", true
+		if i < 0 {
+			break
+		}
+		rest = rest[i+1:]
 	}
 	return bestVal, bestKey, found
 }
@@ -213,4 +236,31 @@ func (t *Trie[V]) descend(segs []string) *node[V] {
 		cur = child
 	}
 	return cur
+}
+
+// descendKey walks the trie along the "/"-separated segments of key (after
+// trimming leading/trailing "/"), matching segments exactly as strings.Split
+// would — including the empty segments between consecutive "/" (so "a//b" walks
+// "a" → "" → "b"). It returns the deepest node reached and ok=false if any
+// segment was missing. Zero allocations: segments are subslices of key.
+func (t *Trie[V]) descendKey(key string) (cur *node[V], ok bool) {
+	cur = t.root
+	rest := strings.Trim(key, "/")
+	for rest != "" {
+		i := strings.IndexByte(rest, '/')
+		seg := rest
+		if i >= 0 {
+			seg = rest[:i]
+		}
+		child, exists := cur.children[seg]
+		if !exists {
+			return cur, false
+		}
+		cur = child
+		if i < 0 {
+			break
+		}
+		rest = rest[i+1:]
+	}
+	return cur, true
 }
