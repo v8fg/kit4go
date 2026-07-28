@@ -237,14 +237,16 @@ func TestWithCapacity(t *testing.T) {
 // --- benchmarks ---
 
 func BenchmarkSetAdd(b *testing.B) {
+	// Set is NOT safe for concurrent use (documented), so benchmark Add on a
+	// single goroutine — RunParallel here raced on the backing map
+	// ("concurrent map writes"). Concurrent use is the caller's responsibility
+	// (wrap in a mutex); it is not what this throughput bench measures.
 	s := set.New[int]()
-	b.RunParallel(func(pb *testing.PB) {
-		i := 0
-		for pb.Next() {
-			s.Add(i)
-			i++
-		}
-	})
+	i := 0
+	for b.Loop() {
+		s.Add(i)
+		i++
+	}
 }
 
 func BenchmarkSetContains(b *testing.B) {
