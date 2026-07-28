@@ -11,7 +11,11 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 ## [Unreleased]
 
-Two bodies of work pending release:
+_Nothing yet._
+
+## [0.9.0] — 2026-07-28
+
+Two bodies of work since v0.8.0:
 
 1. **Generic-primitive expansion + cert sub-module** — 10 new pure-stdlib root
    packages filling Go stdlib gaps, plus a new `cert` ACME sub-module (with a
@@ -105,6 +109,21 @@ Two bodies of work pending release:
   non-HTTP-01 backends (e.g. DNS-01). `EnsureCert` documents that the ad-hoc
   path does not recover (unlike the loop). `validDomain` also rejects `\` and
   control chars (path-traversal defense-in-depth).
+
+### Performance
+
+- **trie** — zero-alloc read path: Get and LongestPrefix now walk the key's "/"
+  segments lazily (descendKey / substring) instead of materialising a []string
+  per call. Behaviour-identical (all tests pass under -race); Get ~3× faster
+  (222→75 ns, 0 alloc), LongestPrefix ~8× faster (606→73 ns, 0 alloc) — matters
+  for the URL/domain-routing use case doing millions of lookups.
+
+### Fixed (tests)
+
+- **set** — `BenchmarkSetAdd` raced on the (non-concurrent-safe) Set via
+  b.RunParallel, aborting with "fatal error: concurrent map writes" whenever
+  `-bench` ran the set package. Made it single-goroutine (matching the other set
+  benches); concurrent use remains the caller's responsibility.
 
 ### Documented (no behavior change)
 
