@@ -71,8 +71,7 @@ func shouldRetry(err error) bool {
 	// The same unreachability reasoning applies to the inner context-error
 	// check: by the time errors.As matches *net.OpError, any context error in
 	// opErr's chain is already in err's chain and was caught at line 44.
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
+	if opErr, ok := errors.AsType[*net.OpError](err); ok {
 		if errors.Is(opErr, context.Canceled) || errors.Is(opErr, context.DeadlineExceeded) {
 			return false
 		}

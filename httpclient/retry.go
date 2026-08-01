@@ -94,8 +94,7 @@ func shouldRetry(resp *http.Response, err error) bool {
 			}
 			return true
 		}
-		var opErr *net.OpError
-		if errors.As(err, &opErr) {
+		if opErr, ok := errors.AsType[*net.OpError](err); ok {
 			if errors.Is(opErr, context.Canceled) || errors.Is(opErr, context.DeadlineExceeded) {
 				return false
 			}

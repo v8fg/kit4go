@@ -499,8 +499,7 @@ func shouldRetry(err error) bool {
 	}
 	// Any remaining net.OpError (e.g. connection refused on a connected UDP
 	// socket sending to a port with no listener on some platforms) is retryable.
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
+	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return true
 	}
 	// Fallback: treat unknown non-context errors as retryable. This mirrors the
