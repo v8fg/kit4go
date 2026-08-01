@@ -76,9 +76,12 @@ func FromContext(ctx context.Context) string {
 }
 
 func generateID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	// Stack-allocated: neither rand.Read nor hex.EncodeToString retains the
+	// slice, so b does not escape — avoids the make([]byte, 16) allocation the
+	// per-request ID-generation path paid when no client X-Request-ID is present.
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // --- Rate Limit ---
