@@ -119,14 +119,14 @@ func (e *Error) Is(target error) bool {
 	if e == nil {
 		return target == nil
 	}
-	var t *Error
-	if errors.As(target, &t) {
-		if t == nil { // typed-nil *Error target: errors.Is(err, (*Error)(nil))
-			return false
-		}
-		return e.Code == t.Code
+	// errors.AsType (Go 1.26) is generic — the compiler knows the target type at
+	// instantiation, so unlike the reflection-based errors.As it does not force
+	// the result to escape to the heap (0 alloc on the error-check hot path).
+	t, ok := errors.AsType[*Error](target)
+	if !ok || t == nil {
+		return false
 	}
-	return false
+	return e.Code == t.Code
 }
 
 // WithDetail appends a structured detail to the Error and returns the same
@@ -190,8 +190,8 @@ func CodeOf(err error) Code {
 	if err == nil {
 		return OK
 	}
-	var e *Error
-	if errors.As(err, &e) {
+	// errors.AsType (Go 1.26) avoids the reflection allocation errors.As incurs.
+	if e, ok := errors.AsType[*Error](err); ok {
 		return e.Code
 	}
 	return Unknown
