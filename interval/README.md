@@ -35,7 +35,7 @@ merged := interval.Merge([]interval.Interval[int]{
 | `Contains(v)` | v ∈ [Start, End) |
 | `ContainsInclusive(v)` | v ∈ [Start, End] |
 | `Overlaps(other)` | Share any point |
-| `IsBefore(other)` / `IsAfter(other)` | Strictly before/after |
+| `IsBefore(other)` / `IsAfter(other)` | Entirely before/after (touching counts) |
 | `Union(other)` | Merge if overlapping/touching |
 | `Intersect(other)` | Intersection |
 | `Merge(intervals)` | Sort + collapse overlapping/touching |

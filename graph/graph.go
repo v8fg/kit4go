@@ -44,6 +44,12 @@ func (g *Graph[T]) ensure(n T) {
 // AddNode adds an isolated node. No-op if it already exists.
 func (g *Graph[T]) AddNode(n T) { g.ensure(n) }
 
+// Clear removes all nodes and edges.
+func (g *Graph[T]) Clear() {
+	g.adj = make(map[T][]T)
+	g.order = nil
+}
+
 // AddEdge adds a directed edge from->to, registering both nodes. Duplicate edges
 // are collapsed. Self-loops (from==to) are permitted and count as a cycle.
 func (g *Graph[T]) AddEdge(from, to T) {

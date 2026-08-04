@@ -2,6 +2,8 @@
 // array — 1/64 the memory of a map-based set for small integer ranges. O(1)
 // Set/Clear/Test, O(n/64) for iteration.
 //
+// Not safe for concurrent use — protect with a sync.RWMutex.
+//
 // Pure standard library. Ad-tech uses: flag bitmasks, small-ID membership
 // (creative IDs 0..10K), deduplication of bounded integer spaces, bloom-filter
 // building blocks.

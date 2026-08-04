@@ -2,6 +2,8 @@
 // last N elements and supports O(1) aggregate queries (Sum, Min, Max, Avg,
 // Count). Elements are evicted FIFO when the window is full.
 //
+// Not safe for concurrent use — protect with a sync.RWMutex.
+//
 // For time-based eviction (last T duration), use the TimeWindow variant.
 //
 // Pure standard library. Ad-tech / finance uses: rolling p99 latency, moving

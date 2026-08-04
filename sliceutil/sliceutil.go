@@ -1,6 +1,6 @@
 // Package sliceutil provides generic slice helpers missing from Go 1.21's
 // [slices] package: Chunk, Flatten, Deduplicate, Partition, GroupBy, Window,
-// Fill, Repeat, Reverse (in-place), Associate.
+// Fill, Repeat, Reverse, Associate.
 //
 // Pure standard library.
 package sliceutil

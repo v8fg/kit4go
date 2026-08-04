@@ -13,8 +13,8 @@ func fib(n int) int {
 	return fib(n-1) + fib(n-2)
 }
 
-// ExampleMemoize turns an O(2^n) recursive Fibonacci into an O(n) memoized one
-// — the second call with the same argument is a cache hit.
+// ExampleMemoize caches the top-level call so the second call with the same
+// argument is a cache hit (the wrapped fn runs once; its result is reused).
 func ExampleMemoize() {
 	calls := 0
 	// Wrap a pure function; the wrapper caches by argument.

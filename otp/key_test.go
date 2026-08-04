@@ -364,3 +364,19 @@ func TestKeyFromTOTPOpts(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 	})
 }
+
+// TestKeyAlgorithmSHA256AndMD5 covers the two Algorithm enum values that were
+// previously exported but untested (only SHA512 was exercised). Both must
+// generate a valid otpauth URL containing the algorithm name.
+func TestKeyAlgorithmSHA256AndMD5(t *testing.T) {
+	convey.Convey("SHA256", t, func() {
+		u, err := otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "t", AccountName: "u@t.com", Algorithm: otp.AlgorithmSHA256})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(u, convey.ShouldContainSubstring, "SHA256")
+	})
+	convey.Convey("MD5", t, func() {
+		u, err := otp.GenerateURLTOTP(otp.KeyOpts{Issuer: "t", AccountName: "u@t.com", Algorithm: otp.AlgorithmMD5})
+		convey.So(err, convey.ShouldBeNil)
+		convey.So(u, convey.ShouldContainSubstring, "MD5")
+	})
+}

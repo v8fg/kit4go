@@ -30,8 +30,8 @@ scheduler use-cases where priorities change after enqueue.
 | `(*Queue).Len() int` | Current size |
 
 `Update` must be called on an item returned by `Push` that is still in the
-queue. Passing an item from another queue or one already popped has undefined
-behavior.
+queue. Passing an item from another queue or one already popped is a silent
+no-op (not a panic).
 
 ## Example
 

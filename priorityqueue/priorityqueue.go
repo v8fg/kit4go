@@ -88,6 +88,10 @@ func (q *Queue[T]) Push(value T, priority int) *Item[T] {
 	return item
 }
 
+// Clear removes all items from the queue. Old *Item pointers become stale (any
+// Update on them will be a silent no-op).
+func (q *Queue[T]) Clear() { q.h = q.h[:0] }
+
 // Pop removes and returns the highest-priority value, its priority, and true.
 // If the queue is empty it returns the zero value of T, 0, and false.
 func (q *Queue[T]) Pop() (T, int, bool) {

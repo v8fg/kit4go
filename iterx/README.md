@@ -2,7 +2,8 @@
 
 Functional combinators over Go 1.23+ range-over-func iterators
 ([`iter.Seq`](https://pkg.go.dev/iter) / `iter.Seq2`): Map, Filter, Take, Drop,
-Collect, Reduce, Chain, Zip, Range, Seq2Keys, Seq2Values. Pure standard library.
+Collect, Reduce, Chain, Zip, Range, Seq2Keys, Seq2Values. Depends only on the
+sibling `tuple` package (no external dependencies).
 
 Go 1.23 introduced range-over-func and the `iter` package, but the stdlib ships
 no combinators — you can `for v := range seq`, but there is no `Map` / `Filter` /
