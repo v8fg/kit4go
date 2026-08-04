@@ -61,9 +61,8 @@ func New(width, depth uint) *CountMinSketch {
 }
 
 // NewForError builds a sketch sized for the desired error bound: the estimate
-// over-counts by at most width*epsilon with probability >= 1-delta. (width here
-// is the additive error in count, epsilon the relative slack; standard CMS
-// sizing: w = ceil(e/epsilon), d = ceil(ln(1/delta)).)
+// over-counts by at most epsilon*N (N = total items added) with probability
+// >= 1-delta. Standard CMS sizing: w = ceil(e/epsilon), d = ceil(ln(1/delta)).
 func NewForError(epsilon, delta float64) *CountMinSketch {
 	if epsilon <= 0 {
 		epsilon = 0.001
