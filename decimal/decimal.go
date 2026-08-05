@@ -33,7 +33,14 @@ var (
 	ErrNegativeScale = errors.New("decimal: negative scale")
 	// ErrDivideByZero is returned by Div when the divisor is 0.
 	ErrDivideByZero = errors.New("decimal: divide by zero")
+	// ErrScaleTooLarge is returned when scale exceeds maxScale (prevents OOM).
+	ErrScaleTooLarge = errors.New("decimal: scale exceeds maximum")
 )
+
+// maxScale caps the number of decimal places. Beyond ~100 the result is
+// meaningless for any practical purpose (finance: 2-18, science: <100), and
+// unbounded scale causes multi-GB allocations via strings.Repeat / big.Int.Exp.
+const maxScale = 10000
 
 var (
 	ten = big.NewInt(10)
@@ -86,6 +93,9 @@ func MustParse(s string, scale int) Decimal {
 func Parse(s string, scale int) (Decimal, error) {
 	if scale < 0 {
 		return Decimal{}, fmt.Errorf("%w: %d", ErrNegativeScale, scale)
+	}
+	if scale > maxScale {
+		return Decimal{}, fmt.Errorf("%w: %d (max %d)", ErrScaleTooLarge, scale, maxScale)
 	}
 	if s == "" {
 		return Decimal{}, fmt.Errorf("%w: empty string", ErrParse)
@@ -270,6 +280,9 @@ func (d Decimal) Abs() Decimal {
 func (d Decimal) Rescale(newScale int) Decimal {
 	if newScale < 0 || newScale == d.scale {
 		return d
+	}
+	if newScale > maxScale {
+		newScale = maxScale // clamp to prevent big.Int.Exp OOM
 	}
 	v := d.valueOrZero()
 	if newScale > d.scale {
