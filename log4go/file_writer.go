@@ -808,7 +808,9 @@ func (w *FileWriter) Stop() {
 	}
 	close(w.stop)
 	waitQuit("file", w.quit, defaultShutdownTimeout)
-	w.messages = nil
+	// messages is intentionally NOT nil'd: Metrics checks w.closing (atomic)
+	// before reading it, so there is no race. Nil'ing it (the old code) raced
+	// with a concurrent Metrics() call. The channel is GC'd with the writer.
 	if w.spiller != nil {
 		_ = w.spiller.Close()
 	}
@@ -832,8 +834,11 @@ type FileWriterMetrics struct {
 
 // Metrics returns a snapshot of async FileWriter counters for monitoring.
 func (w *FileWriter) Metrics() FileWriterMetrics {
+	// Once closing is set the daemon has stopped; reading len(messages) would
+	// race with Stop's cleanup. Skip it (report 0) — a stopped writer's queued
+	// depth is meaningless anyway.
 	queued := 0
-	if w.messages != nil {
+	if !w.closing.Load() && w.messages != nil {
 		queued = len(w.messages)
 	}
 	spillLen := 0

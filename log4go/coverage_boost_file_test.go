@@ -642,10 +642,10 @@ func Test_FileWriter_Metrics_PostStop(t *testing.T) {
 	}
 	_ = fw.Write(&Record{level: INFO, time: "t", file: "f", msg: "x"})
 	time.Sleep(100 * time.Millisecond)
-	fw.Stop() // sets w.messages = nil
+	fw.Stop() // sets closing=true → Metrics reports Queued=0 without reading messages
 	m := fw.Metrics()
 	if m.Queued != 0 {
-		t.Fatalf("Queued=%d want 0 after Stop nilled messages", m.Queued)
+		t.Fatalf("Queued=%d want 0 after Stop (closing=true)", m.Queued)
 	}
 }
 

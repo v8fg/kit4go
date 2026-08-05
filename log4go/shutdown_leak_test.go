@@ -126,8 +126,8 @@ func TestShutdown_LoggerClose_StopsWriters(t *testing.T) {
 
 	l.Close()
 
-	if fw.messages != nil {
-		t.Fatalf("Logger.Close did not stop FileWriter daemon (messages still open) — leak")
+	if !fw.closing.Load() {
+		t.Fatalf("Logger.Close did not stop FileWriter daemon (closing not set) — leak")
 	}
 	// No manual Stop() is required: Logger.Close stopped it. Idempotency means a
 	// later explicit Stop() is also safe (no close-of-closed-channel panic).
