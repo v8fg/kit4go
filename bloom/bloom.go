@@ -17,6 +17,7 @@ import (
 	"errors"
 	"hash/fnv"
 	"math"
+	"slices"
 	"sync"
 )
 
@@ -214,14 +215,20 @@ func (f *Filter) Merge(other *Filter) error {
 	if f.m != other.m || f.k != other.k {
 		return ErrIncompatible
 	}
+	// Snapshot other's bits under its read lock, then merge into f under f's
+	// write lock. Never hold BOTH locks simultaneously — that would deadlock
+	// under concurrent A.Merge(B) + B.Merge(A) (classic lock-order inversion).
+	other.mu.RLock()
+	otherBits := slices.Clone(other.bits)
+	otherN := other.n
+	other.mu.RUnlock()
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	other.mu.RLock()
-	defer other.mu.RUnlock()
 	for i := range f.bits {
-		f.bits[i] |= other.bits[i]
+		f.bits[i] |= otherBits[i]
 	}
-	f.n += other.n
+	f.n += otherN
 	return nil
 }
 

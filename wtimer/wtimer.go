@@ -48,8 +48,8 @@ type Wheel struct {
 	closed atomic.Bool
 	wg     sync.WaitGroup
 
-	recovered uint64    // count of callback panics recovered (observable; L5)
-	onPanic   func(any) // optional hook fired on a recovered callback panic
+	recovered uint64                    // count of callback panics recovered (observable; L5)
+	onPanic   atomic.Pointer[func(any)] // optional hook fired on a recovered callback panic
 }
 
 type timerHeap []*Timer
@@ -146,16 +146,23 @@ func (w *Wheel) safeFire(fn func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			atomic.AddUint64(&w.recovered, 1)
-			if w.onPanic != nil {
-				w.onPanic(r)
+			if p := w.onPanic.Load(); p != nil {
+				(*p)(r)
 			}
 		}
 	}()
 	fn()
 }
 
-// SetOnPanic installs a hook fired when a timer callback panics.
-func (w *Wheel) SetOnPanic(fn func(any)) { w.onPanic = fn }
+// SetOnPanic installs a hook fired when a timer callback panics. Pass nil to
+// disable. Thread-safe (atomic store).
+func (w *Wheel) SetOnPanic(fn func(any)) {
+	if fn == nil {
+		w.onPanic.Store(nil)
+		return
+	}
+	w.onPanic.Store(&fn)
+}
 
 // Recovered returns the total callback panics recovered.
 func (w *Wheel) Recovered() uint64 { return atomic.LoadUint64(&w.recovered) }
