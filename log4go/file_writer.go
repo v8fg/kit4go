@@ -472,6 +472,11 @@ func (w *FileWriter) rotateImpl() error {
 	if file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, w.rotatePerm); err == nil {
 		w.file = file
 	} else {
+		// Nil out the stale (now-closed) old-file pointers so writeOne detects
+		// the nil at its guard (line 704) and counts an error instead of writing
+		// through a dead fd. The next writeOne's rotateImpl retries the open.
+		w.file = nil
+		w.fileBufWriter = nil
 		return err
 	}
 
