@@ -34,6 +34,9 @@ type saramaConsumerGroup struct {
 	errChOnce sync.Once
 	errCh     chan error
 
+	// errWG tracks the drainErrors goroutine so Close can join it.
+	errWG sync.WaitGroup
+
 	received  atomic.Uint64
 	acked     atomic.Uint64
 	failed    atomic.Uint64
@@ -68,12 +71,14 @@ func newSaramaConsumerGroup(o Options, factory consumerGroupFactory) (*saramaCon
 		return nil, err
 	}
 	s := &saramaConsumerGroup{opts: o, cfg: cfg, factory: factory, cg: cg}
+	s.errWG.Add(1)
 	go s.drainErrors()
 	return s, nil
 }
 
 // drainErrors forwards the group's background errors to errCh (and OnEvent).
 func (s *saramaConsumerGroup) drainErrors() {
+	defer s.errWG.Done()
 	for err := range s.cg.Errors() {
 		s.fire(ConsumerEvent{Name: "error", Err: err})
 		s.pushErr(err)
@@ -134,6 +139,7 @@ func (s *saramaConsumerGroup) Close() error {
 	s.closed = true
 	s.mu.Unlock()
 	err := s.cg.Close()
+	s.errWG.Wait() // join drainErrors (sarama closes Errors() in cg.Close)
 	s.fire(ConsumerEvent{Name: "close"})
 	return err
 }
