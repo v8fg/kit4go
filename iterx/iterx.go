@@ -128,6 +128,9 @@ func Zip[A, B any](a iter.Seq[A], b iter.Seq[B]) iter.Seq[tuple.Pair[A, B]] {
 // Range yields integers from start (inclusive) to end (exclusive), stepping by
 // step. A positive step counts up; a negative step counts down; step == 0
 // yields nothing.
+//
+// Overflow-safe: if start+step overflows int (wrapping past MaxInt64 or
+// MinInt64), Range stops instead of looping forever.
 func Range(start, end, step int) iter.Seq[int] {
 	return func(yield func(int) bool) {
 		if step == 0 {
@@ -138,11 +141,17 @@ func Range(start, end, step int) iter.Seq[int] {
 				if !yield(i) {
 					return
 				}
+				if i+step < i { // overflow: wrapped past MaxInt64
+					return
+				}
 			}
 			return
 		}
 		for i := start; i > end; i += step {
 			if !yield(i) {
+				return
+			}
+			if i+step > i { // underflow: wrapped past MinInt64
 				return
 			}
 		}

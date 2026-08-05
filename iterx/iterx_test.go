@@ -1,8 +1,10 @@
 package iterx_test
 
 import (
+	"math"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -242,4 +244,19 @@ func TestEarlyTermination(t *testing.T) {
 		}
 	}
 	require.Equal(t, 2, vals)
+}
+
+// TestRangeOverflowSafe verifies that Range stops when start+step overflows
+// int, instead of looping forever (the pre-fix bug). Uses a 2s timeout.
+func TestRangeOverflowSafe(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		iterx.Collect(iterx.Range(math.MaxInt-1, math.MaxInt, 3))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Range(MaxInt-1, MaxInt, 3) hung — overflow not guarded")
+	}
 }

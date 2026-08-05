@@ -11,6 +11,11 @@ import (
 	"sync/atomic"
 )
 
+// maxRoundingPrecision caps precision to prevent unbounded allocation
+// (strings.Repeat) and math.Pow10 overflow. float64 has ~15 significant digits,
+// so 100 is generous for any practical display use.
+const maxRoundingPrecision = 100
+
 // Int is a type constraint that matches any signed integer type or any type
 // whose underlying type is a signed integer (int, int8, int16, int32, int64).
 type Int interface {
@@ -62,6 +67,9 @@ func SetRegForNumber(useRegForNumber7 bool) {
 // round-half-away-from-zero semantics (via math.Round), as a float64. T must be
 // float32 or float64.
 func Round[T Float](f T, precision uint) float64 {
+	if precision > maxRoundingPrecision {
+		precision = maxRoundingPrecision
+	}
 	n10 := math.Pow10(int(precision))
 	// return float64(int(float64(f)*n10+math.Copysign(0.5, float64(f)*n10))) / n10
 	return math.Round(float64(f)*n10) / n10
@@ -71,6 +79,9 @@ func Round[T Float](f T, precision uint) float64 {
 // round-half-to-even (banker's) semantics (via math.RoundToEven), as a float64.
 // T must be float32 or float64.
 func RoundToEven[T Float](f T, precision uint) float64 {
+	if precision > maxRoundingPrecision {
+		precision = maxRoundingPrecision
+	}
 	n10 := math.Pow10(int(precision))
 	// return float64(int(float64(f)*n10+math.Copysign(0.5, float64(f)*n10))) / n10
 	return math.RoundToEven(float64(f)*n10) / n10
@@ -80,6 +91,9 @@ func RoundToEven[T Float](f T, precision uint) float64 {
 // number of decimal places (via math.Floor), as a float64. T must be float32 or
 // float64.
 func RoundFloor[T Float](f T, precision uint) float64 {
+	if precision > maxRoundingPrecision {
+		precision = maxRoundingPrecision
+	}
 	n10 := math.Pow10(int(precision))
 	return math.Floor(float64(f)*n10) / n10
 }
@@ -88,6 +102,9 @@ func RoundFloor[T Float](f T, precision uint) float64 {
 // number of decimal places (via math.Ceil), as a float64. T must be float32 or
 // float64.
 func RoundCeil[T Float](f T, precision uint) float64 {
+	if precision > maxRoundingPrecision {
+		precision = maxRoundingPrecision
+	}
 	n10 := math.Pow10(int(precision))
 	return math.Ceil(float64(f)*n10) / n10
 }
@@ -127,6 +144,11 @@ func RoundTrunc[T Int | Uint | Float](f T, precision int) T {
 	// unchanged without any string round-trip.
 	if precision >= 0 && isIntegerKind(f) {
 		return f
+	}
+
+	// Cap positive precision to prevent unbounded strings.Repeat allocation.
+	if precision > maxRoundingPrecision {
+		precision = maxRoundingPrecision
 	}
 
 	sig, integer, fractional := regSplitNormalNumber(s)
