@@ -340,3 +340,25 @@ func TestAllocateTieBreak(t *testing.T) {
 		t.Errorf("tie-break: got [%d,%d], want [1,0] (lower index wins)", result[0].Amount(), result[1].Amount())
 	}
 }
+
+// TestAllocateNegativeZeroRatio is the regression test for the semantic bug:
+// a zero-ratio bucket must NEVER receive a non-zero share, even when the
+// amount is negative (where the remainder-distribution direction inverts).
+func TestAllocateNegativeZeroRatio(t *testing.T) {
+	m := MustFromMinor(-7, "USD")
+	result, err := m.Allocate([]int{1, 0, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result[1].Amount() != 0 {
+		t.Errorf("zero-ratio bucket got %d, want 0", result[1].Amount())
+	}
+	// Total must still sum to -7.
+	var sum int64
+	for _, r := range result {
+		sum += r.Amount()
+	}
+	if sum != -7 {
+		t.Errorf("sum = %d, want -7 (conservation)", sum)
+	}
+}

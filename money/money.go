@@ -414,11 +414,17 @@ func (m Money) Allocate(ratios []int) ([]Money, error) {
 			step = -1
 		}
 		for remaining := absI64(remainder); remaining > 0; remaining-- {
-			best := 0
-			for j := 1; j < len(fracs); j++ {
-				if fracs[j].frac > fracs[best].frac {
+			best := -1
+			for j := range fracs {
+				if ratios[j] == 0 {
+					continue // zero-ratio bucket must always be 0
+				}
+				if best == -1 || fracs[j].frac > fracs[best].frac {
 					best = j
 				}
+			}
+			if best == -1 {
+				break // all ratios are zero — shouldn't reach here (validated above)
 			}
 			out[best].amount += step
 			fracs[best].frac -= float64(step)
