@@ -694,3 +694,16 @@ func TestRoundTruncFloatUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// TestRoundClamp asserts that precision beyond maxRoundingPrecision is clamped
+// (not NaN via math.Pow10 overflow).
+func TestRoundClamp(t *testing.T) {
+	clamped := number.Round(math.Pi, 200)
+	normal := number.Round(math.Pi, 100)
+	if clamped != normal {
+		t.Errorf("Round(pi, 200)=%v != Round(pi, 100)=%v (clamp not working)", clamped, normal)
+	}
+	if math.IsNaN(clamped) {
+		t.Error("Round(pi, 200) = NaN (Pow10 overflow not clamped)")
+	}
+}

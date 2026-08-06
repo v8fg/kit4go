@@ -89,6 +89,58 @@ func TestMulDecimal(t *testing.T) {
 	}
 }
 
+func TestMulDecimalSigns(t *testing.T) {
+	cases := []struct {
+		a, b, want string
+	}{
+		{"-2.50", "-4.00", "10.0000"}, // neg × neg → pos
+		{"-2.50", "4.00", "-10.0000"}, // neg × pos → neg
+		{"2.50", "-4.00", "-10.0000"}, // pos × neg → neg
+		{"0.00", "5.00", "0.0000"},    // zero × pos → zero
+		{"-0.05", "0.00", "0.0000"},   // neg × zero → zero
+	}
+	for _, tc := range cases {
+		got := MustParse(tc.a, 2).MulDecimal(MustParse(tc.b, 2))
+		if got.String() != tc.want {
+			t.Errorf("MulDecimal(%q,%q) = %s, want %s", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+func TestParseStringRoundTrip(t *testing.T) {
+	// Parse then String should reproduce the canonical form. Tests sign
+	// handling, fractional padding, and scale boundaries.
+	cases := []struct {
+		input string
+		scale int
+		want  string
+	}{
+		{"0.05", 3, "0.050"},
+		{"-0.05", 3, "-0.050"},
+		{"1", 0, "1"},
+		{"-1", 0, "-1"},
+		{"0", 4, "0.0000"},
+		{"123.456", 3, "123.456"},
+	}
+	for _, tc := range cases {
+		d, err := Parse(tc.input, tc.scale)
+		if err != nil {
+			t.Fatalf("Parse(%q,%d): %v", tc.input, tc.scale, err)
+		}
+		if got := d.String(); got != tc.want {
+			t.Errorf("Parse(%q,%d).String() = %q, want %q", tc.input, tc.scale, got, tc.want)
+		}
+		// Re-parse the rendered string at the same scale; must be equal (Cmp==0).
+		d2, err := Parse(d.String(), tc.scale)
+		if err != nil {
+			t.Fatalf("re-Parse(%q): %v", d.String(), err)
+		}
+		if cmp, _ := d.Cmp(d2); cmp != 0 {
+			t.Errorf("round-trip mismatch: %s != %s", d, d2)
+		}
+	}
+}
+
 func TestDiv(t *testing.T) {
 	a := MustParse("100.00", 2)
 	q, err := a.Div(3)

@@ -327,3 +327,16 @@ func TestDivMinInt64MinusOne(t *testing.T) {
 	_, err = bottom.Div(-1, RoundHalfUp)
 	require.ErrorIs(t, err, ErrOverflow)
 }
+
+// TestAllocateTieBreak locks the documented tie-break rule: when two ratios
+// produce identical fractional remainders, the LOWER index wins the extra cent.
+func TestAllocateTieBreak(t *testing.T) {
+	m := MustFromMinor(1, "USD") // 1 cent
+	result, err := m.Allocate([]int{1, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result[0].Amount() != 1 || result[1].Amount() != 0 {
+		t.Errorf("tie-break: got [%d,%d], want [1,0] (lower index wins)", result[0].Amount(), result[1].Amount())
+	}
+}

@@ -266,3 +266,24 @@ func ExampleNew() {
 	fmt.Println(ok, node != "")
 	// Output: true true
 }
+
+// TestGetNDescendingOrder asserts GetN returns nodes in descending HRW-score
+// order (the failover priority), not just distinct nodes.
+func TestGetNDescendingOrder(t *testing.T) {
+	m := New(func(n int) string { return fmt.Sprintf("node-%d", n) }, WithHash[int](DefaultHash))
+	for i := range 5 {
+		m.Add(i)
+	}
+	top := m.GetN("test-key", 3)
+	if len(top) != 3 {
+		t.Fatalf("GetN returned %d, want 3", len(top))
+	}
+	// Compute scores: each node's score must be >= the next.
+	for i := 0; i+1 < len(top); i++ {
+		s1 := DefaultHash([]byte(m.id(top[i]) + "test-key"))
+		s2 := DefaultHash([]byte(m.id(top[i+1]) + "test-key"))
+		if s1 < s2 {
+			t.Errorf("GetN not descending: score(%v)=%d < score(%v)=%d", top[i], s1, top[i+1], s2)
+		}
+	}
+}
