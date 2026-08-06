@@ -3,7 +3,7 @@ module github.com/v8fg/kit4go/elasticsearch
 go 1.26.5
 
 require (
-	github.com/elastic/go-elasticsearch/v8 v8.19.6
+	github.com/elastic/go-elasticsearch/v8 v8.19.7
 	github.com/stretchr/testify v1.11.1
 )
 

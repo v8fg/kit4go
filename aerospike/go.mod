@@ -3,7 +3,7 @@ module github.com/v8fg/kit4go/aerospike
 go 1.26.5
 
 require (
-	github.com/aerospike/aerospike-client-go/v8 v8.7.0
+	github.com/aerospike/aerospike-client-go/v8 v8.8.0
 	github.com/stretchr/testify v1.11.1
 )
 
