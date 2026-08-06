@@ -5,6 +5,7 @@
 // params (e.g. ?tag=a&tag=b). For a one-to-one map see [bimap].
 //
 // Not safe for concurrent use — protect with a sync.RWMutex or shard by key.
+// The zero value is NOT usable — construct with New.
 package multimap
 
 // MultiMap maps each key to a slice of values.

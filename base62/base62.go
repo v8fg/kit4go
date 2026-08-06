@@ -8,7 +8,10 @@
 // here). Pure standard library, zero dependencies.
 package base62
 
-import "errors"
+import (
+	"errors"
+	"math"
+)
 
 // Alphabet is the default base-62 alphabet: digits, then upper-, then lower-case.
 const Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -117,6 +120,9 @@ func decodeWithTable(s string, idx *[256]int8) (uint64, error) {
 		d := idx[s[i]]
 		if d < 0 {
 			return 0, ErrInvalid
+		}
+		if val > (math.MaxUint64-uint64(d))/62 {
+			return 0, ErrInvalid // overflow: string too long for uint64
 		}
 		val = val*62 + uint64(d)
 	}

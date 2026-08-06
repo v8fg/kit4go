@@ -3,6 +3,7 @@
 // Count). Elements are evicted FIFO when the window is full.
 //
 // Not safe for concurrent use — protect with a sync.RWMutex.
+// The zero value is NOT usable — construct with New.
 //
 // For time-based eviction (last T duration), use the TimeWindow variant.
 //

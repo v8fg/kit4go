@@ -71,6 +71,9 @@ func New(unscaled int64, scale int) Decimal {
 	if scale < 0 {
 		panic(fmt.Errorf("%w: scale %d (unscaled %d)", ErrNegativeScale, scale, unscaled))
 	}
+	if scale > maxScale {
+		panic(fmt.Errorf("%w: scale %d (max %d)", ErrScaleTooLarge, scale, maxScale))
+	}
 	return Decimal{value: big.NewInt(unscaled), scale: scale}
 }
 

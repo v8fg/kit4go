@@ -5,6 +5,8 @@
 // Ad-tech / finance uses: enum↔string (status code ↔ HTTP status text), ID↔name
 // (campaign ID ↔ campaign name for bidirectional resolution), short-code ↔ URL
 // (shortlink encode/decode).
+//
+// The zero value is NOT usable — construct with New.
 package bimap
 
 import "errors"

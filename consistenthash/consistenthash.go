@@ -59,6 +59,9 @@ func WithNodes[T any](nodes ...T) Option[T] {
 // for each node (e.g. host:port or a node ID); it is the hash input and the
 // identity used by Remove.
 func New[T any](id func(T) string, opts ...Option[T]) *Map[T] {
+	if id == nil {
+		panic("consistenthash: id func must not be nil")
+	}
 	m := &Map[T]{id: id, hash: DefaultHash}
 	for _, opt := range opts {
 		opt(m)

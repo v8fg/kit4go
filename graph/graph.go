@@ -12,6 +12,7 @@
 //
 // Not safe for concurrent use — protect with a sync.RWMutex (RLock for the
 // read-only traversals, Lock for AddEdge/RemoveEdge).
+// The zero value is NOT usable — construct with New.
 package graph
 
 import (

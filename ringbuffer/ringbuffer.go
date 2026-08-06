@@ -30,10 +30,11 @@ type RingBuffer[T any] struct {
 	closed bool
 }
 
-// New builds a ring buffer with the given capacity (must be > 0).
+// New builds a ring buffer with the given capacity. Panics if capacity <= 0
+// (matching ringbuf/slidingwindow — a zero-capacity buffer is meaningless).
 func New[T any](capacity int) *RingBuffer[T] {
 	if capacity < 1 {
-		capacity = 1
+		panic("ringbuffer: capacity must be > 0")
 	}
 	rb := &RingBuffer[T]{
 		buf: make([]T, capacity),

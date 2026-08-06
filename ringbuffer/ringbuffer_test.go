@@ -173,8 +173,8 @@ func TestCapAndLen(t *testing.T) {
 }
 
 func TestMinCapacity(t *testing.T) {
-	rb := New[int](0)
-	require.Equal(t, 1, rb.Cap())
+	require.Panics(t, func() { New[int](0) })
+	require.Panics(t, func() { New[int](-1) })
 }
 
 func TestConcurrency(t *testing.T) {
