@@ -13,6 +13,74 @@ module and all sub-modules; sub-modules carry matching per-module tags
 
 _Nothing yet._
 
+## [0.9.1] — 2026-08-06
+
+Post-v0.9.0 hardening: 10-round comprehensive audit (allocations, docs, API,
+algorithms, error handling, concurrency, resources, API contracts, dependencies,
+test quality, semantic correctness) — 19 real bugs + 2 CVEs fixed, 7 dependency
+bumps, performance + doc improvements. Patch release (no breaking changes).
+
+### Security
+
+- **grpcclient + grpcserver**: google.golang.org/grpc v1.82.0 → v1.82.1
+  (GO-2026-6061: xDS RBAC + HTTP/2 transport vulnerabilities).
+- **cert**: golang.org/x/text v0.38.0 → v0.39.0 (GO-2026-5970: infinite loop
+  on invalid input, reachable via autocert).
+
+### Fixed
+
+- **money.Allocate** — negative amount + zero ratio: the zero-ratio bucket
+  received a non-zero share (wrong distribution, not lost cents). The remainder
+  selector now skips zero-ratio buckets.
+- **iterx.Range** — step that overflows start+step past MaxInt caused an
+  infinite loop (overflow-guarded now).
+- **number.Round/RoundTrunc** — unbounded precision caused math.Pow10 overflow
+  → NaN and strings.Repeat → multi-GB OOM (capped at 100).
+- **decimal.Parse/Rescale/New** — unbounded scale caused multi-GB allocation
+  via strings.Repeat / big.Int.Exp (capped at 10000).
+- **wtimer** — onPanic hook was a bare func field (data race between the wheel
+  goroutine and SetOnPanic); changed to atomic.Pointer matching the kit
+  convention.
+- **bloom.Merge** — held two locks simultaneously (f→other), deadlocking under
+  concurrent A.Merge(B)+B.Merge(A); now snapshots other's bits under RLock,
+  releases, then merges.
+- **log4go.FileWriter** — Stop nilled w.messages racing with Metrics reading
+  len(messages); Metrics now checks the atomic closing flag instead.
+- **log4go.FileWriter rotateImpl** — when rotation's OpenFile failed after the
+  old file was already Closed, stale file/buf pointers caused use-after-close
+  (records silently dropped); now nil'd so the next write retries cleanly.
+- **kafka (sarama) consumer group** — Close didn't join the drainErrors
+  goroutine; added a WaitGroup.
+- **consistenthash.New(nil id)** — opaque nil-deref on first use; now panics
+  at construction.
+- **base62.Decode** — no uint64 overflow guard; long strings silently wrapped
+  to wrong values (added overflow check, returns ErrInvalid).
+- **ringbuffer.New(cap<=0)** — doc said "must be > 0" but code silently clamped
+  to 1; now panics (matches ringbuf/slidingwindow).
+- **set.BenchmarkSetAdd** — b.RunParallel raced on the non-concurrent-safe Set
+  (concurrent map writes); fixed to single-goroutine.
+
+### Performance
+
+- **errcode** — errors.Is / CodeOf now use Go 1.26's generic errors.AsType
+  (no reflection, 0 alloc): CodeOf direct 58→4.9 ns (~12×), wrapped 70→8 ns.
+- **httpclient/udpclient/tcpclient** — *net.OpError classification switched to
+  errors.AsType (0 alloc per failed-request error check).
+- **trie** — Get and LongestPrefix now walk segments lazily (0 alloc):
+  Get 222→75 ns (~3×), LongestPrefix 606→73 ns (~8×).
+
+### Changed
+
+- **graph, priorityqueue** — added Clear() (both lacked a bulk-empty method).
+- **bitset, slidingwindow** — added "Not safe for concurrent use" package doc.
+- **bimap, multimap, graph, slidingwindow** — added "zero value NOT usable"
+  caveat to package doc.
+- **decimal** — New now enforces maxScale (was only checked in Parse).
+- **countmin** — fixed NewForError doc (error bound description corrected).
+- Dependency bumps: etcd v3.7.1, clickhouse-go v2.48.0, go-redis v9.22.0,
+  otel v1.45.0, prometheus client v1.24.1, aerospike v8.8.0, elasticsearch
+  v8.19.7.
+
 ## [0.9.0] — 2026-07-28
 
 Two bodies of work since v0.8.0:
