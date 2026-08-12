@@ -2,12 +2,15 @@ package etcd
 
 // Metrics is a point-in-time snapshot of Client counters (all atomic loads).
 type Metrics struct {
-	Puts    uint64 // Put calls
-	Gets    uint64 // Get calls
-	Deletes uint64 // Delete calls
-	Grants  uint64 // Grant calls
-	Watches uint64 // Watch subscriptions started
-	Errors  uint64 // any operation returning a non-nil error
+	Puts       uint64 // Put calls
+	Gets       uint64 // Get calls
+	Deletes    uint64 // Delete calls
+	Grants     uint64 // Grant calls
+	Revokes    uint64 // Revoke calls
+	KeepAlives uint64 // KeepAlive calls
+	Statuses   uint64 // Status calls
+	Watches    uint64 // Watch subscriptions started
+	Errors     uint64 // any operation returning a non-nil error
 }
 
 // Event is fired after each operation when an OnEvent hook is installed.
@@ -49,12 +52,15 @@ func (c *Client) SetOnEvent(fn func(Event)) {
 // Metrics returns a snapshot of the counters.
 func (c *Client) Metrics() Metrics {
 	return Metrics{
-		Puts:    c.puts.Load(),
-		Gets:    c.gets.Load(),
-		Deletes: c.deletes.Load(),
-		Grants:  c.grants.Load(),
-		Watches: c.watches.Load(),
-		Errors:  c.errors.Load(),
+		Puts:       c.puts.Load(),
+		Gets:       c.gets.Load(),
+		Deletes:    c.deletes.Load(),
+		Grants:     c.grants.Load(),
+		Revokes:    c.revokes.Load(),
+		KeepAlives: c.keepAlives.Load(),
+		Statuses:   c.statuses.Load(),
+		Watches:    c.watches.Load(),
+		Errors:     c.errors.Load(),
 	}
 }
 

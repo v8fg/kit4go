@@ -51,9 +51,9 @@ type Client struct {
 	own  bool             // true -> Close closes the underlying client
 	opts Options
 
-	puts, gets, deletes, grants, watches, errors atomic.Uint64
-	onEvent                                      atomic.Pointer[func(Event)]
-	closed                                       atomic.Bool // guards raw.Close for owning clients (clientv3.Client.Close is not idempotent)
+	puts, gets, deletes, grants, revokes, keepAlives, statuses, watches, errors atomic.Uint64
+	onEvent                                                                     atomic.Pointer[func(Event)]
+	closed                                                                      atomic.Bool // guards raw.Close for owning clients (clientv3.Client.Close is not idempotent)
 
 	// closeFn is the underlying close invoked by Close for owning clients; nil
 	// in production (Close falls back to c.raw.Close). Tests inject a counted
@@ -172,6 +172,7 @@ func (c *Client) Grant(ctx context.Context, ttl int64) (*clientv3.LeaseGrantResp
 // the returned channel. The caller MUST drain it (range over it) or the
 // keep-alive goroutine stalls. The wrapper increments the counter once on start.
 func (c *Client) KeepAlive(ctx context.Context, id clientv3.LeaseID) (<-chan *clientv3.LeaseKeepAliveResponse, error) {
+	c.keepAlives.Add(1)
 	ch, err := c.api.KeepAlive(ctx, id)
 	if err != nil {
 		c.errors.Add(1)
@@ -184,6 +185,7 @@ func (c *Client) KeepAlive(ctx context.Context, id clientv3.LeaseID) (<-chan *cl
 
 // Revoke revokes a lease immediately (deletes all keys attached to it).
 func (c *Client) Revoke(ctx context.Context, id clientv3.LeaseID) (*clientv3.LeaseRevokeResponse, error) {
+	c.revokes.Add(1)
 	resp, err := c.api.Revoke(ctx, id)
 	if err != nil {
 		c.errors.Add(1)
@@ -206,6 +208,7 @@ func (c *Client) Watch(ctx context.Context, key string, opts ...clientv3.OpOptio
 
 // Status returns cluster status for the given endpoint (health, leader, version).
 func (c *Client) Status(ctx context.Context, endpoint string) (*clientv3.StatusResponse, error) {
+	c.statuses.Add(1)
 	resp, err := c.api.Status(ctx, endpoint)
 	if err != nil {
 		c.errors.Add(1)
