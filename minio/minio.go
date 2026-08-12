@@ -59,8 +59,8 @@ type Client struct {
 	raw  *minio.Client // non-nil when built from a real *minio.Client; nil when mock-injected
 	opts Options
 
-	puts, gets, stats, removes, errors, bytesUploaded atomic.Uint64
-	onEvent                                           atomic.Pointer[func(Event)]
+	puts, gets, stats, removes, lists, buckets, presigns, errors, bytesUploaded atomic.Uint64
+	onEvent                                                                     atomic.Pointer[func(Event)]
 }
 
 // opener opens a *minio.Client from an endpoint + minio-go Options. New uses
@@ -184,6 +184,7 @@ func (c *Client) RemoveObject(ctx context.Context, bucket, object string, opts m
 // BucketExists reports whether the bucket exists (and the caller has permission
 // to see it).
 func (c *Client) BucketExists(ctx context.Context, bucket string) (bool, error) {
+	c.buckets.Add(1)
 	exists, err := c.api.BucketExists(ctx, bucket)
 	if err != nil {
 		c.errors.Add(1)
@@ -197,6 +198,7 @@ func (c *Client) BucketExists(ctx context.Context, bucket string) (bool, error) 
 // MakeBucket creates a bucket. Pass minio.MakeBucketOptions{} for defaults
 // (set Region inside it for non-default regions).
 func (c *Client) MakeBucket(ctx context.Context, bucket string, opts minio.MakeBucketOptions) error {
+	c.buckets.Add(1)
 	err := c.api.MakeBucket(ctx, bucket, opts)
 	if err != nil {
 		c.errors.Add(1)
@@ -214,6 +216,7 @@ func (c *Client) MakeBucket(ctx context.Context, bucket string, opts minio.MakeB
 // so far plus the error, but still drains the rest of the channel first so the
 // producer unblocks.
 func (c *Client) ListObjects(ctx context.Context, bucket string, opts minio.ListObjectsOptions) ([]minio.ObjectInfo, error) {
+	c.lists.Add(1)
 	ch := c.api.ListObjects(ctx, bucket, opts)
 	var out []minio.ObjectInfo
 	for info := range ch {
@@ -235,6 +238,7 @@ func (c *Client) ListObjects(ctx context.Context, bucket string, opts minio.List
 // PresignedGetObject returns a pre-signed URL for downloading an object without
 // exposing credentials. reqParams (e.g. "response-content-type") may be nil.
 func (c *Client) PresignedGetObject(ctx context.Context, bucket, object string, expires time.Duration, reqParams url.Values) (string, error) {
+	c.presigns.Add(1)
 	u, err := c.api.PresignedGetObject(ctx, bucket, object, expires, reqParams)
 	if err != nil {
 		c.errors.Add(1)

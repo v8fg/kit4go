@@ -6,6 +6,9 @@ type Metrics struct {
 	Gets          uint64 // GetObject calls
 	Stats         uint64 // StatObject calls
 	Removes       uint64 // RemoveObject calls
+	Lists         uint64 // ListObjects calls
+	Buckets       uint64 // BucketExists + MakeBucket calls
+	Presigns      uint64 // PresignedGetObject calls
 	Errors        uint64 // any operation returning a non-nil error
 	BytesUploaded uint64 // sum of PutObject UploadInfo.Size
 }
@@ -52,6 +55,9 @@ func (c *Client) Metrics() Metrics {
 		Gets:          c.gets.Load(),
 		Stats:         c.stats.Load(),
 		Removes:       c.removes.Load(),
+		Lists:         c.lists.Load(),
+		Buckets:       c.buckets.Load(),
+		Presigns:      c.presigns.Load(),
 		Errors:        c.errors.Load(),
 		BytesUploaded: c.bytesUploaded.Load(),
 	}
