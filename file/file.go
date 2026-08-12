@@ -1,3 +1,6 @@
+// Package file provides file-system helpers: existence/type checks
+// (IsExist, IsDir, IsFile), atomic CopyFile/CopyDir, listing, and
+// metadata formatting (InfoStr). Pure standard library.
 package file
 
 import (

@@ -109,15 +109,17 @@ graph TB
 
 | Category | Packages |
 |----------|----------|
-| **Concurrency** | [workerpool](workerpool) · [pipeline](pipeline) · [semaphore](semaphore) · [retry](retry) · [wtimer](wtimer) · [debounce](debounce) · [fanout](fanout) · [shutdown](shutdown) · [batcher](batcher) · [backpressure](backpressure) · [objpool](objpool) · [signalbus](signalbus) |
-| **Algorithms** | [bloom](bloom) · [countmin](countmin) · [hyperloglog](hyperloglog) · [topk](topk) · [reservoir](reservoir) · [trie](trie) · [ringbuffer](ringbuffer) · [consistenthash](consistenthash) · [loadbalance](loadbalance) · [priorityqueue](priorityqueue) · [auction](auction) (2nd-price/multi-slot) · [fsm](fsm) |
+| **Concurrency** | [workerpool](workerpool) · [pipeline](pipeline) · [semaphore](semaphore) · [retry](retry) · [wtimer](wtimer) · [debounce](debounce) · [fanout](fanout) · [shutdown](shutdown) · [batcher](batcher) · [backpressure](backpressure) · [objpool](objpool) · [signalbus](signalbus) · [singleflight](singleflight) · [syncutil](syncutil) |
+| **Algorithms** | [bloom](bloom) · [countmin](countmin) · [hyperloglog](hyperloglog) · [topk](topk) · [reservoir](reservoir) · [trie](trie) · [ringbuffer](ringbuffer) · [consistenthash](consistenthash) · [loadbalance](loadbalance) · [priorityqueue](priorityqueue) · [auction](auction) (2nd-price/multi-slot) · [fsm](fsm) · [disjointset](disjointset) (union-find) · [graph](graph) (BFS/DFS/TopoSort) |
 | **Rate & budget** | [limiter](limiter) (token-bucket/sliding-window/fixed-window/leaky/GCRA) · [budget](budget) · [rate](rate) (Redis-backed) · [hotkey](hotkey) · [freqcap](freqcap) · [idempotency](idempotency) · [breaker](breaker) |
 | **Cache & storage** | [cache](cache) (unified memory=lru/redis) · [lru](lru) · [shortlink](shortlink) |
+| **Data structures** | [set](set) · [stack](stack) · [queue](queue) · [bimap](bimap) · [multimap](multimap) · [omap](omap) (insertion-ordered) · [bitset](bitset) · [ringbuf](ringbuf) (overwrite ring) · [interval](interval) (half-open ranges) · [tuple](tuple) · [optional](optional) |
 | **Finance** | [money](money) (ISO-4217 fixed-point) · [decimal](decimal) (fixed-point, math/big) |
 | **Clients** | [httpclient](httpclient) · [tcpclient](tcpclient) · [udpclient](udpclient) |
 | **Servers** | [httpserver](httpserver) · [grpcserver](grpcserver) · [middleware](middleware) (request-id/ratelimit/CORS) |
 | **Observability** | [latency](latency) (sharded tail-latency histogram) |
-| **Utilities** | [bit](bit) · [datetime](datetime) · [file](file) · [ip](ip) · [json](json) · [number](number) · [str](str) · [uuid](uuid) · [xlo](xlo) · [random](random) · [otp](otp) · [base62](base62) · [hash](hash) · [config](config) · [maxprocs](maxprocs) · [backoff](backoff) · [health](health) · [stress](stress) · [featureflag](featureflag) · [errcode](errcode) · [hotreload](hotreload) · [signing](signing) |
+| **Functional** | [iterx](iterx) (Go 1.23 iter.Seq combinators) · [memoize](memoize) · [stats](stats) (descriptive statistics) · [mathx](mathx) · [xlo](xlo) (samber/lo re-export) |
+| **Utilities** | [bit](bit) · [datetime](datetime) · [file](file) · [ip](ip) · [json](json) · [number](number) · [str](str) · [uuid](uuid) · [random](random) · [otp](otp) · [base62](base62) · [hash](hash) · [config](config) · [maxprocs](maxprocs) · [backoff](backoff) · [health](health) · [stress](stress) · [featureflag](featureflag) · [errcode](errcode) · [hotreload](hotreload) · [signing](signing) · [bytespool](bytespool) · [slidingwindow](slidingwindow) |
 
 ### Sub-modules (own go.mod — heavy deps isolated)
 

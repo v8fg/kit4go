@@ -1,3 +1,7 @@
+// Package str provides string utilities: zero-copy StringToBytes /
+// BytesToString, case and content checks (IsEmpty, IsBlank,
+// ContainsAny/All, CheckString), and case conversions (CamelToSnake,
+// SnakeToCamel, Lower/Upper/Title, Quote). Pure standard library.
 package str
 
 import "unsafe"

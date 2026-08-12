@@ -1,3 +1,7 @@
+// Package otp provides HOTP/TOTP (RFC 4226 / 6238) code generation and
+// verification, secret generation/validation, and otpauth URL / key
+// construction. It wraps github.com/pquerna/otp; the RandomReader seam
+// (RandomSecret) is injectable for deterministic tests.
 package otp
 
 import (

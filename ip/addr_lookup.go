@@ -1,3 +1,8 @@
+// Package ip provides IPv4/IPv6 parsing, conversion, matching, and
+// local-interface lookup helpers: ToIP/ToNumber/NumberToIP,
+// MaskIPToCIDR, InRange / InRangeCIDRStr / InCIDRsOrIPs, ClientIP,
+// LocalIP/PrivateIP, and the injectable AddrLookup for tests.
+// Pure standard library.
 package ip
 
 import "net"

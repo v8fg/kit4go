@@ -1,6 +1,11 @@
 //go:build go_json
 // +build go_json
 
+// Package json provides a pluggable JSON codec selected via build tags:
+// encoding/json (default), goccy/go-json (go_json), jsoniter, or sonic.
+// Marshal/Unmarshal/MarshalToString are re-exported so importers share
+// one codec across the codebase; Backend() returns the active name for
+// monitoring, and PKG records the import path.
 package json
 
 import json "github.com/goccy/go-json"

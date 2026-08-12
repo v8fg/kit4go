@@ -1,3 +1,7 @@
+// Package xlo re-exports github.com/samber/lo (and samber/lo/parallel)
+// functional helpers — Uniq, Map, Filter, GroupBy, etc. — so the rest of
+// kit4go imports a single, version-pinned alias instead of depending on
+// lo directly.
 package xlo
 
 import (

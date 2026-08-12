@@ -1,3 +1,7 @@
+// Package uuid wraps github.com/gofrs/uuid/v5 for UUID generation and
+// parsing: NewV1/V3/V4/V5, FromBytes / FromString (and Ornil variants),
+// and Equal. It re-exports the gofrs UUID type so importers need no
+// direct dependency.
 package uuid
 
 import (
