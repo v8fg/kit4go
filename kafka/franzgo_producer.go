@@ -36,6 +36,12 @@ func (s *franzProducer) Send(ctx context.Context, msg Message) error {
 	if s.closed.Load() {
 		return ErrProducerClosed
 	}
+	// Match the sarama backend's ctx short-circuit: a cancelled ctx should not
+	// hand the record to the client (asymmetric behaviour between backends
+	// otherwise — the sarama Send checks ctx.Done() before Input()).
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r := toKgoRecord(msg, s.opts.Topic)
 	s.enqueued.Add(1)
 	s.bytesEnqueued.Add(uint64(len(msg.Value)))
