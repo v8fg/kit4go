@@ -94,13 +94,13 @@ no `-race`). Order-of-magnitude reference; rerun locally for your hardware.
 | `errcode` Wrap | 0.4297 | 0 | 0 |
 | `errcode` ErrorString | 156.6 | 48 | 2 |
 | `errcode` ErrorStringWrapped | 284.8 | 64 | 2 |
-| `errcode` ErrorsIs_SameCode | 73.19 | 8 | 1 |
-| `errcode` ErrorsIs_DifferentCode | 69.47 | 8 | 1 |
-| `errcode` ErrorsIs_ThroughWrapChain | 70.55 | 8 | 1 |
-| `errcode` CodeOf_Nil | 0.4512 | 0 | 0 |
-| `errcode` CodeOf_DirectError | 113.8 | 8 | 1 |
-| `errcode` CodeOf_Wrapped | 124.9 | 8 | 1 |
-| `errcode` CodeOf_PlainError | 84.53 | 8 | 1 |
+| `errcode` ErrorsIs_SameCode | 51.00 | 0 | 0 |
+| `errcode` ErrorsIs_DifferentCode | 105.5 | 0 | 0 |
+| `errcode` ErrorsIs_ThroughWrapChain | 68.83 | 0 | 0 |
+| `errcode` CodeOf_Nil | 26.98 | 0 | 0 |
+| `errcode` CodeOf_DirectError | 68.38 | 0 | 0 |
+| `errcode` CodeOf_Wrapped | 62.92 | 0 | 0 |
+| `errcode` CodeOf_PlainError | 72.23 | 0 | 0 |
 | `errcode` WithDetail | 167.5 | 112 | 3 |
 | `errcode` CodeString | 0.5644 | 0 | 0 |
 | `errcode` CodeString_OutOfRange | 0.4963 | 0 | 0 |
@@ -109,6 +109,8 @@ no `-race`). Order-of-magnitude reference; rerun locally for your hardware.
 | `objpool` GetPutNoReset | 18.08 | 0 | 0 |
 | `objpool` GetPutWithReset | 19.52 | 0 | 0 |
 | `objpool` Stats | 1.564 | 0 | 0 |
+| `trie` GetHit | 289.9 | 0 | 0 |
+| `trie` LongestPrefix | 254.9 | 0 | 0 |
 
 ## Other packages
 

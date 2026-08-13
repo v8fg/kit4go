@@ -93,7 +93,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v7
         with:
-          files: ./coverage-root.out,./coverage-clickhouse.out,./coverage-elasticsearch.out,./coverage-etcd.out,./coverage-log4go.out,./coverage-postgres.out,./coverage-grpcclient.out,./coverage-kafka.out,./coverage-minio.out,./coverage-mongo.out,./coverage-aerospike.out,./coverage-cert.out,./coverage-cert-lego.out
+          files: ./coverage-root.out,./coverage-clickhouse.out,./coverage-elasticsearch.out,./coverage-etcd.out,./coverage-log4go.out,./coverage-postgres.out,./coverage-grpcclient.out,./coverage-kafka.out,./coverage-minio.out,./coverage-mongo.out,./coverage-aerospike.out,./coverage-cert.out,./coverage-cert-lego.out,./coverage-adaptive.out,./coverage-email.out,./coverage-grpcserver.out,./coverage-metrics.out,./coverage-rate.out,./coverage-redis.out,./coverage-redislock.out,./coverage-tracing.out
           fail_ci_if_error: false
 
   lint:

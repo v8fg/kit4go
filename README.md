@@ -151,7 +151,7 @@ uses a committed `go.work` so `go build`/`go test` resolve all modules together.
 ## Install
 
 ```sh
-go get github.com/v8fg/kit4go                     # root utilities (60+ packages)
+go get github.com/v8fg/kit4go                     # root utilities (86 packages)
 go get github.com/v8fg/kit4go/log4go              # structured logging (standalone)
 go get github.com/v8fg/kit4go/kafka               # kafka producer/consumer (standalone)
 go get github.com/v8fg/kit4go/postgres            # pgx pool (standalone)
@@ -164,7 +164,7 @@ go get github.com/v8fg/kit4go/redislock           # distributed lock (standalone
 - **Fuzz testing**: ~60 fuzz targets across all packages, catching edge cases unit tests miss.
 - **log4go resilience**: circuit breaker + spill failover, observable degradation, bounded shutdown. See [log4go/RESILIENCE.md](log4go/RESILIENCE.md).
 - **Callback-recover policy**: library-owned workers recover panics (`Recovered()` + `SetOnPanic`).
-- **CI**: all 18 sub-modules, ubuntu + macOS, `-race`, `-short`.
+- **CI**: all 20 sub-modules, ubuntu + macOS, `-race`, `-short`.
 - **Lint**: golangci-lint v2 with 11 high-signal linters.
 - **Coverage**: 95%+ across all packages (most at 100%).
 - **Security**: `govulncheck` clean (go1.26.5). See [CHANGELOG.md](CHANGELOG.md) for CVE remediation.

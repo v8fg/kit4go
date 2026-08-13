@@ -30,7 +30,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # kit4go is a multi-module repo: the root module plus 13 sub-modules, each
+      # kit4go is a multi-module repo: the root module plus 20 sub-modules, each
       # with its own go.mod. `go test ./...` does not cross module boundaries, so
       # each module is benched separately. Three sub-modules (grpcclient, kafka,
       # log4go) also carry a bench_test.go.
