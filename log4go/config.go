@@ -58,7 +58,7 @@ func (l *Logger) applyConfig(lc LogConfig) error {
 
 	if lc.ConsoleWriter.Enable {
 		consoleWriterLevelDefault = getLevelDefault(lc.ConsoleWriter.Level, newGlobal, WriterNameConsole)
-		validGlobalMinLevel = maxInt(consoleWriterLevelDefault, validGlobalMinLevel)
+		validGlobalMinLevel = max(consoleWriterLevelDefault, validGlobalMinLevel)
 		if validGlobalMinLevel == consoleWriterLevelDefault {
 			validGlobalMinLevelBy = WriterNameConsole
 		}
@@ -66,7 +66,7 @@ func (l *Logger) applyConfig(lc LogConfig) error {
 
 	if lc.FileWriter.Enable {
 		fileWriterLevelDefault = getLevelDefault(lc.FileWriter.Level, newGlobal, WriterNameFile)
-		validGlobalMinLevel = maxInt(fileWriterLevelDefault, validGlobalMinLevel)
+		validGlobalMinLevel = max(fileWriterLevelDefault, validGlobalMinLevel)
 		if validGlobalMinLevel == fileWriterLevelDefault {
 			validGlobalMinLevelBy = WriterNameFile
 		}
@@ -74,7 +74,7 @@ func (l *Logger) applyConfig(lc LogConfig) error {
 
 	if lc.KafkaWriter.Enable {
 		kafkaWriterLevelDefault = getLevelDefault(lc.KafkaWriter.Level, newGlobal, WriterNameKafka)
-		validGlobalMinLevel = maxInt(kafkaWriterLevelDefault, validGlobalMinLevel)
+		validGlobalMinLevel = max(kafkaWriterLevelDefault, validGlobalMinLevel)
 		if validGlobalMinLevel == kafkaWriterLevelDefault {
 			validGlobalMinLevelBy = WriterNameKafka
 		}
@@ -152,12 +152,4 @@ func SetLog(config []byte) (err error) {
 
 func getLevel(flag string) int {
 	return getLevelDefault(flag, DEBUG, "")
-}
-
-// maxInt return max int
-func maxInt(a, b int) int {
-	if a < b {
-		return b
-	}
-	return a
 }

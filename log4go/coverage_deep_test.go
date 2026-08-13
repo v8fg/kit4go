@@ -21,20 +21,6 @@ func (e errDeep) Error() string { return string(e) }
 // Section 1 — small / pure-function wins
 // ---------------------------------------------------------------------------
 
-// Test_MaxInt_Equal covers the equal-value branch (a == b) of maxInt, which the
-// existing tests (a < b) leave uncovered.
-func Test_MaxInt_Equal(t *testing.T) {
-	if got := maxInt(5, 5); got != 5 {
-		t.Errorf("maxInt(5,5)=%d want 5", got)
-	}
-	if got := maxInt(7, 3); got != 7 {
-		t.Errorf("maxInt(7,3)=%d want 7", got)
-	}
-	if got := maxInt(3, 9); got != 9 {
-		t.Errorf("maxInt(3,9)=%d want 9", got)
-	}
-}
-
 // Test_LogFormat_String_Unknown covers the default branch of LogFormat.String()
 // for an out-of-range value (the existing tests only cover the 3 known formats).
 func Test_LogFormat_String_Unknown(t *testing.T) {

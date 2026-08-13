@@ -202,7 +202,7 @@ func (h *Histogram) foldLocked(sec int64, out []int) (total int, sum uint64, min
 		}
 		total += b.total
 		sum += b.sum
-		for j := 0; j < h.numBuckets; j++ {
+		for j := range h.numBuckets {
 			out[j] += b.counts[j]
 		}
 	}

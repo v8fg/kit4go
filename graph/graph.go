@@ -106,7 +106,7 @@ func (g *Graph[T]) BFS(start T) []T {
 	}
 	visited := map[T]bool{start: true}
 	order := []T{start} // doubles as the FIFO queue: index advances as we dequeue
-	for i := 0; i < len(order); i++ {
+	for i := 0; i < len(order); i++ { // NOT range: order grows via append during iteration
 		for _, to := range g.adj[order[i]] {
 			if !visited[to] {
 				visited[to] = true

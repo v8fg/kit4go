@@ -696,8 +696,9 @@ func TestCore_RateAlerter_Allow_Fires(t *testing.T) {
 // We cannot cover the KafkaWriter.Enable blocks in SetupLog without a real
 // broker (Register calls Init which dials Kafka). Those two blocks
 // (lines 69-74 level-compute, 98-103 register) are structurally unreachable
-// in unit tests. The shared arithmetic is exercised via getLevelDefault /
-// maxInt directly. Here we cover the reachable non-Kafka branches we can.
+// in unit tests. The shared arithmetic is exercised via getLevelDefault
+// directly (maxInt replaced by the builtin max). Here we cover the reachable
+// non-Kafka branches we can.
 
 func TestCore_SetupLog_FullPathAndTextFormat(t *testing.T) {
 	old := loggerDefault.Swap(nil)
@@ -718,16 +719,6 @@ func TestCore_SetupLog_FullPathAndTextFormat(t *testing.T) {
 		Format:   "text",
 	}); err != nil {
 		t.Fatalf("SetupLog: %v", err)
-	}
-}
-
-func TestCore_maxInt(t *testing.T) {
-	// both branches of maxInt
-	if maxInt(1, 2) != 2 {
-		t.Error("maxInt(1,2)")
-	}
-	if maxInt(5, 3) != 5 {
-		t.Error("maxInt(5,3)")
 	}
 }
 
