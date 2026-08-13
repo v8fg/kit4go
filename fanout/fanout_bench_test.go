@@ -18,7 +18,7 @@ func BenchmarkPublish(b *testing.B) {
 	}()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		f.Publish(i)
 	}
 	b.StopTimer()
@@ -38,7 +38,7 @@ func BenchmarkPublishBlocking(b *testing.B) {
 	}()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		f.PublishBlocking(b.Context(), i)
 	}
 	b.StopTimer()

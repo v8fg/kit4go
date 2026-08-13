@@ -35,7 +35,7 @@ func Benchmark_SlogHandler_Handle(b *testing.B) {
 	sl := slog.New(NewSlogHandler(lg))
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		sl.Info("slog line", "trace_id", "t", "n", i)
 	}
 }

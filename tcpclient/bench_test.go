@@ -111,7 +111,7 @@ func BenchmarkSend(b *testing.B) {
 	data := []byte("x")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := c.Send(ctx, data); err != nil {
 			b.Fatalf("Send: %v", err)
 		}
@@ -137,7 +137,7 @@ func BenchmarkSendReceive(b *testing.B) {
 	data := []byte("hello")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		resp, err := c.SendReceive(ctx, data)
 		if err != nil {
 			b.Fatalf("SendReceive: %v", err)

@@ -11,7 +11,7 @@ func BenchmarkAdd(b *testing.B) {
 	defer bt.Close()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		if !bt.Add(i) {
 			b.Fatal("Add returned false")
 		}

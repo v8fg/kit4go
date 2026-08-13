@@ -13,7 +13,7 @@ func BenchmarkGenerate(b *testing.B) {
 func BenchmarkEncodeBaseN(b *testing.B) {
 	s := NewIDShortener(Alphabet, 0)
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_ = s.Encode(uint64(i))
 	}
 }

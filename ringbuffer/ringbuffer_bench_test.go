@@ -10,7 +10,7 @@ func BenchmarkTryPushTryPop(b *testing.B) {
 	rb := New[int](1024)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		if !rb.TryPush(i) {
 			b.Fatal("TryPush failed")
 		}

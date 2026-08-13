@@ -51,7 +51,7 @@ func BenchmarkUnary(b *testing.B) {
 	in := wrapperspb.String("hello")
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		out, err := echoUnary(ctx, conn, in)
 		if err != nil {
 			b.Fatalf("Echo: %v", err)

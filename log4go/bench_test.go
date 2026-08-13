@@ -107,7 +107,7 @@ func Benchmark_LoggerInfo(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		lg.Info("bench info iter=%d", i)
 	}
 }
@@ -137,7 +137,7 @@ func Benchmark_LoggerFiltered(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		lg.Debug("filtered iter=%d", i)
 	}
 }

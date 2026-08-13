@@ -52,7 +52,7 @@ func BenchmarkExponentialBackoff(b *testing.B) {
 	bf := ExponentialBackoff(0, 0)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_ = bf((i % 10) + 1)
 	}
 }

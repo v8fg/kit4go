@@ -535,7 +535,7 @@ func TestAllocBudget_HotPath(t *testing.T) {
 		defer lg.Close()
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			lg.Info("x")
 		}
 	})

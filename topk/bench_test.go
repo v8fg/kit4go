@@ -23,7 +23,7 @@ func BenchmarkNew(b *testing.B) {
 func BenchmarkTouchAdmit(b *testing.B) {
 	const k = 10
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		b.StopTimer()
 		tr := New(k)
 		b.StartTimer()
@@ -55,7 +55,7 @@ func BenchmarkTouchIncrement(b *testing.B) {
 func BenchmarkTouchEvict(b *testing.B) {
 	const k = 10
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		b.StopTimer()
 		tr := New(k)
 		// Pre-fill with low counts so each subsequent touch evicts the min.
@@ -77,7 +77,7 @@ func BenchmarkTouchHighCardinality(b *testing.B) {
 	b.ReportAllocs()
 	tr := New(k)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		// 1k-cardinality key space vs K=10 → frequent misses and evictions,
 		// with a few hot keys ("0".."9") re-entering repeatedly.
 		tr.Touch(benchKey(i % 1000))
@@ -149,7 +149,7 @@ func BenchmarkTouchHighCardinalityK100(b *testing.B) {
 	b.ReportAllocs()
 	tr := New(k)
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		tr.Touch(benchKey(i % 1000))
 	}
 }

@@ -13,7 +13,7 @@ func BenchmarkNew(b *testing.B) {
 		nodes := makeNodes(10)
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_ = New[string](strID, WithNodes(nodes...))
 		}
 	})
@@ -21,7 +21,7 @@ func BenchmarkNew(b *testing.B) {
 		nodes := makeNodes(100)
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_ = New[string](strID, WithNodes(nodes...))
 		}
 	})
@@ -34,7 +34,7 @@ func BenchmarkAdd(b *testing.B) {
 	add := "added-node"
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		m.Add(add + strconv.Itoa(i)) // unique id each time to force the scan
 	}
 }
@@ -49,7 +49,7 @@ func BenchmarkGet(b *testing.B) {
 			m := New[string](strID, WithNodes(makeNodes(n)...))
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				_, _ = m.Get("auction-42")
 			}
 		})
@@ -84,7 +84,7 @@ func BenchmarkGetN(b *testing.B) {
 			m := New[string](strID, WithNodes(makeNodes(n)...))
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				_ = m.GetN("auction-42", 3)
 			}
 		})

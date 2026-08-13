@@ -150,7 +150,7 @@ func BenchmarkRetryDelay(b *testing.B) {
 	maxW := 10 * time.Millisecond
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_ = retryDelay(i%10, minW, maxW)
 	}
 }

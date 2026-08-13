@@ -30,7 +30,7 @@ func BenchmarkNext(b *testing.B) {
 			bf := New(WithJitter(j), WithMaxAttempts(0))
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				_, ok := bf.Next()
 				if !ok {
 					bf.Reset()

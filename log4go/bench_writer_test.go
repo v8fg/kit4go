@@ -262,7 +262,7 @@ func benchmarkKafkaPipeline(b *testing.B, batch bool) {
 	rec := benchRecord()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := w.Write(rec); err != nil {
 			b.Fatal(err)
 		}
@@ -413,7 +413,7 @@ func Benchmark_DeliverPipeline_Discard(b *testing.B) {
 	defer lg.Close()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		lg.Info("bench info iter=%d", i)
 	}
 }
@@ -441,7 +441,7 @@ func Benchmark_Logger_WithInterfaceInt(b *testing.B) {
 	defer root.Close()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_ = root.With("count", i) // i boxes into any
 	}
 }
@@ -451,7 +451,7 @@ func Benchmark_Logger_WithTypedInt(b *testing.B) {
 	defer root.Close()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		_ = root.WithInt("count", i) // no boxing
 	}
 }
@@ -465,7 +465,7 @@ func Benchmark_DeliverPipeline_Filtered(b *testing.B) {
 	defer lg.Close()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		lg.Debug("filtered iter=%d", i)
 	}
 }
@@ -676,7 +676,7 @@ func Benchmark_KafkaWriter_BufferBatchCombos(b *testing.B) {
 			rec := benchRecord()
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				if err := w.Write(rec); err != nil {
 					b.Fatal(err)
 				}

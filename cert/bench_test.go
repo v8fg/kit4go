@@ -10,7 +10,7 @@ func BenchmarkSplitCertKey(b *testing.B) {
 	c := selfSignedCert(b, "example.com", true, 90*24*time.Hour)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _, _ = splitCertKey(c)
 	}
 }
@@ -23,7 +23,7 @@ func BenchmarkDirWriter_Write(b *testing.B) {
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = w.Write(ctx, "example.com", certPEM, keyPEM)
 	}
 }

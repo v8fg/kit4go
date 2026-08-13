@@ -50,7 +50,7 @@ func BenchmarkSet(b *testing.B) {
 	c := New[string, int](WithMaxSize[string, int](1024))
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		c.Set("k", i)
 	}
 }
@@ -64,7 +64,7 @@ func BenchmarkSetEvict(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		c.Set(key(1024+i), i)
 	}
 }
