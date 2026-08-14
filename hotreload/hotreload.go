@@ -163,9 +163,7 @@ func (b *Buffer[T]) Start(ctx context.Context, interval time.Duration) (stop fun
 	stopCh := make(chan struct{})
 	var stopOnce sync.Once
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -181,7 +179,7 @@ func (b *Buffer[T]) Start(ctx context.Context, interval time.Duration) (stop fun
 				b.safeReload()
 			}
 		}
-	}()
+	})
 	return func() {
 		stopOnce.Do(func() { close(stopCh) })
 		wg.Wait()

@@ -189,8 +189,7 @@ func (s *ShardLogger) Error(format string, args ...any) { s.pick().Error(format,
 func (s *ShardLogger) Close() {
 	var wg sync.WaitGroup
 	for _, l := range s.loggers {
-		wg.Add(1)
-		go func(ll *Logger) { defer wg.Done(); ll.Close() }(l)
+		wg.Go(func() { l.Close() })
 	}
 	wg.Wait()
 }

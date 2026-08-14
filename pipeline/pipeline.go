@@ -83,8 +83,7 @@ func New[I, O any](workers int, stage Stage[I, O], opts ...Option[I, O]) *Pipeli
 		opt(p)
 	}
 	for range workers {
-		p.wg.Add(1)
-		go p.worker()
+		p.wg.Go(p.worker)
 	}
 	return p
 }
@@ -92,8 +91,10 @@ func New[I, O any](workers int, stage Stage[I, O], opts ...Option[I, O]) *Pipeli
 // worker processes items. After done is closed, it enters drain mode: processes
 // any remaining items in p.in non-blocking, then exits. This ensures Close()
 // delivers all queued items before shutting down.
+// worker runs the read→process→write loop. Called via wg.Go (which manages
+// Done), so no defer Done here.
+// worker is called via wg.Go (which manages Done) — no defer Done here.
 func (p *Pipeline[I, O]) worker() {
-	defer p.wg.Done()
 	for {
 		select {
 		case <-p.done:

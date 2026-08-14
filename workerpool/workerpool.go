@@ -97,13 +97,11 @@ func New[T any](workers int, opts ...Option[T]) *Pool[T] {
 
 func (p *Pool[T]) start() {
 	for range p.workers {
-		p.wg.Add(1)
-		go p.worker()
+		p.wg.Go(p.worker)
 	}
 }
 
 func (p *Pool[T]) worker() {
-	defer p.wg.Done()
 	for {
 		select {
 		case <-p.done:

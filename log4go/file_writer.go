@@ -621,8 +621,7 @@ func (w *FileWriter) startDaemon() {
 			}
 		}
 	}
-	w.wg.Add(1)
-	go w.daemon()
+	w.wg.Go(w.daemon)
 }
 
 // daemon consumes the channel: writes bufio, flushes on tick/signal, rotates by
@@ -636,7 +635,6 @@ func (w *FileWriter) startDaemon() {
 // re-inject-from-spiller path) is gated on closing so it never runs during
 // shutdown, avoiding any send while the daemon is winding down.
 func (w *FileWriter) daemon() {
-	defer w.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			recordDaemonPanic("file", r)

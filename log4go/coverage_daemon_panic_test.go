@@ -192,8 +192,7 @@ func Test_FileWriter_daemon_RecoversPanic(t *testing.T) {
 		flushSig:      make(chan struct{}, 1),
 		fileBufWriter: bufio.NewWriter(f), // non-nil so writeOne reaches r.String()
 	}
-	w.wg.Add(1) // daemon does defer w.wg.Done()
-	go w.daemon()
+	w.wg.Go(w.daemon) // wg.Go manages Done; daemon no longer has defer wg.Done()
 
 	// An out-of-range level indexes LevelFlags out of bounds inside r.String()
 	// (writeOne calls it when formattedBytes is empty), panicking out of writeOne

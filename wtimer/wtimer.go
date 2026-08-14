@@ -79,8 +79,7 @@ func (h *timerHeap) Pop() any {
 // New builds and starts a timer wheel.
 func New() *Wheel {
 	w := &Wheel{wakeup: make(chan struct{}, 1)}
-	w.wg.Add(1)
-	go w.run()
+	w.wg.Go(w.run)
 	return w
 }
 
@@ -175,7 +174,6 @@ func (w *Wheel) wake() {
 }
 
 func (w *Wheel) run() {
-	defer w.wg.Done()
 	var timer *time.Timer
 	for {
 		w.mu.Lock()
