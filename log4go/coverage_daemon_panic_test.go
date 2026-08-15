@@ -101,8 +101,7 @@ func Test_WebhookAlertSink_daemon_RecoversPanic(t *testing.T) {
 		ch:        make(chan alertMsg, 4),
 		quit:      make(chan struct{}),
 	}
-	w.wg.Add(1) // daemon does defer w.wg.Done(); balance the WaitGroup (matches FileWriter panic test)
-	go w.daemon()
+	w.wg.Go(w.daemon) // wg.Go manages Done; daemon no longer has defer wg.Done()
 
 	w.ch <- alertMsg{level: AlertError, kind: "k", text: "boom"} // formatter panics
 

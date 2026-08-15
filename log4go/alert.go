@@ -135,8 +135,7 @@ func NewWebhookAlertSink(url string, queueSize int, formatter AlertFormatter) *W
 		ch:        make(chan alertMsg, queueSize),
 		quit:      make(chan struct{}),
 	}
-	w.wg.Add(1)
-	go w.daemon()
+	w.wg.Go(w.daemon)
 	return w
 }
 
@@ -177,8 +176,8 @@ func (w *WebhookAlertSink) allow() bool {
 // to call concurrently with Send and the daemon's retry loop.
 func (w *WebhookAlertSink) SetMaxRetries(n int) { w.maxRetries.Store(int64(n)) }
 
+// daemon is called via wg.Go (which manages Done), so no defer Done here.
 func (w *WebhookAlertSink) daemon() {
-	defer w.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			recordDaemonPanic("webhook", r)
