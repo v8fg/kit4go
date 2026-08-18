@@ -343,24 +343,9 @@ func TestCov_Producer_SendReturnSuccessesFalse(t *testing.T) {
 	}
 }
 
-// TestCov_Producer_SendWithCodec covers the opts.Codec != nil placeholder branch.
-func TestCov_Producer_SendWithCodec(t *testing.T) {
-	mp := mocks.NewAsyncProducer(t, mockAsyncCfg())
-	mp.ExpectInputAndSucceed()
-	o := Options{Brokers: []string{"x"}, Topic: "t", Codec: noopCodec{}}.withDefaults()
-	p, _ := newSaramaProducer(o,
-		func([]string, *sarama.Config) (sarama.AsyncProducer, error) { return mp, nil })
-	defer p.Close()
-	if err := p.Send(context.Background(), Message{Value: []byte("x")}); err != nil {
-		t.Errorf("Send with Codec: %v", err)
-	}
-}
-
-type noopCodec struct{}
-
-func (noopCodec) Encode(v any) ([]byte, error)   { return []byte("enc"), nil }
-func (noopCodec) Decode(b []byte, out any) error { return nil }
-func (noopCodec) ContentType() string            { return "application/mock" }
+// Producers/consumers pass Message.Value through raw: a configured Codec is
+// never applied implicitly (see WithCodec), so there is no codec code path in
+// Send/handlers to cover.
 
 // ---- sync producer closed/error paths ----
 

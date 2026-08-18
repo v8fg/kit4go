@@ -774,7 +774,7 @@ type LoggerMetrics struct {
 // contention); Occurred is on the caller path. Dropped = Occurred − Records.
 func (l *Logger) Metrics() LoggerMetrics {
 	var m LoggerMetrics
-	for i := 0; i <= TRACE; i++ {
+	for i := range TRACE + 1 {
 		if l.occurredByLevel != nil {
 			m.Occurred[i] = atomic.LoadUint64(&l.occurredByLevel[i])
 		}

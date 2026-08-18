@@ -96,7 +96,7 @@ func Window[T any](s []T, n int) [][]T {
 		return nil
 	}
 	windows := make([][]T, 0, len(s)-n+1)
-	for i := 0; i <= len(s)-n; i++ {
+	for i := range len(s) - n + 1 {
 		windows = append(windows, s[i:i+n:i+n])
 	}
 	return windows

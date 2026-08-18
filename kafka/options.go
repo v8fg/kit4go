@@ -260,7 +260,12 @@ func WithSnapshotHistory(n int) Option {
 	}
 }
 
-// WithCodec installs a value (de)serialiser.
+// WithCodec installs a value (de)serialiser. NOTE: current producers and
+// consumers do NOT apply the codec automatically — Message.Value is always
+// passed through raw. Callers use the Codec interface (or a built-in like
+// CodecJSON) explicitly around Send/handler. The option exists so config
+// plumbing (Options is JSON-tagged) carries the choice; automatic application
+// may arrive with a future "Send any" API (tracked for v1.0.0 planning).
 func WithCodec(c Codec) Option { return func(o *Options) { o.Codec = c } }
 
 // WithConsumerOffsetInitial sets the group's initial offset (OffsetNewest/Oldest).

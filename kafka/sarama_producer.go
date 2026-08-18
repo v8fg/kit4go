@@ -106,10 +106,6 @@ func (s *saramaProducer) Send(ctx context.Context, msg Message) error {
 	if s.closed {
 		return ErrProducerClosed
 	}
-	if s.opts.Codec != nil {
-		// Codec is applied by the caller normally (raw bytes win); this branch
-		// is a no-op placeholder kept for a future "Send any" API.
-	}
 	pm := toSaramaProducerMessage(msg, s.topic)
 	select {
 	case s.p.Input() <- pm:

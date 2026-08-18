@@ -72,6 +72,10 @@ type MessageHandler func(Message) error
 // Send and receive typed values from a handler. It is OPTIONAL: a nil codec
 // means raw byte pass-through (the common case for pre-encoded payloads, e.g.
 // log4go's KafkaWriter). Built-ins: CodecJSON, CodecProto, CodecRaw.
+//
+// IMPORTANT: producers/consumers do not apply a configured codec implicitly —
+// Message.Value flows through untouched, and the caller invokes Codec
+// Encode/Decode explicitly. See WithCodec.
 type Codec interface {
 	// Encode marshals v to bytes for Message.Value.
 	Encode(v any) ([]byte, error)
